@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Global Leaderboard - Football Predictions</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Lexend:wght@300;400;500;600;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "primary": "#135bec",
+                        "background-light": "#f6f6f8",
+                        "background-dark": "#101622",
+                        "gold": "#FFD700",
+                        "silver": "#C0C0C0",
+                        "bronze": "#CD7F32",
+                    },
+                    fontFamily: {
+                        "display": ["Lexend", "sans-serif"]
+                    },
+                    borderRadius: {
+                        "DEFAULT": "0.25rem",
+                        "lg": "0.5rem",
+                        "xl": "0.75rem",
+                        "full": "9999px"
+                    },
+                },
+            },
+        }
+    </script>
+<style>
+        body {
+            font-family: 'Lexend', sans-serif;
+        }
+        .podium-gradient {
+            background: radial-gradient(circle at center, rgba(19, 91, 236, 0.15) 0%, rgba(16, 22, 34, 0) 70%);
+        }
+    </style>
+<style>
+    body {
+      min-height: max(884px, 100dvh);
+    }
+  </style>
+  </head>
+<body class="bg-background-light dark:bg-background-dark text-slate-900 dark:text-white min-h-screen">
+<div class="relative flex h-full w-full max-w-[480px] mx-auto flex-col bg-background-light dark:bg-background-dark shadow-2xl min-h-screen pb-24">
+<!-- Top App Bar -->
+<div class="sticky top-0 z-50 bg-background-light/80 dark:bg-background-dark/80 backdrop-blur-md">
+<div class="flex items-center p-4 pb-2 justify-between">
+<div class="text-slate-900 dark:text-white flex size-10 shrink-0 items-center justify-center cursor-pointer">
+<span class="material-symbols-outlined">arrow_back_ios</span>
+</div>
+<h2 class="text-slate-900 dark:text-white text-lg font-bold leading-tight tracking-[-0.015em] flex-1 text-center">Global Leaderboard</h2>
+<div class="flex size-10 items-center justify-end cursor-pointer">
+<span class="material-symbols-outlined">filter_list</span>
+</div>
+</div>
+<!-- Tabs -->
+<div class="px-4 py-2">
+<div class="flex bg-slate-200 dark:bg-slate-800 rounded-lg p-1">
+<button class="flex-1 py-2 text-sm font-bold rounded-md bg-white dark:bg-primary text-primary dark:text-white shadow-sm">Weekly</button>
+<button class="flex-1 py-2 text-sm font-bold text-slate-500 dark:text-slate-400">Monthly</button>
+</div>
+</div>
+</div>
+<!-- Podium Section -->
+<div class="relative px-4 pt-8 pb-10 podium-gradient">
+<div class="flex items-end justify-center gap-2">
+<!-- 2nd Place -->
+<div class="flex flex-col items-center flex-1">
+<div class="relative mb-3">
+<div class="size-20 rounded-full border-4 border-silver overflow-hidden bg-slate-800" data-alt="Profile picture of Jordan ranked second" style='background-image: url("https://lh3.googleusercontent.com/aida-public/AB6AXuA46NMQmRN5QXPRzXVknS5cvPmCu_B1thJHTl4eH3z3luCtSsBfD8XIUakgE_nQBsXBwiLrOg9_Bf7DxrL4Qq6wj_mLlOQgtxJWL6Y9VWhv7_rZdyPvwy5LQ_Oc_TpJPpYLXj1ejcvzPwXPkEZWEFuj_JJ5EvF5LUp-iilXwcwej-uTDzts2FiP1C2ZNph4NDTixURN4felc5U248c7lPhqM_0DTUl8zwThEg_xEHbl2-3BivTwHXPLH2XOztye7A8pbWoT8bLMZoMB");'></div>
+<div class="absolute -bottom-2 left-1/2 -translate-x-1/2 bg-silver text-background-dark text-[10px] font-black px-2 py-0.5 rounded-full uppercase">Silver</div>
+</div>
+<p class="font-bold text-sm truncate w-full text-center">Jordan</p>
+<p class="text-primary text-xs font-medium">91% Acc.</p>
+</div>
+<!-- 1st Place -->
+<div class="flex flex-col items-center flex-1 -mt-6">
+<div class="relative mb-4">
+<div class="absolute -top-6 left-1/2 -translate-x-1/2 text-gold">
+<span class="material-symbols-outlined text-4xl" style="font-variation-settings: 'FILL' 1">emoji_events</span>
+</div>
+<div class="size-28 rounded-full border-4 border-gold overflow-hidden bg-slate-800 shadow-[0_0_20px_rgba(255,215,0,0.3)]" data-alt="Profile picture of Alex Predicted ranked first" style='background-image: url("https://lh3.googleusercontent.com/aida-public/AB6AXuCUi5R803YBKOWq6TLpATcNWusmbtvWHg2Dz-shLatpAdvWUUlUrou_XDRSUf5ijL_2d0ge6yPKpvOeyc66gu3-P_GpL7y0XeNp2orglaLPJm5xNHA3MQRmmLk2sjSXRoGTPMdwd8pDYIZf2DMHczutCO9DXQd-2YZIvw8bqdMt1RspT_hiym5aIveq150cfRUzeF0q5_Ahkz9YlfXUqUaGaXOb29oyF0M0x4a8VU8M-mZUFQLgFTw35AXq8EWWgmhpGOOlhv_iXXCV");'></div>
+<div class="absolute -bottom-2 left-1/2 -translate-x-1/2 bg-gold text-background-dark text-[12px] font-black px-3 py-1 rounded-full uppercase">Expert</div>
+</div>
+<p class="font-bold text-lg truncate w-full text-center">Alex Predicted</p>
+<p class="text-primary text-sm font-bold">94% Accuracy</p>
+</div>
+<!-- 3rd Place -->
+<div class="flex flex-col items-center flex-1">
+<div class="relative mb-3">
+<div class="size-16 rounded-full border-4 border-bronze overflow-hidden bg-slate-800" data-alt="Profile picture of Casey ranked third" style='background-image: url("https://lh3.googleusercontent.com/aida-public/AB6AXuDy2jLqO9gESY9y4oYFomj-myFfhOHHo21uDYzRQm-3-Cf_So_SHOqP-v2tL4OuQEcF2u8vScrdNax_veZtNrCVWwIyqj58q_lkay4ydm6NscfqkTnrcHr3_JOzv4I8IjLuDYQsB3CFD1On27IEY_0lDCOE3sml-ftYcWXc3c-WYf12KpvFXhY0vd2kZfc551ZvonIllsr5D3S06XOti9u_BOpe3k8gIwcq6Q1BI19siX3dQQnxksLy6QXZl-DUzau2F7_L8Tpv92_7");'></div>
+<div class="absolute -bottom-2 left-1/2 -translate-x-1/2 bg-bronze text-background-dark text-[10px] font-black px-2 py-0.5 rounded-full uppercase">Bronze</div>
+</div>
+<p class="font-bold text-sm truncate w-full text-center">Casey</p>
+<p class="text-primary text-xs font-medium">89% Acc.</p>
+</div>
+</div>
+</div>
+<!-- Leaderboard List -->
+<div class="flex flex-col px-4 gap-3">
+<div class="flex justify-between items-center text-[10px] font-bold uppercase tracking-wider text-slate-500 px-2">
+<div class="flex gap-8">
+<span>Rank</span>
+<span>User</span>
+</div>
+<div class="flex gap-10">
+<span>Pts</span>
+<span>Accuracy</span>
+</div>
+</div>
+<!-- List Item 4 -->
+<div class="flex items-center justify-between p-3 bg-white dark:bg-slate-800/50 rounded-xl border border-slate-200 dark:border-slate-700/50">
+<div class="flex items-center gap-4">
+<span class="text-slate-400 font-bold w-4">4</span>
+<div class="relative size-10">
+<div class="size-full rounded-full bg-slate-700 overflow-hidden" data-alt="Avatar for Mike Rossi" style='background-image: url("https://lh3.googleusercontent.com/aida-public/AB6AXuCXRaZJXtin2M52gAGbi-q0Wbsq2lSNZPqzERKesVIsnn0sfBTYLOky1dw26dvwK0Y6w5Hn3pwFkxH7DZAdXOAKcfqd9uR5KwUqzSbv78pSl1R9Itn86cfBZuHDesnyI6tN_wYHqoxwAwNMZdYCoq_drYtzzBIfRWGwrBjrsUxzpdoYGYl37CDjlY2Bo3JFKpKKJ6U5BiCmmC253c4fkgSCNFJ3MLfKu-9luEZ3jAj2dhLVRo7eOOJ3QHQfRu1UUXcOqcdvaiAfykro");'></div>
+<div class="absolute bottom-0 right-0 size-3 bg-green-500 border-2 border-white dark:border-slate-800 rounded-full"></div>
+</div>
+<div>
+<p class="text-sm font-bold">Mike Rossi</p>
+<div class="flex items-center gap-1">
+<span class="text-[10px] text-slate-500">🇮🇹 ITA</span>
+<span class="material-symbols-outlined text-[12px] text-green-500">trending_up</span>
+</div>
+</div>
+</div>
+<div class="flex items-center gap-8 text-right">
+<span class="text-sm font-bold">1,240</span>
+<span class="text-sm font-bold text-primary">87.5%</span>
+</div>
+</div>
+<!-- List Item 5 -->
+<div class="flex items-center justify-between p-3 bg-white dark:bg-slate-800/50 rounded-xl border border-slate-200 dark:border-slate-700/50">
+<div class="flex items-center gap-4">
+<span class="text-slate-400 font-bold w-4">5</span>
+<div class="relative size-10">
+<div class="size-full rounded-full bg-slate-700 overflow-hidden" data-alt="Avatar for Sarah Stats" style='background-image: url("https://lh3.googleusercontent.com/aida-public/AB6AXuBFkFt8rm8kvhRg3tgbDK9n31VT74wUu-t4xdPkScWKHrTRZ1Nr6Y_R8u615OdpGvO4asEyGLuNuOTq3H5egj96QcuIOaCmGfKgtqnu5Xio2w32mmSAxuv6dHq0wcu_wMS0bBxtdLZJSqvrQSY3rdDlIqr8LdlHvAIIJuHCoM0eBGTCqBxLO3mUTaV0wHbDd6SKZh2rsQqlK1R3aVxyMQYe2GjIYQg5YHaJnAgJBl9AGYYW61v1eGzIsa7BknPZumAc5XFapsSpH3nG");'></div>
+</div>
+<div>
+<p class="text-sm font-bold">Sarah Stats</p>
+<div class="flex items-center gap-1">
+<span class="text-[10px] text-slate-500">🇬🇧 GBR</span>
+<span class="material-symbols-outlined text-[12px] text-red-500">trending_down</span>
+</div>
+</div>
+</div>
+<div class="flex items-center gap-8 text-right">
+<span class="text-sm font-bold">1,190</span>
+<span class="text-sm font-bold text-primary">86.2%</span>
+</div>
+</div>
+<!-- List Item 6 -->
+<div class="flex items-center justify-between p-3 bg-white dark:bg-slate-800/50 rounded-xl border border-slate-200 dark:border-slate-700/50">
+<div class="flex items-center gap-4">
+<span class="text-slate-400 font-bold w-4">6</span>
+<div class="relative size-10">
+<div class="size-full rounded-full bg-slate-700 overflow-hidden" data-alt="Avatar for GoalMaster" style='background-image: url("https://lh3.googleusercontent.com/aida-public/AB6AXuAjrvQgmvE0wT6NDYKjd0nHmVUFvbb5g568XU2OYTWuvSipsBrptS_AFUwZvtUUjDcURNel0vTc5mxoiK-6sraIEUvwy1VObGe6x2HSl97_kSBByIAkwiXciqJ2t6_25s8VHiMqYAKcfmEa_tMSrTfa_OAZZESzrOguDxUSwSNLFqtxvAflhOxkbzWp4FlC5fjcx0yEscY3qxQNOAskNmhHohNwXgQPozqGlFqA0RL0yeVUaJoTmGDlhB24H_6oO7DFLVBgjfz-D-us");'></div>
+<div class="absolute bottom-0 right-0 size-3 bg-green-500 border-2 border-white dark:border-slate-800 rounded-full"></div>
+</div>
+<div>
+<p class="text-sm font-bold">GoalMaster</p>
+<div class="flex items-center gap-1">
+<span class="text-[10px] text-slate-500">🇧🇷 BRA</span>
+<span class="material-symbols-outlined text-[12px] text-slate-400">remove</span>
+</div>
+</div>
+</div>
+<div class="flex items-center gap-8 text-right">
+<span class="text-sm font-bold">1,155</span>
+<span class="text-sm font-bold text-primary">85.9%</span>
+</div>
+</div>
+<!-- List Item 7 -->
+<div class="flex items-center justify-between p-3 bg-white dark:bg-slate-800/50 rounded-xl border border-slate-200 dark:border-slate-700/50">
+<div class="flex items-center gap-4">
+<span class="text-slate-400 font-bold w-4">7</span>
+<div class="size-10 rounded-full bg-slate-700 overflow-hidden" data-alt="Avatar for Tipster King" style='background-image: url("https://lh3.googleusercontent.com/aida-public/AB6AXuAyNvBAHixd0oxwQ7FmGgNYNjlPM0shjBGuEKklkruudtw1PZty26xfQsGHr5TjNAmo-yC6xEb2KRgpkuCt0ZptZ2BcBO-0LvBSq8zlqQpznGP5XOpbGuFUaR9EVD6wr3MjmdV5VKlpRbpDQkUxXtIBasx1sdEu5yqSVOAJ4aAWeQ8VD1MK8dAkkTwtU1DEedeRQWI1VaAlZBbIdJFWLctqOGLKVy_VWTQwC2gCE59FBfFzdfP8m8J7ReVmdc2i5ExYeWlW-8tdvQ3L");'></div>
+<div>
+<p class="text-sm font-bold">Tipster King</p>
+<div class="flex items-center gap-1">
+<span class="text-[10px] text-slate-500">🇪🇸 ESP</span>
+<span class="material-symbols-outlined text-[12px] text-green-500">trending_up</span>
+</div>
+</div>
+</div>
+<div class="flex items-center gap-8 text-right">
+<span class="text-sm font-bold">1,020</span>
+<span class="text-sm font-bold text-primary">84.1%</span>
+</div>
+</div>
+</div>
+<!-- Sticky My Rank Footer -->
+<div class="fixed bottom-0 left-1/2 -translate-x-1/2 w-full max-w-[480px] p-4 bg-background-light/95 dark:bg-background-dark/95 backdrop-blur-xl border-t border-slate-200 dark:border-slate-800">
+<div class="flex items-center justify-between bg-primary p-4 rounded-2xl text-white shadow-lg shadow-primary/20">
+<div class="flex items-center gap-4">
+<span class="font-black text-lg">128</span>
+<div class="size-10 rounded-full border-2 border-white/30 overflow-hidden" data-alt="User's own profile picture" style='background-image: url("https://lh3.googleusercontent.com/aida-public/AB6AXuAGOfZiOvZxa6bnm4xi0Z9DzzXBgrNp2D7Que_lS5X4kBaoBbAjzhk5WnedUTN8uZ4qvPX-F-I_fwEhHF6mslJdih-oC_P4fHOF20-MS5WBcE36CdBEqV4TSOmnpNDec_kvK5q5a-BHGfopePrGC0yxCMTLml_H4sH1mg37LKivjgQ5ICFuQnFePQgjNlBMkWDFCWFWmt8vUCLNrQVOK5wiIidWvTgCjj_HCOi2KRyCAYIpp0rEBuBSvAJ_w45qU470UVTMTciJrrF2");'></div>
+<div>
+<p class="text-sm font-bold">You (Predictor01)</p>
+<p class="text-[10px] text-white/70">Top 15% of Analysts</p>
+</div>
+</div>
+<div class="text-right">
+<p class="text-xs font-medium text-white/80">My Accuracy</p>
+<p class="text-lg font-black">72.4%</p>
+</div>
+</div>
+</div>
+</div>
+</body></html>

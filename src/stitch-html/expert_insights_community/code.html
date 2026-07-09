@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Expert Insights Community</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Lexend:wght@300;400;500;600;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "primary": "#135bec",
+                        "background-light": "#f6f6f8",
+                        "background-dark": "#101622",
+                        "card-dark": "#192233",
+                    },
+                    fontFamily: {
+                        "display": ["Lexend"]
+                    },
+                    borderRadius: {
+                        "DEFAULT": "0.25rem",
+                        "lg": "0.5rem",
+                        "xl": "0.75rem",
+                        "full": "9999px"
+                    },
+                },
+            },
+        }
+    </script>
+<style>
+        body {
+            font-family: 'Lexend', sans-serif;
+            -webkit-tap-highlight-color: transparent;
+        }
+        .hide-scrollbar::-webkit-scrollbar {
+            display: none;
+        }
+        .hide-scrollbar {
+            -ms-overflow-style: none;
+            scrollbar-width: none;
+        }
+    </style>
+<style>
+    body {
+      min-height: max(884px, 100dvh);
+    }
+  </style>
+  </head>
+<body class="bg-background-light dark:bg-background-dark text-slate-900 dark:text-white antialiased">
+<!-- Main Mobile Container -->
+<div class="relative flex h-auto min-h-screen w-full max-w-[430px] mx-auto flex-col bg-background-light dark:bg-background-dark overflow-x-hidden border-x border-slate-200 dark:border-slate-800">
+<!-- Top App Bar -->
+<header class="sticky top-0 z-50 flex items-center bg-background-light/80 dark:bg-background-dark/80 backdrop-blur-md p-4 pb-2 justify-between">
+<div class="text-slate-900 dark:text-white flex size-10 shrink-0 items-center justify-center rounded-full hover:bg-slate-200 dark:hover:bg-slate-800 transition-colors">
+<span class="material-symbols-outlined">search</span>
+</div>
+<h1 class="text-slate-900 dark:text-white text-lg font-bold leading-tight tracking-[-0.015em] flex-1 text-center">Expert Insights</h1>
+<div class="flex w-10 items-center justify-end">
+<button class="flex size-10 items-center justify-center rounded-full hover:bg-slate-200 dark:hover:bg-slate-800 transition-colors">
+<span class="material-symbols-outlined text-slate-900 dark:text-white">notifications</span>
+</button>
+</div>
+</header>
+<!-- Top Rated Analysts Section -->
+<section class="py-4">
+<div class="flex items-center justify-between px-4 pb-3">
+<h2 class="text-slate-900 dark:text-white text-[20px] font-bold leading-tight tracking-[-0.015em]">Top Rated Analysts</h2>
+<a class="text-primary text-sm font-medium" href="#">View All</a>
+</div>
+<div class="flex w-full overflow-x-auto hide-scrollbar px-4 gap-4">
+<!-- Analyst 1 -->
+<div class="flex flex-col items-center gap-2 min-w-[80px]">
+<div class="relative">
+<div class="size-16 rounded-full bg-center bg-cover border-2 border-primary p-0.5" data-alt="Professional male football analyst portrait" style='background-image: url("https://lh3.googleusercontent.com/aida-public/AB6AXuCpfQIuwj-k0n7PBq1KYH9EwUZiUMQhdrKCHivHN87uyUVX06NvhHXoD7OXdQGzVzhPgSykX_zqr86XbP8bk4yFuRqwghxHUPe7Tlzsyfl4IK0u9DMbFqFgNRjKipXwcHPXhFm9Oa-zvdW_hPT7vYP_Y4ct-RLVXyRX9-m4pwfPxr1tJPVeS25jfGuPblvlqW6T12Ka27C18-m76sz_TgfP8jubzy5fUs4rPl_hb2aG02yw_iM6oiUKXpyHZCo4eJItRj8tL5OZfT8s");'></div>
+<div class="absolute -bottom-1 -right-1 bg-primary rounded-full size-5 flex items-center justify-center border-2 border-background-dark">
+<span class="material-symbols-outlined text-[10px] text-white">verified</span>
+</div>
+</div>
+<div class="text-center">
+<p class="text-slate-900 dark:text-white text-xs font-bold truncate w-20">John Kean</p>
+<p class="text-green-500 text-[10px] font-bold">88% ROI</p>
+</div>
+</div>
+<!-- Analyst 2 -->
+<div class="flex flex-col items-center gap-2 min-w-[80px]">
+<div class="relative">
+<div class="size-16 rounded-full bg-center bg-cover border-2 border-transparent p-0.5" data-alt="Expert female sports bettor portrait" style='background-image: url("https://lh3.googleusercontent.com/aida-public/AB6AXuDfymNIMF0gpFTxkvnQLNUIMo0eXfaOWMvYENMLA8uEx8wPIs7ckjta3RZUcoGVxopfpVW4D2v-Y32gCrgDyEGoDYxwhxdlp3hDEp3f4Ew-11_JghU5Hvc0Y4oWLMJmFlD_GI3NV0abuu9Spn8E2L9ZHEjGJ57zI7kkZCnlnr8Zq-VjKYSvNl6taEuz7We7fqW2iROVU9iOI8UUhGHUwbnc5_wSQLygiZ7Tu7VLiulol2wG-Y63CfGhyXe9Of846ktCnf7gGh34rYp2");'></div>
+<div class="absolute -bottom-1 -right-1 bg-yellow-500 rounded-full size-5 flex items-center justify-center border-2 border-background-dark">
+<span class="material-symbols-outlined text-[10px] text-white">workspace_premium</span>
+</div>
+</div>
+<div class="text-center">
+<p class="text-slate-900 dark:text-white text-xs font-bold truncate w-20">Sarah Lee</p>
+<p class="text-green-500 text-[10px] font-bold">82% Win</p>
+</div>
+</div>
+<!-- Analyst 3 -->
+<div class="flex flex-col items-center gap-2 min-w-[80px]">
+<div class="size-16 rounded-full bg-center bg-cover border-2 border-transparent p-0.5" data-alt="Smiling male sports analyst portrait" style='background-image: url("https://lh3.googleusercontent.com/aida-public/AB6AXuBj3f1AFncLADSndAQkFysyqFsgjn3TQXCBkSbfKlNmV7IyhUsWKH9TkMBKsZYnH5aJQjSdePHmWHYT6a9PSekU184z0a_D1uySvQOHbL2ZW0J1GQhOo-W12J0yGwCCKUb_eLzJOsRfhfhZvONBKYK3hruqzKuymZZ6pbNGVwbhOZ0Tx6o4lWaXxfWNE2Q2VE5AdaOoFu1ZXyIcsHqjLY-XtOyveLkBOuw8GcaYxe4ClWz_ELkRkmr9lmXwXswUvVHx0NMPnFKFMZns");'></div>
+<div class="text-center">
+<p class="text-slate-900 dark:text-white text-xs font-bold truncate w-20">Mike Ross</p>
+<p class="text-green-500 text-[10px] font-bold">79% Win</p>
+</div>
+</div>
+<!-- Analyst 4 -->
+<div class="flex flex-col items-center gap-2 min-w-[80px]">
+<div class="size-16 rounded-full bg-center bg-cover border-2 border-transparent p-0.5" data-alt="Young female professional tipster portrait" style='background-image: url("https://lh3.googleusercontent.com/aida-public/AB6AXuBQHyBonywuOI1xe3NAG4AA2r3P6C6eR2FOEzPOmihDegHzlSevy0q4SDXbdrDdhu84ZQCm_lwwgQoq6N267Fxd7M3kEt90dVIVV6-uXyHb-4dY6vQhmKU6bFwa27komqYd-02A9V7Ae7bcgu1SBLfhHgD3Nsm0AMYSz5G5h5eL9HI28pauu9au7lzAmr7AmCwLa19hyz0kYeT4qMB3vfT5DlWXB9s_Mra3F0hYtM-qtCRgNJQ1FOTpsPyWBnAP3uPKmayNax3tfT1H");'></div>
+<div class="text-center">
+<p class="text-slate-900 dark:text-white text-xs font-bold truncate w-20">Elena G.</p>
+<p class="text-green-500 text-[10px] font-bold">75% Win</p>
+</div>
+</div>
+<!-- Analyst 5 -->
+<div class="flex flex-col items-center gap-2 min-w-[80px]">
+<div class="size-16 rounded-full bg-center bg-cover border-2 border-transparent p-0.5" data-alt="Experienced male football scout portrait" style='background-image: url("https://lh3.googleusercontent.com/aida-public/AB6AXuAMNXc8kZR-8TFt9jhbkaEGldFPTKahEQA9KaP07IUsUJeRRzqlpEHKDJ7DVpX4KJm7cVJZmCog6smwEKfEYZHiloldHVXoBWIsRO-tI4daKn6FM9GWIgedkewpLVZ6YJb3lDrSHqOPAQbSfC3NqkkT9Y05wmOSRX0FNix6iszulq7iWbyFtIFUBovPxkLX4XRnZS7ftM4LFbXAVR_tP4xcibOf2Dr2QeZ3iLwIUHDMUrmV5HpMx-R8FRsleSVGkc0twy6vxFa3eEWc");'></div>
+<div class="text-center">
+<p class="text-slate-900 dark:text-white text-xs font-bold truncate w-20">Dave Silva</p>
+<p class="text-green-500 text-[10px] font-bold">72% Win</p>
+</div>
+</div>
+</div>
+</section>
+<!-- Filters -->
+<div class="flex gap-2 px-4 py-2 overflow-x-auto hide-scrollbar">
+<button class="bg-primary text-white px-4 py-1.5 rounded-full text-xs font-semibold whitespace-nowrap">All Tips</button>
+<button class="bg-slate-200 dark:bg-card-dark text-slate-700 dark:text-slate-300 px-4 py-1.5 rounded-full text-xs font-semibold whitespace-nowrap">Premier League</button>
+<button class="bg-slate-200 dark:bg-card-dark text-slate-700 dark:text-slate-300 px-4 py-1.5 rounded-full text-xs font-semibold whitespace-nowrap">La Liga</button>
+<button class="bg-slate-200 dark:bg-card-dark text-slate-700 dark:text-slate-300 px-4 py-1.5 rounded-full text-xs font-semibold whitespace-nowrap">Champions League</button>
+</div>
+<!-- Latest Predictions Feed -->
+<main class="flex-1 px-4 py-4 space-y-4 pb-24">
+<h2 class="text-slate-900 dark:text-white text-[20px] font-bold leading-tight tracking-[-0.015em]">Latest Predictions</h2>
+<!-- Prediction Card 1 (Premium Locked) -->
+<div class="flex flex-col rounded-xl overflow-hidden shadow-lg bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800 transition-all">
+<div class="relative w-full aspect-[21/9] bg-center bg-cover" data-alt="Dramatic stadium floodlights at night during a match" style='background-image: url("https://lh3.googleusercontent.com/aida-public/AB6AXuAHFO3BgGP3l832a0nfhiE5UgWpiiYM7r0mE1e64QOOsd4gHgYtGasPnfFCYtJ67fh2ocXiksBroiwM5LwQMXrcylkB0OkWa9dFQZUurkWGJa6LGUMoxjM6L48Y2fPGkJILG8BBFdXUj9e-BDRRyum3ywMVYSin_rdRICYpROGhWZIElvRpVl0h0rknFC4UUy30CV8qGK5o0zeF8TqEpyQmoDutZCid2LyUs89aYVtDet26-3Lqz8_9BJ4FQ8sK2jvLw46mqp1RMNNk");'>
+<div class="absolute inset-0 bg-gradient-to-t from-black/80 to-transparent"></div>
+<div class="absolute top-3 left-3 bg-primary text-white text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider">Premium</div>
+<div class="absolute bottom-3 left-3">
+<div class="flex items-center gap-2">
+<span class="bg-green-500 text-white text-[10px] font-bold px-2 py-0.5 rounded-full">85% Win Rate</span>
+<span class="text-slate-300 text-[11px] font-medium flex items-center gap-1">
+<span class="material-symbols-outlined text-[14px]">schedule</span> 2h ago
+                            </span>
+</div>
+</div>
+</div>
+<div class="p-4 flex flex-col gap-3">
+<div class="flex justify-between items-start">
+<div>
+<p class="text-primary text-[11px] font-bold uppercase tracking-wider">Champions League</p>
+<h3 class="text-slate-900 dark:text-white text-lg font-bold">Real Madrid vs AC Milan</h3>
+</div>
+<div class="size-10 rounded-lg bg-slate-100 dark:bg-slate-800 flex items-center justify-center">
+<span class="material-symbols-outlined text-primary">lock</span>
+</div>
+</div>
+<div class="flex flex-col gap-1.5">
+<p class="text-slate-500 dark:text-slate-400 text-sm italic">"Madrid's home record in UCL is impeccable, but Milan's counter-attack..."</p>
+<div class="h-px w-full bg-slate-200 dark:bg-slate-800 my-1"></div>
+<div class="flex items-center justify-between">
+<div class="flex items-center gap-2">
+<div class="size-8 rounded-full bg-cover" data-alt="John Kean profile small" style='background-image: url("https://lh3.googleusercontent.com/aida-public/AB6AXuAMA0HI9Uz5qBmupi-b3OIRNskuEHiLs4P6bnQ7Bzc4IhjEtVzzaF4L_SLY8GJR8l9EjVqxrmE8XAtP1e0tEhboVvcvjEs5gNFWaIm6U8QLC28LpB7jKhlAUNQ0NgpgO9vUUoJ743XKJpRwmTtAHFKtbs5cgojhuiFf2uFjS8MmLuTyqRU2z3dD6INfdJ0HBSLqclKmFaAMcxUXvGVM8iRaVMzYfWdSAqMNaYVwHI1A0RqmDDj9Ab1xuGTzCiN5bxt5YdHUOwJxnR-r");'></div>
+<span class="text-slate-700 dark:text-slate-300 text-xs font-medium">John Kean</span>
+</div>
+<button class="bg-primary hover:bg-blue-700 text-white text-xs font-bold px-5 py-2 rounded-lg transition-colors">
+                                Subscribe to Unlock
+                            </button>
+</div>
+</div>
+</div>
+</div>
+<!-- Prediction Card 2 (Free/Public) -->
+<div class="flex flex-col rounded-xl overflow-hidden shadow-lg bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800">
+<div class="relative w-full aspect-[21/9] bg-center bg-cover" data-alt="Empty football stadium seats during sunset" style='background-image: url("https://lh3.googleusercontent.com/aida-public/AB6AXuBH-WdQ8EnWx6GUVB2KKv8VSyXp-2uD_6tGxn3RKfv2jt48BmLzi_ll6IeyQEgO90t5Y4NhWUiPx5h8iCYJN7SnrSqHrr1vTn_ECfPiGh4qSovdfaTsjfMwuZtAJ-hwEZQiGaXDeTOX_sUKvCA77nv9TWfosfa3vf_rOE-sbRc5VWVuG9B1d5CbQ1JZISatMuLrGSNwTLFjACQar3keKplPNRJ9P_QdwFJ7WEl7HShRjORdF_O09fEYqws026W8sFCRUjOugqhK3eX2");'>
+<div class="absolute inset-0 bg-gradient-to-t from-black/80 to-transparent"></div>
+<div class="absolute top-3 left-3 bg-slate-500 text-white text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider">Free</div>
+<div class="absolute bottom-3 left-3">
+<div class="flex items-center gap-2">
+<span class="bg-green-500 text-white text-[10px] font-bold px-2 py-0.5 rounded-full">78% Win Rate</span>
+<span class="text-slate-300 text-[11px] font-medium flex items-center gap-1">
+<span class="material-symbols-outlined text-[14px]">schedule</span> 5h ago
+                            </span>
+</div>
+</div>
+</div>
+<div class="p-4 flex flex-col gap-3">
+<div class="flex justify-between items-start">
+<div>
+<p class="text-primary text-[11px] font-bold uppercase tracking-wider">Premier League</p>
+<h3 class="text-slate-900 dark:text-white text-lg font-bold">Liverpool vs Chelsea</h3>
+</div>
+<div class="size-10 rounded-lg bg-green-500/10 flex items-center justify-center">
+<span class="material-symbols-outlined text-green-500">check_circle</span>
+</div>
+</div>
+<div class="bg-slate-100 dark:bg-slate-900/50 p-3 rounded-lg border-l-4 border-primary">
+<p class="text-primary text-[10px] font-bold uppercase mb-1">Expert Tip</p>
+<p class="text-slate-900 dark:text-white text-sm font-semibold">Home Win &amp; Over 2.5 Goals</p>
+</div>
+<div class="flex items-center justify-between mt-1">
+<div class="flex items-center gap-2">
+<div class="size-8 rounded-full bg-cover" data-alt="Sarah Lee profile small" style='background-image: url("https://lh3.googleusercontent.com/aida-public/AB6AXuB-XGR0ibXN2eN0Y4cN_CLixYd3OlR379b4_endBjvoLS89gi8TwiSAxxL6Z1yEhHP9-xwMvXh3LfQtKvTMBd10DAtOo7K3yL3nG19IgmmWGIzOutJhVsMIBQqqujkEfNqwkUNt5WAcsD1r1WpA0pJ7ak1vkEa6Pw84RDqrcfA8YbGQQ31Oo0CHEc6jAgAhZXg4wQwN8Q_4TWUmUj_zU_J0qt9Uy_E1Sjfk8zyAhxAXWA_JXR9rCtH6YWh4PdgCeNTXVAUVKdT-SSm-");'></div>
+<span class="text-slate-700 dark:text-slate-300 text-xs font-medium">Sarah Lee</span>
+</div>
+<div class="flex items-center gap-3 text-slate-500 dark:text-slate-400">
+<div class="flex items-center gap-1">
+<span class="material-symbols-outlined text-[18px]">thumb_up</span>
+<span class="text-[11px]">1.2k</span>
+</div>
+<div class="flex items-center gap-1">
+<span class="material-symbols-outlined text-[18px]">chat_bubble</span>
+<span class="text-[11px]">42</span>
+</div>
+</div>
+</div>
+</div>
+</div>
+<!-- Prediction Card 3 (Premium Locked) -->
+<div class="flex flex-col rounded-xl overflow-hidden shadow-lg bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800 transition-all opacity-90">
+<div class="relative w-full aspect-[21/9] bg-center bg-cover" data-alt="Close up of a football on grass pitch" style='background-image: url("https://lh3.googleusercontent.com/aida-public/AB6AXuBZ_TnYLadEcISIi_-Bbn0i2skD6yhFAz10okJjdw5TpOG2_LKTlxsFaU-WlFzjIAZW9FfuvZmNSR5n4uqd9riA9gbRiqF0tsIANrVoY9e7AYISITyU9MqxAyiXbd8v8WAvXx5rrpP480KGuRMsSoFPn09hAIGjqR8DgYzaJxXd4Mmq2NEFF8rn0outPNHnhpLEE8O_NrF5qKzSkWzTC3HHyUF-Gc2gGWhTpg1o6sJwwQO1UweuZ8vuGm5NdBBwozUrTBxrms34ArF6");'>
+<div class="absolute inset-0 bg-gradient-to-t from-black/80 to-transparent"></div>
+<div class="absolute top-3 left-3 bg-primary text-white text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider">Premium</div>
+<div class="absolute bottom-3 left-3">
+<div class="flex items-center gap-2">
+<span class="bg-green-500 text-white text-[10px] font-bold px-2 py-0.5 rounded-full">92% Win Rate</span>
+</div>
+</div>
+</div>
+<div class="p-4 flex flex-col gap-3">
+<div class="flex justify-between items-start">
+<div>
+<p class="text-primary text-[11px] font-bold uppercase tracking-wider">La Liga</p>
+<h3 class="text-slate-900 dark:text-white text-lg font-bold">Barcelona vs Sevilla</h3>
+</div>
+</div>
+<div class="flex items-center justify-between">
+<div class="flex items-center gap-2">
+<div class="size-8 rounded-full bg-cover" data-alt="Mike Ross profile small" style='background-image: url("https://lh3.googleusercontent.com/aida-public/AB6AXuCTlK3PHFgbdoT4yuIhnfl6cti47lBXMdS1qk48V4X8cDRVaLvxX59qDKWUzNbHTGewh8NQ2xgBRGcKjF9iAUkmNwLKRogi2pjAwcmTVS3KHCgEH55NEal18qJ2wWMS9FT8PGHFOci5AniiVVf8UDrXjtMMDdHtjb9RTuhC4Y-buWE8xb3F-U6eEAkbOjC41A-FnYSqkFSwHaHhAWqfc3p_2yWWqYqfnQndp_tfnwPMKb200t6VORGh3Ymf0MJYMuH1jb0ujPSwli83");'></div>
+<span class="text-slate-700 dark:text-slate-300 text-xs font-medium">Mike Ross</span>
+</div>
+<button class="bg-primary hover:bg-blue-700 text-white text-xs font-bold px-5 py-2 rounded-lg transition-colors">
+                            Subscribe to Unlock
+                        </button>
+</div>
+</div>
+</div>
+</main>
+<!-- iOS Style Bottom Tab Bar -->
+<nav class="fixed bottom-0 left-1/2 -translate-x-1/2 w-full max-w-[430px] bg-background-light/95 dark:bg-background-dark/95 backdrop-blur-xl border-t border-slate-200 dark:border-slate-800 px-6 py-3 flex items-center justify-between z-[60]">
+<div class="flex flex-col items-center gap-1 text-slate-400">
+<span class="material-symbols-outlined text-[26px]">home</span>
+<span class="text-[10px] font-medium">Home</span>
+</div>
+<div class="flex flex-col items-center gap-1 text-primary">
+<span class="material-symbols-outlined text-[26px] fill-[1]">insights</span>
+<span class="text-[10px] font-bold">Tips</span>
+</div>
+<div class="flex flex-col items-center gap-1 text-slate-400">
+<span class="material-symbols-outlined text-[26px]">sports_soccer</span>
+<span class="text-[10px] font-medium">Matches</span>
+</div>
+<div class="flex flex-col items-center gap-1 text-slate-400">
+<span class="material-symbols-outlined text-[26px]">history</span>
+<span class="text-[10px] font-medium">Tracker</span>
+</div>
+<div class="flex flex-col items-center gap-1 text-slate-400">
+<span class="material-symbols-outlined text-[26px]">person</span>
+<span class="text-[10px] font-medium">Profile</span>
+</div>
+</nav>
+</div>
+</body></html>

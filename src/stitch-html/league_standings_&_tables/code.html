@@ -1,0 +1,345 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>League Standings &amp; Tables</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Lexend:wght@300;400;500;600;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "primary": "#135bec",
+                        "background-light": "#f6f6f8",
+                        "background-dark": "#101622",
+                    },
+                    fontFamily: {
+                        "display": ["Lexend"]
+                    },
+                    borderRadius: {
+                        "DEFAULT": "0.25rem",
+                        "lg": "0.5rem",
+                        "xl": "0.75rem",
+                        "full": "9999px"
+                    },
+                },
+            },
+        }
+    </script>
+<style>
+        .no-scrollbar::-webkit-scrollbar {
+            display: none;
+        }
+        .no-scrollbar {
+            -ms-overflow-style: none;
+            scrollbar-width: none;
+        }
+        .sticky-col {
+            position: sticky;
+            left: 0;
+            z-index: 10;
+        }
+    </style>
+<style>
+    body {
+      min-height: max(884px, 100dvh);
+    }
+  </style>
+  </head>
+<body class="bg-background-light dark:bg-background-dark font-display text-slate-900 dark:text-slate-100 min-h-screen">
+<!-- Status Bar Spacer (iOS Style) -->
+<div class="h-12 bg-background-light dark:bg-background-dark"></div>
+<!-- Header / League Selector -->
+<header class="px-4 py-3 flex items-center justify-between sticky top-0 bg-background-light/80 dark:bg-background-dark/80 backdrop-blur-md z-30 border-b border-primary/10">
+<button class="p-2 -ml-2">
+<span class="material-icons text-2xl">chevron_left</span>
+</button>
+<div class="flex items-center gap-2 bg-primary/10 px-4 py-1.5 rounded-full border border-primary/20 cursor-pointer">
+<img class="w-6 h-6 rounded-full object-cover" data-alt="Premier League Logo symbol" src="https://lh3.googleusercontent.com/aida-public/AB6AXuDcIZyXAdFAAEfZtf_5tjo5nY3beZM3oh5ymonhTntQrm_HHZpbKxJ-KvIQDUMnmAqnoAUuqvKs_1XkvnuMOjhUaSxAqy4JbhJnZgTh3R9AkZavz9jmeYd7-m7SjKFsfvjS9jDYnULeyIZq1vPin2ahBaBt35NiXGDGdNSTOf75NqmaZBAo7y_vLz5eVWUJ-9WLSKpYbBvZe3BkSVRmq2cJAsI-H4p1hwCFQ-2UOvAJ6JnYsn5Z3gIYZkoKYZBk84f0BOLG1IZmeOz2"/>
+<span class="font-semibold text-sm">Premier League</span>
+<span class="material-icons text-sm text-primary">expand_more</span>
+</div>
+<button class="p-2 -mr-2">
+<span class="material-icons text-2xl">search</span>
+</button>
+</header>
+<!-- Main Navigation Tabs -->
+<nav class="px-4 mt-4">
+<div class="flex bg-slate-200 dark:bg-primary/10 p-1 rounded-xl">
+<button class="flex-1 py-2 text-sm font-medium rounded-lg bg-white dark:bg-primary text-primary dark:text-white shadow-sm">Table</button>
+<button class="flex-1 py-2 text-sm font-medium text-slate-500 dark:text-slate-400">Matches</button>
+<button class="flex-1 py-2 text-sm font-medium text-slate-500 dark:text-slate-400">Stats</button>
+</div>
+</nav>
+<!-- Sub-Filters (Home/Away/Form) -->
+<div class="px-4 mt-6 flex gap-2 overflow-x-auto no-scrollbar">
+<button class="px-4 py-1.5 rounded-full text-xs font-semibold bg-primary text-white whitespace-nowrap">Overall</button>
+<button class="px-4 py-1.5 rounded-full text-xs font-semibold bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-400 whitespace-nowrap">Home</button>
+<button class="px-4 py-1.5 rounded-full text-xs font-semibold bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-400 whitespace-nowrap">Away</button>
+<button class="px-4 py-1.5 rounded-full text-xs font-semibold bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-400 whitespace-nowrap">Last 5 Games</button>
+</div>
+<!-- Standings Table Container -->
+<main class="mt-6 px-4 pb-24">
+<div class="overflow-x-auto no-scrollbar rounded-xl border border-primary/5 bg-white dark:bg-slate-900/50 shadow-sm">
+<table class="w-full text-left border-collapse">
+<thead>
+<tr class="bg-slate-50 dark:bg-primary/5 text-[10px] uppercase tracking-wider text-slate-500 dark:text-slate-400">
+<th class="py-3 px-3 sticky-col bg-slate-50 dark:bg-slate-900/90 backdrop-blur w-12 text-center">#</th>
+<th class="py-3 px-2 sticky-col left-12 bg-slate-50 dark:bg-slate-900/90 backdrop-blur min-w-[140px]">Team</th>
+<th class="py-3 px-2 text-center">GP</th>
+<th class="py-3 px-2 text-center">W</th>
+<th class="py-3 px-2 text-center">D</th>
+<th class="py-3 px-2 text-center">L</th>
+<th class="py-3 px-2 text-center">GD</th>
+<th class="py-3 px-4 text-center font-bold text-primary">Pts</th>
+<th class="py-3 px-4 text-center min-w-[120px]">Form</th>
+</tr>
+</thead>
+<tbody class="divide-y divide-primary/5">
+<!-- Row 1 (Champions League Spot) -->
+<tr class="text-sm">
+<td class="py-4 px-3 sticky-col bg-white dark:bg-slate-900 text-center font-medium border-l-4 border-primary">1</td>
+<td class="py-4 px-2 sticky-col left-12 bg-white dark:bg-slate-900">
+<div class="flex items-center gap-2">
+<img class="w-6 h-6 rounded-sm" data-alt="Liverpool Team Crest logo" src="https://lh3.googleusercontent.com/aida-public/AB6AXuB9BuDDq-b6VRy23bxm0C1I_gNIbxzqEUFxo0JF88wykaPZYQuLkZJL_GsC4nzUtDjfjdf6lWGVq9m48WNSQEFXDL6O_74I4yvKmzAyykIvwvfUBARxfsyel7fkSK1rb-CuDQathFpuV2xouVfsbRS_WVk2XZcrnz-DjxZT-y6VE_RPOyeXh4o9hbFvun04ncoATSPd0AdAnTYwHKP7G7mcjxbATDAFa5lNvXYO7HJ4he3XTrf5VBPnmzAopfccJ3wOnTirJMQzgPb_"/>
+<span class="font-semibold truncate">Liverpool</span>
+</div>
+</td>
+<td class="py-4 px-2 text-center text-slate-500">24</td>
+<td class="py-4 px-2 text-center">16</td>
+<td class="py-4 px-2 text-center">6</td>
+<td class="py-4 px-2 text-center">2</td>
+<td class="py-4 px-2 text-center">+32</td>
+<td class="py-4 px-4 text-center font-bold text-primary">54</td>
+<td class="py-4 px-4 text-center">
+<div class="flex justify-center gap-1">
+<div class="w-2 h-2 rounded-full bg-green-500"></div>
+<div class="w-2 h-2 rounded-full bg-green-500"></div>
+<div class="w-2 h-2 rounded-full bg-slate-400"></div>
+<div class="w-2 h-2 rounded-full bg-green-500"></div>
+<div class="w-2 h-2 rounded-full bg-green-500"></div>
+</div>
+</td>
+</tr>
+<!-- Row 2 -->
+<tr class="text-sm">
+<td class="py-4 px-3 sticky-col bg-white dark:bg-slate-900 text-center font-medium border-l-4 border-primary/60">2</td>
+<td class="py-4 px-2 sticky-col left-12 bg-white dark:bg-slate-900">
+<div class="flex items-center gap-2">
+<img class="w-6 h-6 rounded-sm" data-alt="Manchester City Team Crest logo" src="https://lh3.googleusercontent.com/aida-public/AB6AXuDKMbrGB_r-J0XyzXuASRQqyC8CZhHEURYx5PcM1tDQDGWhPlI7BvD1nn2UR2YYLNjsWNiIiVenNHl1jsQVkFsoSwBV0dVIdANYM6DxK3ZnuIs61xXhfiYQTLQuhhK5eWELhPDZymoCGgAfaRfXJDJ45yO3s5IzAhw26h7KOnfodpvDIhxVudOOf5X6dpMhEPN2E3CNKNDq1A7j_ajl3B6jjgTiZJVsmzpKoSJ7Zl8ibX-DV6ts8eCuNbgl9wUfYQWyzLPNJ0QURLYg"/>
+<span class="font-semibold truncate">Man City</span>
+</div>
+</td>
+<td class="py-4 px-2 text-center text-slate-500">23</td>
+<td class="py-4 px-2 text-center">16</td>
+<td class="py-4 px-2 text-center">4</td>
+<td class="py-4 px-2 text-center">3</td>
+<td class="py-4 px-2 text-center">+31</td>
+<td class="py-4 px-4 text-center font-bold text-primary">52</td>
+<td class="py-4 px-4 text-center">
+<div class="flex justify-center gap-1">
+<div class="w-2 h-2 rounded-full bg-green-500"></div>
+<div class="w-2 h-2 rounded-full bg-green-500"></div>
+<div class="w-2 h-2 rounded-full bg-green-500"></div>
+<div class="w-2 h-2 rounded-full bg-green-500"></div>
+<div class="w-2 h-2 rounded-full bg-green-500"></div>
+</div>
+</td>
+</tr>
+<!-- Row 3 -->
+<tr class="text-sm">
+<td class="py-4 px-3 sticky-col bg-white dark:bg-slate-900 text-center font-medium border-l-4 border-primary/40">3</td>
+<td class="py-4 px-2 sticky-col left-12 bg-white dark:bg-slate-900">
+<div class="flex items-center gap-2">
+<img class="w-6 h-6 rounded-sm" data-alt="Arsenal Team Crest logo" src="https://lh3.googleusercontent.com/aida-public/AB6AXuCHMpRDqmfDPWL_R6eZYgcqzDMgrjI9CRpttEG2KcAB9bL4jxPVd0CdId3cE2X8gV9VeYGpcKfHxgf4nLObkVq8xN2C_sIBJ47V4mQIaQEkjaLQxgInlCiMuKPUdNgrX47GLRUBnuYOWHMDBzuQt7Wo_TYl4yQNfmKudbgsQWk2pP6_e-9lPq4tGxYSKwFkwjFk2lUjQ5UVZyjSSjtQRfhZ21xtzoGC-mlJPdjSpqG-x3Zau7M_Xz6ZnxCxrVHCtdLC-0FpSbfEiT_e"/>
+<span class="font-semibold truncate">Arsenal</span>
+</div>
+</td>
+<td class="py-4 px-2 text-center text-slate-500">24</td>
+<td class="py-4 px-2 text-center">16</td>
+<td class="py-4 px-2 text-center">4</td>
+<td class="py-4 px-2 text-center">4</td>
+<td class="py-4 px-2 text-center">+30</td>
+<td class="py-4 px-4 text-center font-bold text-primary">52</td>
+<td class="py-4 px-4 text-center">
+<div class="flex justify-center gap-1">
+<div class="w-2 h-2 rounded-full bg-green-500"></div>
+<div class="w-2 h-2 rounded-full bg-green-500"></div>
+<div class="w-2 h-2 rounded-full bg-green-500"></div>
+<div class="w-2 h-2 rounded-full bg-green-500"></div>
+<div class="w-2 h-2 rounded-full bg-red-500"></div>
+</div>
+</td>
+</tr>
+<!-- Row 4 -->
+<tr class="text-sm">
+<td class="py-4 px-3 sticky-col bg-white dark:bg-slate-900 text-center font-medium border-l-4 border-primary/20">4</td>
+<td class="py-4 px-2 sticky-col left-12 bg-white dark:bg-slate-900">
+<div class="flex items-center gap-2">
+<img class="w-6 h-6 rounded-sm" data-alt="Aston Villa Team Crest logo" src="https://lh3.googleusercontent.com/aida-public/AB6AXuBPGGYlE_cwfgVi8cBYoTCgU-Lq-cnOqvqedwmaZsSVuL8dTQAA-tXWnySHwxkMsF4oCTo2orrCz15ngBB8ULsS4ybhoQ1ayvVFC7k-Dz9dfW2gsg7yVCDHU4xIT_8--RtNzZnhF5-BsYKeE1I7SfiH9ijvaMRMCTz-yJObh92veTYnGPIuc9mEukCDuNLgAP3PorTLc6wMZSMfbFTnHiP6p1bW64kB5fBUiRad3owP0bZzdFKAiOFVK2p0F7sFHyKDuOZ6RIeKAUkQ"/>
+<span class="font-semibold truncate">Aston Villa</span>
+</div>
+</td>
+<td class="py-4 px-2 text-center text-slate-500">24</td>
+<td class="py-4 px-2 text-center">14</td>
+<td class="py-4 px-2 text-center">4</td>
+<td class="py-4 px-2 text-center">6</td>
+<td class="py-4 px-2 text-center">+18</td>
+<td class="py-4 px-4 text-center font-bold text-primary">46</td>
+<td class="py-4 px-4 text-center">
+<div class="flex justify-center gap-1">
+<div class="w-2 h-2 rounded-full bg-green-500"></div>
+<div class="w-2 h-2 rounded-full bg-red-500"></div>
+<div class="w-2 h-2 rounded-full bg-red-500"></div>
+<div class="w-2 h-2 rounded-full bg-green-500"></div>
+<div class="w-2 h-2 rounded-full bg-slate-400"></div>
+</div>
+</td>
+</tr>
+<!-- Row Middle Gap -->
+<tr class="bg-slate-50 dark:bg-slate-800/20">
+<td class="py-2 px-4 text-[10px] text-slate-400 uppercase font-bold tracking-widest text-center" colspan="9">Conference League Spot</td>
+</tr>
+<!-- Row 5 -->
+<tr class="text-sm">
+<td class="py-4 px-3 sticky-col bg-white dark:bg-slate-900 text-center font-medium border-l-4 border-green-500/50">5</td>
+<td class="py-4 px-2 sticky-col left-12 bg-white dark:bg-slate-900">
+<div class="flex items-center gap-2">
+<img class="w-6 h-6 rounded-sm" data-alt="Tottenham Team Crest logo" src="https://lh3.googleusercontent.com/aida-public/AB6AXuBR0KwTzNGixc7BxnmUzMAW2ETzVF040L4BcW0pSti41mn2GaPGvFq0bftVz98xHxDhE5gqRQq8WQ8ULCwhubRHPNKPITR1Nc_Qwteo3Rt97-gkQI9dvHhzyuKLmtNbIndbRGQLHbw7WASjCW_ihpdXhPkC4pb9PnP_slOJurIzPTuRknCK1nGZFE9R6XXRPa3RDRNCaEN8-mkfqK0lx8j4bA44XZq02ZHSxKeAyRogT4lkReOL95ZUBG-YOQ5r0cJq5AJ4bMUDwD6G"/>
+<span class="font-semibold truncate">Tottenham</span>
+</div>
+</td>
+<td class="py-4 px-2 text-center text-slate-500">24</td>
+<td class="py-4 px-2 text-center">14</td>
+<td class="py-4 px-2 text-center">5</td>
+<td class="py-4 px-2 text-center">5</td>
+<td class="py-4 px-2 text-center">+16</td>
+<td class="py-4 px-4 text-center font-bold text-primary">47</td>
+<td class="py-4 px-4 text-center">
+<div class="flex justify-center gap-1">
+<div class="w-2 h-2 rounded-full bg-green-500"></div>
+<div class="w-2 h-2 rounded-full bg-slate-400"></div>
+<div class="w-2 h-2 rounded-full bg-red-500"></div>
+<div class="w-2 h-2 rounded-full bg-green-500"></div>
+<div class="w-2 h-2 rounded-full bg-green-500"></div>
+</div>
+</td>
+</tr>
+</tbody>
+</table>
+</div>
+<!-- Top Scorers Section -->
+<section class="mt-10">
+<div class="flex items-center justify-between mb-4">
+<h3 class="text-lg font-bold">Top Scorers</h3>
+<div class="flex gap-2">
+<button class="px-3 py-1 text-[10px] font-bold rounded-md bg-primary text-white uppercase">Goals</button>
+<button class="px-3 py-1 text-[10px] font-bold rounded-md bg-primary/10 text-primary uppercase">Assists</button>
+</div>
+</div>
+<div class="space-y-3">
+<!-- Player 1 -->
+<div class="bg-white dark:bg-slate-900/50 p-3 rounded-xl border border-primary/5 flex items-center justify-between shadow-sm">
+<div class="flex items-center gap-3">
+<div class="relative">
+<img class="w-12 h-12 rounded-full object-cover" data-alt="E. Haaland player portrait photo" src="https://lh3.googleusercontent.com/aida-public/AB6AXuDbqTMb_fjP8Pi4lDE754AGvwErJhuGKigkOrGIAabT_FSR4qbKtmrkP2Bk3oTy-O_X_EjqduLsU_tWKqX7AKWPUWDnEXrRjYNi0tugHU0vBegLZ1xi7h7X9KLUW7pojNT8RnCM4VEc0O1GU-BOqf5bf0zly37-ALTURXlY2x2_7147Ny6PJB7lP18fZC7zt1r7jcGcaU8OwknB2S5acshyxppUVvHJxiwoSsbdhJyPO9hmFu61B6CYg1dmBcVQHXfvRXWwdIheTUIo"/>
+<span class="absolute -top-1 -left-1 w-5 h-5 bg-primary text-[10px] text-white rounded-full flex items-center justify-center font-bold border-2 border-white dark:border-slate-900">1</span>
+</div>
+<div>
+<p class="font-bold text-sm">E. Haaland</p>
+<p class="text-xs text-slate-500">Man City</p>
+</div>
+</div>
+<div class="text-right">
+<p class="text-xl font-bold text-primary">16</p>
+<p class="text-[10px] uppercase text-slate-400 font-medium">Goals</p>
+</div>
+</div>
+<!-- Player 2 -->
+<div class="bg-white dark:bg-slate-900/50 p-3 rounded-xl border border-primary/5 flex items-center justify-between shadow-sm">
+<div class="flex items-center gap-3">
+<div class="relative">
+<img class="w-12 h-12 rounded-full object-cover" data-alt="Mo Salah player portrait photo" src="https://lh3.googleusercontent.com/aida-public/AB6AXuDUMpDeztkHbN9r4Myb2MTUOz8FXq3UOZXmp2V3YokHteL3mYstIjqN2LMnwUeOb4fIVYw7xfLWtvO-QnetMWsUr_FI3lEdEtQxj1Dc5jJ74MJGh1raAaa5vdMWyKpFMFUkRKLCB7hcJudI8cZJGhCEMq38QiBoZlGL_vq-Yg41QJ_LDgPmx09bBuRyulxCy-zVBAezu4SAiPBF-Vy0w6JF1JzwyJ5ablrdmDPyDBxTBGmxzczihvwTP2zXgCliaxh8uqAn4aqqjRGH"/>
+<span class="absolute -top-1 -left-1 w-5 h-5 bg-slate-400 text-[10px] text-white rounded-full flex items-center justify-center font-bold border-2 border-white dark:border-slate-900">2</span>
+</div>
+<div>
+<p class="font-bold text-sm">Mo Salah</p>
+<p class="text-xs text-slate-500">Liverpool</p>
+</div>
+</div>
+<div class="text-right">
+<p class="text-xl font-bold text-primary">14</p>
+<p class="text-[10px] uppercase text-slate-400 font-medium">Goals</p>
+</div>
+</div>
+<!-- Player 3 -->
+<div class="bg-white dark:bg-slate-900/50 p-3 rounded-xl border border-primary/5 flex items-center justify-between shadow-sm">
+<div class="flex items-center gap-3">
+<div class="relative">
+<img class="w-12 h-12 rounded-full object-cover" data-alt="Son Heung-min player portrait photo" src="https://lh3.googleusercontent.com/aida-public/AB6AXuC9frM9Rmviyv2U7pUDcmy_jGXFPseQlCfe8uAmIrw4GwsvMKRwE_EkNyebgD3xNscL3FGh6YK5DNDG0W6Oifqpwb_PN4gTRP11C6fFAz0ucZ1X8O4UygI8FcvhVhFwWoEfB130IZagrLf_qSBAhgXQatDd5t4QDanzFT-EhdybiKY6eCXnZBWgHuB53hL93drRcl9Cdqy0COPFXWPWedbc1SwGhvtvffajAOV5af9vGnG1_YXVH_WhKPvnJgBCwJdk5K4BpWzHUQ1l"/>
+<span class="absolute -top-1 -left-1 w-5 h-5 bg-orange-700 text-[10px] text-white rounded-full flex items-center justify-center font-bold border-2 border-white dark:border-slate-900">3</span>
+</div>
+<div>
+<p class="font-bold text-sm">Son Heung-min</p>
+<p class="text-xs text-slate-500">Tottenham</p>
+</div>
+</div>
+<div class="text-right">
+<p class="text-xl font-bold text-primary">12</p>
+<p class="text-[10px] uppercase text-slate-400 font-medium">Goals</p>
+</div>
+</div>
+</div>
+<button class="w-full mt-4 py-3 text-sm font-semibold text-primary border border-primary/20 rounded-xl bg-primary/5">
+                View All Player Stats
+            </button>
+</section>
+<!-- Legend Footer -->
+<section class="mt-10 p-4 bg-primary/5 rounded-xl border border-primary/10">
+<h4 class="text-xs font-bold uppercase text-slate-500 mb-3 tracking-widest">Promotion / Relegation</h4>
+<div class="space-y-2">
+<div class="flex items-center gap-2 text-xs">
+<div class="w-3 h-3 rounded-sm bg-primary"></div>
+<span class="text-slate-500">Champions League Group Stage</span>
+</div>
+<div class="flex items-center gap-2 text-xs">
+<div class="w-3 h-3 rounded-sm bg-primary/40"></div>
+<span class="text-slate-500">Europa League Group Stage</span>
+</div>
+<div class="flex items-center gap-2 text-xs">
+<div class="w-3 h-3 rounded-sm bg-green-500/50"></div>
+<span class="text-slate-500">Conference League Qualification</span>
+</div>
+<div class="flex items-center gap-2 text-xs">
+<div class="w-3 h-3 rounded-sm bg-red-500"></div>
+<span class="text-slate-500">Relegation</span>
+</div>
+</div>
+<p class="mt-4 text-[10px] text-slate-400 italic">Last Updated: Feb 12, 2024 - 14:30 GMT</p>
+</section>
+</main>
+<!-- Bottom Navigation Bar (iOS style) -->
+<nav class="fixed bottom-0 left-0 right-0 bg-white/90 dark:bg-background-dark/90 backdrop-blur-xl border-t border-primary/10 px-6 py-3 pb-8 flex justify-between items-center z-50">
+<div class="flex flex-col items-center gap-1 text-slate-400">
+<span class="material-icons text-2xl">home</span>
+<span class="text-[10px] font-medium">Home</span>
+</div>
+<div class="flex flex-col items-center gap-1 text-slate-400">
+<span class="material-icons text-2xl">insights</span>
+<span class="text-[10px] font-medium">Analysis</span>
+</div>
+<div class="flex flex-col items-center gap-1 text-primary">
+<span class="material-icons text-2xl">leaderboard</span>
+<span class="text-[10px] font-medium">Standings</span>
+</div>
+<div class="flex flex-col items-center gap-1 text-slate-400">
+<span class="material-icons text-2xl">account_circle</span>
+<span class="text-[10px] font-medium">Profile</span>
+</div>
+</nav>
+</body></html>

@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" name="viewport"/>
+<title>Search &amp; Discovery - Football Predictions</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Lexend:wght@300;400;500;600;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/icon?family=Material+Icons+Round" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "primary": "#135bec",
+                        "background-light": "#f6f6f8",
+                        "background-dark": "#101622",
+                    },
+                    fontFamily: {
+                        "display": ["Lexend", "sans-serif"]
+                    },
+                    borderRadius: {
+                        "DEFAULT": "0.25rem",
+                        "lg": "0.5rem",
+                        "xl": "0.75rem",
+                        "full": "9999px"
+                    },
+                },
+            },
+        }
+    </script>
+<style>
+        body {
+            -webkit-tap-highlight-color: transparent;
+            overscroll-behavior-y: contain;
+        }
+        .hide-scrollbar::-webkit-scrollbar {
+            display: none;
+        }
+        .hide-scrollbar {
+            -ms-overflow-style: none;
+            scrollbar-width: none;
+        }
+        .glass-effect {
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+        }
+    </style>
+<style>
+    body {
+      min-height: max(884px, 100dvh);
+    }
+  </style>
+  </head>
+<body class="bg-background-light dark:bg-background-dark font-display text-slate-900 dark:text-slate-100 min-h-screen flex flex-col">
+<!-- Top Sticky Search Header -->
+<header class="sticky top-0 z-50 glass-effect bg-background-light/80 dark:bg-background-dark/80 border-b border-primary/10 px-4 pt-12 pb-4">
+<div class="flex items-center gap-3">
+<div class="relative flex-1">
+<span class="material-icons-round absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-xl">search</span>
+<input class="w-full bg-slate-200/50 dark:bg-slate-800/50 border-none rounded-xl py-3 pl-10 pr-4 focus:ring-2 focus:ring-primary text-sm placeholder:text-slate-500" placeholder="Search teams, players, leagues..." type="text"/>
+</div>
+<button class="bg-primary/10 dark:bg-primary/20 text-primary p-3 rounded-xl">
+<span class="material-icons-round text-xl">tune</span>
+</button>
+</div>
+</header>
+<main class="flex-1 overflow-y-auto pb-24">
+<!-- Quick Links -->
+<div class="flex overflow-x-auto gap-3 px-4 py-6 hide-scrollbar">
+<div class="flex flex-col items-center gap-2 flex-shrink-0">
+<div class="w-14 h-14 rounded-full bg-primary flex items-center justify-center text-white shadow-lg shadow-primary/20">
+<span class="material-icons-round">emoji_events</span>
+</div>
+<span class="text-[11px] font-medium text-slate-500">Leagues</span>
+</div>
+<div class="flex flex-col items-center gap-2 flex-shrink-0">
+<div class="w-14 h-14 rounded-full bg-orange-500 flex items-center justify-center text-white shadow-lg shadow-orange-500/20">
+<span class="material-icons-round">sensors</span>
+</div>
+<span class="text-[11px] font-medium text-slate-500 text-orange-500">Live</span>
+</div>
+<div class="flex flex-col items-center gap-2 flex-shrink-0">
+<div class="w-14 h-14 rounded-full bg-slate-200 dark:bg-slate-800 flex items-center justify-center text-slate-600 dark:text-slate-400">
+<span class="material-icons-round">medical_services</span>
+</div>
+<span class="text-[11px] font-medium text-slate-500">Injuries</span>
+</div>
+<div class="flex flex-col items-center gap-2 flex-shrink-0">
+<div class="w-14 h-14 rounded-full bg-slate-200 dark:bg-slate-800 flex items-center justify-center text-slate-600 dark:text-slate-400">
+<span class="material-icons-round">currency_exchange</span>
+</div>
+<span class="text-[11px] font-medium text-slate-500">Transfers</span>
+</div>
+<div class="flex flex-col items-center gap-2 flex-shrink-0">
+<div class="w-14 h-14 rounded-full bg-slate-200 dark:bg-slate-800 flex items-center justify-center text-slate-600 dark:text-slate-400">
+<span class="material-icons-round">auto_graph</span>
+</div>
+<span class="text-[11px] font-medium text-slate-500">Analytics</span>
+</div>
+</div>
+<!-- Trending Teams -->
+<section class="mb-8">
+<div class="flex items-center justify-between px-4 mb-4">
+<h2 class="text-lg font-bold">Trending Teams</h2>
+<button class="text-primary text-sm font-medium">See All</button>
+</div>
+<div class="flex overflow-x-auto gap-4 px-4 hide-scrollbar">
+<!-- Team Card 1 -->
+<div class="flex-shrink-0 w-44 bg-white dark:bg-slate-800/50 p-4 rounded-xl border border-slate-200 dark:border-slate-700/50">
+<div class="flex flex-col items-center text-center">
+<img class="w-16 h-16 rounded-full mb-3 object-cover border-2 border-primary/20" data-alt="Football club circular logo crest" src="https://lh3.googleusercontent.com/aida-public/AB6AXuBCwNU3wH2sE8uxawDFwtnOMS0gX0dL_cZwcIo3-3CmP8BAiy3T2Jxs8ltlDnDm9sVOH8TbZVBR8gkFEye4hiHqw43QnPcSTwQAIF7PIcMbOHyHfLZPsk-oiwuRZBoZSTB7de8RiOQi5y4Kkk1V8HbmSc8pkekNqBJuXbVktztNR0PqY-eCulN3LnJQv1PI15L7n8ZcWsWlqezRdsmXDVoXbORV5FPeEw2P362q23w_MHIKb-uWcVgqEmU2LvLHSTXCs8xBnlvK0NWa"/>
+<h3 class="font-bold text-sm mb-1 truncate w-full">Manchester City</h3>
+<div class="flex gap-1 mb-4">
+<span class="w-2 h-2 rounded-full bg-green-500"></span>
+<span class="w-2 h-2 rounded-full bg-green-500"></span>
+<span class="w-2 h-2 rounded-full bg-green-500"></span>
+<span class="w-2 h-2 rounded-full bg-yellow-500"></span>
+<span class="w-2 h-2 rounded-full bg-green-500"></span>
+</div>
+<button class="w-full py-2 bg-primary text-white text-xs font-bold rounded-lg">Follow</button>
+</div>
+</div>
+<!-- Team Card 2 -->
+<div class="flex-shrink-0 w-44 bg-white dark:bg-slate-800/50 p-4 rounded-xl border border-slate-200 dark:border-slate-700/50">
+<div class="flex flex-col items-center text-center">
+<img class="w-16 h-16 rounded-full mb-3 object-cover border-2 border-primary/20" data-alt="Football team emblem on grass" src="https://lh3.googleusercontent.com/aida-public/AB6AXuCH0If5MFEmJ29zrbT08rguhvqvyzRH1gwNzjKWmqrEP2FokgqHeBANv0WWAlF7PhXf4Lse7lmhDMOvPYx6TYYWG-ZS8fD8ZtBkiplqsocjFkDPzdN9dkbKBWEbDwNglM61VLQR4ma3zFN1MWrolk8I_RUOhmHFtVy5s3YVt9e8rjGEpOmagzpZobklxrhfq5GTYTUslmP_9-59l5UVv46i4rlcruXEZDUUUNmt58ivwsFDjSAlGF4j3ptucvnUcmrtsWq4Bldbg7It"/>
+<h3 class="font-bold text-sm mb-1 truncate w-full">Real Madrid</h3>
+<div class="flex gap-1 mb-4">
+<span class="w-2 h-2 rounded-full bg-green-500"></span>
+<span class="w-2 h-2 rounded-full bg-yellow-500"></span>
+<span class="w-2 h-2 rounded-full bg-green-500"></span>
+<span class="w-2 h-2 rounded-full bg-green-500"></span>
+<span class="w-2 h-2 rounded-full bg-red-500"></span>
+</div>
+<button class="w-full py-2 border border-primary text-primary text-xs font-bold rounded-lg">Following</button>
+</div>
+</div>
+<!-- Team Card 3 -->
+<div class="flex-shrink-0 w-44 bg-white dark:bg-slate-800/50 p-4 rounded-xl border border-slate-200 dark:border-slate-700/50">
+<div class="flex flex-col items-center text-center">
+<img class="w-16 h-16 rounded-full mb-3 object-cover border-2 border-primary/20" data-alt="Stylized soccer team logo illustration" src="https://lh3.googleusercontent.com/aida-public/AB6AXuCJ7OY55gXTykOUiyNE4alTicMvxJlHJKZ3l4tISzV9iiW42NhP2pV5LhmGn7RrRN08ICmxc0ZvHgmFZDAxVWhx6WUEnepm12pxD6ACDQDVyeJDLxPk0PO-Tf5JVIZH7PpKdAz5lXeHbXzAf0cUlcJQfUJyNSmQqCXMDqpvsTijrnRmtbuYtIApX39BJeGIMU5WIsOKmqZtbIPrlvqAo___nBjep0UwVoD_bJym36eKQetGp9tC-dBddvzDxT-kIplD1p-cFkaaVhtU"/>
+<h3 class="font-bold text-sm mb-1 truncate w-full">AC Milan</h3>
+<div class="flex gap-1 mb-4">
+<span class="w-2 h-2 rounded-full bg-red-500"></span>
+<span class="w-2 h-2 rounded-full bg-green-500"></span>
+<span class="w-2 h-2 rounded-full bg-yellow-500"></span>
+<span class="w-2 h-2 rounded-full bg-red-500"></span>
+<span class="w-2 h-2 rounded-full bg-green-500"></span>
+</div>
+<button class="w-full py-2 bg-primary text-white text-xs font-bold rounded-lg">Follow</button>
+</div>
+</div>
+</div>
+</section>
+<!-- Upcoming Derbies -->
+<section class="mb-8 px-4">
+<h2 class="text-lg font-bold mb-4">Upcoming Derbies</h2>
+<div class="relative overflow-hidden rounded-2xl bg-gradient-to-br from-primary to-blue-800 p-6 text-white shadow-xl">
+<div class="absolute top-0 right-0 p-4">
+<span class="px-2 py-1 bg-red-500 text-[10px] font-bold rounded uppercase tracking-wider">Hot Match</span>
+</div>
+<div class="flex items-center justify-between mb-6">
+<div class="text-center">
+<div class="w-16 h-16 bg-white/20 rounded-full flex items-center justify-center backdrop-blur-md mb-2">
+<img class="w-12 h-12 object-contain rounded-full" data-alt="Football club logo white background" src="https://lh3.googleusercontent.com/aida-public/AB6AXuAj53ZRTF7dPHA-p_3GcfQyWshCbauu_El88QwzB1_VDhUXOQd4l1VsuWDmWzMOsU2isZThNC5ja-GI5GJXdmvfyv2OHT3DBcYMlvBHOLqIGtVN5_8QQ2XWdwPKFjuQ3vWegTmbmK0kRXA94_W6hLo4-sBS3kRpp_ap56pQrhBpg-ED6t_SC6tcn0HoLrlCAdKSi5a_XUON3o2KznZEeaOLcfhx7_39phLXlwYVab22IkhC6M8k0NtqsyXD0y4S7m2JXiGQ3sbVc557"/>
+</div>
+<p class="text-xs font-bold">Inter Milan</p>
+</div>
+<div class="text-center">
+<span class="text-2xl font-black italic opacity-50">VS</span>
+<p class="text-[10px] font-medium opacity-80 mt-1">Oct 24, 20:45</p>
+</div>
+<div class="text-center">
+<div class="w-16 h-16 bg-white/20 rounded-full flex items-center justify-center backdrop-blur-md mb-2">
+<img class="w-12 h-12 object-contain rounded-full" data-alt="Football club logo dark background" src="https://lh3.googleusercontent.com/aida-public/AB6AXuDdcWycJrlZnDONrLSZGASdY6IOeedxB62eqzutEt3p4rh4L3YaeQuHwyHEHnKW8kadij9VSiqGg3ye8AAfTPDa7Sg4xw10h2-A_-OJZyZXC-WsZorGuIK4qxQDOqD-2E2hoP-eCufeFFRK8Fqgr2vxrtYsDCTFgj652ZidYuF8H-kjPCCc7tfADwpvCGkyXIK2XzopF_9dyCkxb5VFOXXUsVVmqTFoidnHfNADXRkUG0Io6mrGtq7nS5HrGV7XrsBvXV5bH8xVRl5y"/>
+</div>
+<p class="text-xs font-bold">AC Milan</p>
+</div>
+</div>
+<div class="space-y-2">
+<div class="flex justify-between text-[10px] font-bold uppercase tracking-widest opacity-80">
+<span>Win Prob. 42%</span>
+<span>Draw 15%</span>
+<span>Win Prob. 43%</span>
+</div>
+<div class="h-2 w-full bg-white/20 rounded-full flex overflow-hidden">
+<div class="h-full bg-white w-[42%]"></div>
+<div class="h-full bg-white/40 w-[15%]"></div>
+<div class="h-full bg-primary-dark w-[43%]"></div>
+</div>
+</div>
+</div>
+</section>
+<!-- Popular Experts -->
+<section class="mb-8">
+<div class="flex items-center justify-between px-4 mb-4">
+<h2 class="text-lg font-bold">Popular Experts</h2>
+<button class="text-primary text-sm font-medium">Top Ranked</button>
+</div>
+<div class="space-y-3 px-4">
+<!-- Expert Row 1 -->
+<div class="flex items-center gap-4 bg-white dark:bg-slate-800/50 p-3 rounded-xl border border-slate-200 dark:border-slate-700/50">
+<div class="relative">
+<img class="w-12 h-12 rounded-full object-cover" data-alt="Professional male analyst portrait headshot" src="https://lh3.googleusercontent.com/aida-public/AB6AXuAQSNtwfc8l4YHUktD0jR72nSEe3LPLAxsFnUR1Q4_x8u0L_36ujq1iXirbUO30UjTNADbhRBD1rrF-YCuwqkFB7cxrZpxhaSuCoWkaSItuwVOkGW4pS6WV2YSoTOgGjLAfmptyOc8qEj5n3llTyE8MzkgTHkOo58QhisXFSlQ1IKalXvmUaSAIlk69n72LZiUd2FcdJ56hu30MEixtQGrg0gQIKagwNQgExA88V_InGt3bd7xqkxVuaYPbN18GtoAIVZ86-0cVpSka"/>
+<div class="absolute -bottom-1 -right-1 bg-primary text-white rounded-full p-0.5 border-2 border-white dark:border-slate-800">
+<span class="material-icons-round text-[10px]">verified</span>
+</div>
+</div>
+<div class="flex-1">
+<h4 class="text-sm font-bold">Marco Silva</h4>
+<div class="flex items-center gap-2">
+<span class="text-xs text-slate-500">Win Rate:</span>
+<span class="text-xs font-bold text-green-500">78.4%</span>
+</div>
+</div>
+<div class="text-right">
+<button class="px-4 py-1.5 bg-primary/10 dark:bg-primary/20 text-primary text-xs font-bold rounded-lg">View Tips</button>
+</div>
+</div>
+<!-- Expert Row 2 -->
+<div class="flex items-center gap-4 bg-white dark:bg-slate-800/50 p-3 rounded-xl border border-slate-200 dark:border-slate-700/50">
+<div class="relative">
+<img class="w-12 h-12 rounded-full object-cover" data-alt="Female sports data scientist portrait" src="https://lh3.googleusercontent.com/aida-public/AB6AXuAtZZc79OYMJW_3SHhdiFQRKylPDJcQauACEvuYOY6P1uyZGxRnSuBohuDMMwhMq8np2WUwRt3RRhjA_-K6n_K8EcJkLcoYYDI0C3fRK9scYAaLQo-k-Q4HGvcI53WR3oljCGCA3Co27ss3W4Pb6cyztDcBviNZhecrFNkY1h7FRmFOurEWno3uANJracKRiuSyb2JY9uuf_8F_YQavnVVZQWNl1zFujjquBKQQ2zK39Nm8BMuH8Wkig9DCNqd4jWbGyzWfEkcuTSLJ"/>
+<div class="absolute -bottom-1 -right-1 bg-primary text-white rounded-full p-0.5 border-2 border-white dark:border-slate-800">
+<span class="material-icons-round text-[10px]">verified</span>
+</div>
+</div>
+<div class="flex-1">
+<h4 class="text-sm font-bold">Elena Rossi</h4>
+<div class="flex items-center gap-2">
+<span class="text-xs text-slate-500">Win Rate:</span>
+<span class="text-xs font-bold text-green-500">76.1%</span>
+</div>
+</div>
+<div class="text-right">
+<button class="px-4 py-1.5 bg-primary/10 dark:bg-primary/20 text-primary text-xs font-bold rounded-lg">View Tips</button>
+</div>
+</div>
+</div>
+</section>
+<!-- Recent Search History -->
+<section class="px-4 pb-12">
+<div class="flex items-center justify-between mb-3">
+<h3 class="text-xs font-bold uppercase tracking-wider text-slate-400">Recent Searches</h3>
+<button class="text-xs font-medium text-slate-400 hover:text-primary">Clear All</button>
+</div>
+<div class="flex flex-wrap gap-2">
+<div class="flex items-center gap-1.5 bg-slate-200 dark:bg-slate-800 px-3 py-1.5 rounded-lg border border-slate-300 dark:border-slate-700">
+<span class="text-xs font-medium">UCL Predictions</span>
+<span class="material-icons-round text-[14px] text-slate-400">close</span>
+</div>
+<div class="flex items-center gap-1.5 bg-slate-200 dark:bg-slate-800 px-3 py-1.5 rounded-lg border border-slate-300 dark:border-slate-700">
+<span class="text-xs font-medium">Erling Haaland</span>
+<span class="material-icons-round text-[14px] text-slate-400">close</span>
+</div>
+<div class="flex items-center gap-1.5 bg-slate-200 dark:bg-slate-800 px-3 py-1.5 rounded-lg border border-slate-300 dark:border-slate-700">
+<span class="text-xs font-medium">Arsenal Form</span>
+<span class="material-icons-round text-[14px] text-slate-400">close</span>
+</div>
+<div class="flex items-center gap-1.5 bg-slate-200 dark:bg-slate-800 px-3 py-1.5 rounded-lg border border-slate-300 dark:border-slate-700">
+<span class="text-xs font-medium">Serie A Table</span>
+<span class="material-icons-round text-[14px] text-slate-400">close</span>
+</div>
+</div>
+</section>
+</main>
+<!-- Bottom Navigation Bar (iOS Style) -->
+<nav class="fixed bottom-0 left-0 right-0 glass-effect bg-background-light/90 dark:bg-background-dark/90 border-t border-slate-200 dark:border-slate-800 px-6 py-3 pb-8 flex items-center justify-between">
+<button class="flex flex-col items-center gap-1 text-slate-400">
+<span class="material-icons-round">home</span>
+<span class="text-[10px] font-medium">Home</span>
+</button>
+<button class="flex flex-col items-center gap-1 text-primary">
+<span class="material-icons-round">explore</span>
+<span class="text-[10px] font-medium">Discover</span>
+</button>
+<button class="flex flex-col items-center gap-1 text-slate-400">
+<span class="material-icons-round">analytics</span>
+<span class="text-[10px] font-medium">Predictions</span>
+</button>
+<button class="flex flex-col items-center gap-1 text-slate-400">
+<span class="material-icons-round">person</span>
+<span class="text-[10px] font-medium">Profile</span>
+</button>
+</nav>
+</body></html>

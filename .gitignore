@@ -1,0 +1,7 @@
+admin/node_modules
+admin/dist
+dist
+node_modules
+.gocache/
+go_admin/__debug_bin.*
+go_server/__debug_bin.*

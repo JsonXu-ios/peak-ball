@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Football News &amp; Transfers</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Work+Sans:wght@300;400;500;600;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/icon?family=Material+Icons+Round" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "primary": "#135bec",
+                        "background-light": "#f6f6f8",
+                        "background-dark": "#101622",
+                    },
+                    fontFamily: {
+                        "display": ["Work Sans"]
+                    },
+                    borderRadius: {
+                        "DEFAULT": "0.25rem",
+                        "lg": "0.5rem",
+                        "xl": "0.75rem",
+                        "full": "9999px"
+                    },
+                },
+            },
+        }
+    </script>
+<style>
+        body {
+            font-family: 'Work Sans', sans-serif;
+            -webkit-tap-highlight-color: transparent;
+        }
+        .hide-scrollbar::-webkit-scrollbar {
+            display: none;
+        }
+        .hide-scrollbar {
+            -ms-overflow-style: none;
+            scrollbar-width: none;
+        }
+    </style>
+<style>
+    body {
+      min-height: max(884px, 100dvh);
+    }
+  </style>
+  </head>
+<body class="bg-background-light dark:bg-background-dark text-slate-900 dark:text-slate-100 font-display">
+<!-- iOS Status Bar Placeholder -->
+<div class="h-11 w-full bg-background-light dark:bg-background-dark sticky top-0 z-50">
+<div class="flex justify-between items-center px-6 h-full text-xs font-semibold">
+<span>9:41</span>
+<div class="flex gap-1 items-center">
+<span class="material-icons-round text-sm">signal_cellular_alt</span>
+<span class="material-icons-round text-sm">wifi</span>
+<span class="material-icons-round text-sm">battery_full</span>
+</div>
+</div>
+</div>
+<!-- Header / Navigation -->
+<header class="px-5 pb-4 bg-background-light dark:bg-background-dark sticky top-11 z-40">
+<div class="flex justify-between items-end mb-4">
+<h1 class="text-3xl font-bold tracking-tight">Football News</h1>
+<div class="flex gap-3">
+<button class="w-10 h-10 rounded-full bg-slate-200 dark:bg-slate-800 flex items-center justify-center">
+<span class="material-icons-round text-xl">search</span>
+</button>
+<button class="w-10 h-10 rounded-full bg-slate-200 dark:bg-slate-800 flex items-center justify-center">
+<span class="material-icons-round text-xl">tune</span>
+</button>
+</div>
+</div>
+<!-- Segmented Control -->
+<div class="p-1 bg-slate-200 dark:bg-slate-800 rounded-xl flex">
+<button class="flex-1 py-2 text-sm font-semibold rounded-lg bg-white dark:bg-primary shadow-sm">Latest</button>
+<button class="flex-1 py-2 text-sm font-semibold rounded-lg text-slate-500 dark:text-slate-400">Transfers</button>
+<button class="flex-1 py-2 text-sm font-semibold rounded-lg text-slate-500 dark:text-slate-400">Official</button>
+</div>
+</header>
+<main class="px-5 pb-24">
+<!-- Featured Hero -->
+<section class="mb-8">
+<div class="relative w-full aspect-[4/5] rounded-xl overflow-hidden shadow-2xl">
+<img alt="Top Football Story" class="absolute inset-0 w-full h-full object-cover" data-alt="Professional football player celebrating a spectacular goal" src="https://lh3.googleusercontent.com/aida-public/AB6AXuDINn9vJ9ND8LuSFYt-hcp1tmxMUa-CNzTMWyFwLmA52O0SivdiZ38fuPzVmgKIKOmoYDE4lZjmTbNZa8DbO9-t0EZCl2iST1mr8Hwn2OjhDgY8oZDe9lRmPy8Yh2QA5Mpl2sc-ef6qNSeiq647lY1EMIi0YpqLZnHjh43LgisvlLJOjtbvB_aVWyUdK184YYCq4Q44-kkhiwAntt_cc7FYweJmVTB_KPTgrsysYuNDzu6BBCB-QwNrgoB3Lx0rtAt46Pp9i7vr6Pnr"/>
+<div class="absolute inset-0 bg-gradient-to-t from-background-dark via-transparent to-transparent"></div>
+<div class="absolute bottom-0 left-0 p-5 w-full">
+<div class="flex items-center gap-2 mb-2">
+<span class="bg-primary text-white text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-widest">Breaking</span>
+<span class="text-slate-300 text-xs">2 mins ago</span>
+</div>
+<h2 class="text-2xl font-bold leading-tight text-white mb-2">Manchester Derby: Tactics Leak Reveals Surprise Midfield Shift</h2>
+<p class="text-slate-300 text-sm line-clamp-2">Inside sources suggest Pep Guardiola is planning a radical new formation for tonight's high-stakes clash at Old Trafford...</p>
+</div>
+</div>
+</section>
+<!-- Transfer Rumors Horizontal Scroll -->
+<section class="mb-8 overflow-hidden -mx-5">
+<div class="px-5 mb-4 flex justify-between items-center">
+<h3 class="text-lg font-bold">Transfer Rumors</h3>
+<span class="text-primary text-sm font-medium">View All</span>
+</div>
+<div class="flex gap-4 overflow-x-auto px-5 hide-scrollbar">
+<!-- Rumor Card 1 -->
+<div class="min-w-[280px] bg-slate-100 dark:bg-slate-800/50 rounded-xl p-4 border border-slate-200 dark:border-slate-700/50">
+<div class="flex justify-between items-start mb-4">
+<div class="flex -space-x-2">
+<div class="w-10 h-10 rounded-full border-2 border-slate-800 bg-slate-200 overflow-hidden">
+<img alt="Club A" data-alt="Football club crest symbol" src="https://lh3.googleusercontent.com/aida-public/AB6AXuBW71iEMT2YAIwGNjgyZD9VMuT8cp9a41a90C0tDVoNF8WHxT_Cp_y8R_SpkiZR6-5zy4gj7VWD6sOu7PX9fz0BQvmVRCzq8eYFDAOtT5dHY6brByrDgfI0nTahVjHFeGU6NkoW76rcC_NWg6pOLq1LxX0ua_d4vgN2DfiuiCROgdu4ASfTojrBOM9U-3F5JZXqqsY6YOwJd8bOJQEQ8MBH7VfR-58hucBZkWawhLKWLKxSu2FYjwWdvo-pqIXO-SMrjtN1J3RQyO-q"/>
+</div>
+<div class="w-10 h-10 rounded-full border-2 border-slate-800 bg-primary flex items-center justify-center">
+<span class="material-icons-round text-white text-xs">trending_flat</span>
+</div>
+<div class="w-10 h-10 rounded-full border-2 border-slate-800 bg-slate-200 overflow-hidden">
+<img alt="Club B" data-alt="International football stadium icon" src="https://lh3.googleusercontent.com/aida-public/AB6AXuBnCJhkQiCGScN6R8g0VZrPmPDSeZcf5Kt6BxQS6F1hltf-bBbRDQjemN_5nUD0J6B6-1kxxW_DaEp2Ey8x4LnbcyccfkYL9F7kHjfdL4ytd8pwbKRV6-LocyfSwTJby2EfAiv1N17kryzZDvlh7XpahHt5VEK0x_pmlO1mtnP32O4VVPhKWzv_3SqjU5xwro0oHLTokcW_DokbsWvES9iEE4hWSCGjM6nT0oV-18g669cq5JM9KWw_EKEtZIlASEQ_LaGi-SxjQSAo"/>
+</div>
+</div>
+<div class="text-right">
+<div class="text-[10px] uppercase font-bold text-slate-500">Value</div>
+<div class="text-sm font-bold text-primary">€85.0M</div>
+</div>
+</div>
+<h4 class="font-bold text-base mb-1">Kylian Mbappé</h4>
+<p class="text-xs text-slate-500 mb-4">Paris Saint-Germain → Real Madrid</p>
+<div class="space-y-1.5">
+<div class="flex justify-between text-[10px] font-bold uppercase tracking-wider">
+<span>Trust Level</span>
+<span class="text-primary">92% (Tier 1)</span>
+</div>
+<div class="w-full h-1.5 bg-slate-300 dark:bg-slate-700 rounded-full overflow-hidden">
+<div class="h-full bg-primary rounded-full w-[92%]"></div>
+</div>
+</div>
+</div>
+<!-- Rumor Card 2 -->
+<div class="min-w-[280px] bg-slate-100 dark:bg-slate-800/50 rounded-xl p-4 border border-slate-200 dark:border-slate-700/50">
+<div class="flex justify-between items-start mb-4">
+<div class="flex -space-x-2">
+<div class="w-10 h-10 rounded-full border-2 border-slate-800 bg-slate-200 overflow-hidden">
+<img alt="Club C" data-alt="Club jersey colors" src="https://lh3.googleusercontent.com/aida-public/AB6AXuAnbfujGgSKLsI2vi1L6iliLbR1IktUQ_eK_ctsIsUaWKPpG04DTCVAMRAbkRLW5AGNAY3bFHhHRGKP6dVMToGQVuo6pAvTWz0j-gguIC0moKfu5lqDmEgIMo-at_VTJ2ao5i2_KUyKfgag_mx1DkyR7cYtnDlqK6dMGgejZxxpyRIjqEUA3SgkLeWsXRTX1spDqly-XM7hzxkgJeABf0eSPPBEyByOhjQhDcRvkYYsQ4rQJ8gL1acCe1s1PGBo-ab63h-00qhMABKO"/>
+</div>
+<div class="w-10 h-10 rounded-full border-2 border-slate-800 bg-primary flex items-center justify-center">
+<span class="material-icons-round text-white text-xs">trending_flat</span>
+</div>
+<div class="w-10 h-10 rounded-full border-2 border-slate-800 bg-slate-200 overflow-hidden">
+<img alt="Club D" data-alt="European club emblem" src="https://lh3.googleusercontent.com/aida-public/AB6AXuAvNOrgmCOaHkiAIdBRqDWcqvPZCjV_X5536h1VA4xtdEH0DLGDuvEatbfT-OdCcO1Ke3GnzGeitktL77cslbhzKfSr9_MLigdhXLjgUHLlrD0faK71UzRC04u0XJphMmfrQGvB_Ai0mMnuFYoaEwzcY8imyArd8v4g3HuEbDCxW8dlCYUhkZWatzaRUjzHwhtws7gu2SC8B-riNXgZcHnSi3LN4uD-OBcJgqQ3yfy7sm517sIf17h79zZyWBExbhrg2Gm61_X7gt40"/>
+</div>
+</div>
+<div class="text-right">
+<div class="text-[10px] uppercase font-bold text-slate-500">Value</div>
+<div class="text-sm font-bold text-primary">€42.5M</div>
+</div>
+</div>
+<h4 class="font-bold text-base mb-1">Victor Osimhen</h4>
+<p class="text-xs text-slate-500 mb-4">Napoli → Chelsea FC</p>
+<div class="space-y-1.5">
+<div class="flex justify-between text-[10px] font-bold uppercase tracking-wider">
+<span>Trust Level</span>
+<span class="text-amber-500">65% (Tier 3)</span>
+</div>
+<div class="w-full h-1.5 bg-slate-300 dark:bg-slate-700 rounded-full overflow-hidden">
+<div class="h-full bg-amber-500 rounded-full w-[65%]"></div>
+</div>
+</div>
+</div>
+</div>
+</section>
+<!-- Official Announcements -->
+<section class="mb-8">
+<h3 class="text-lg font-bold mb-4">Official Announcements</h3>
+<div class="space-y-4">
+<div class="flex gap-4 bg-white dark:bg-slate-900/40 p-3 rounded-xl border border-slate-200 dark:border-slate-800">
+<div class="relative w-20 h-20 flex-shrink-0 rounded-lg overflow-hidden">
+<img alt="Official News" class="w-full h-full object-cover" data-alt="Modern football stadium stands under lights" src="https://lh3.googleusercontent.com/aida-public/AB6AXuCgDoVk3Ca1cxM5babtZ5JFfx1SBzbWlPgNRJuUSaGoQwttoNrD25C8FTrYdF322p9HZQdS1PONADUvb79poTZZez-MhCLWzAhGlbNSOcBtKY_ikyqbi68hLxnu_wiuGoXeDBgSLm8h20TlWPB4rDQ0Di29VjIog0icpabn3r4ygW6qBJkxmCc51_IZRgDZDzYuYyazsXv9E4nbM5Ukv1ODnGt_W-5_0g-TINmUoxk_E_Jg2enpfP65zJUHjaZkBhenE3CNoCKhJlxF"/>
+<div class="absolute top-1 right-1 bg-white rounded-full flex items-center justify-center p-0.5">
+<span class="material-icons-round text-primary text-[10px]">verified</span>
+</div>
+</div>
+<div class="flex flex-col justify-center">
+<span class="text-[10px] font-bold text-primary uppercase mb-1">Liverpool FC</span>
+<h4 class="font-bold text-sm leading-snug mb-1">Medical Scheduled: New Center Back Arrival Confirmed</h4>
+<span class="text-xs text-slate-500">Official • 1 hour ago</span>
+</div>
+</div>
+<div class="flex gap-4 bg-white dark:bg-slate-900/40 p-3 rounded-xl border border-slate-200 dark:border-slate-800">
+<div class="relative w-20 h-20 flex-shrink-0 rounded-lg overflow-hidden">
+<img alt="Official News" class="w-full h-full object-cover" data-alt="Football equipment on training pitch" src="https://lh3.googleusercontent.com/aida-public/AB6AXuDmOz-d7Qud8QRLXzaDCJleuNdZL4ee_oTGtF2HUPcU9t77JCs1DfbgEgla_6t2TyX24RumidDbjsnjxhfKcrsKja__Yno_VaDXB-01WbeDRxv6pYf2G2MvAD19mhU9hl8msDuS2yAGx7_3bg3OK3uhtlS6nW0tx35U-HmfzGh70ykMZg_52IHQbG_9dcJ6t5d5P2uyZ8v3Fwk-N63OGOh0Hg7i_zDLqHyKbQYnkr4HH55y-VvIaGpnUtFOOTVEad9jphHTUworFUJP"/>
+<div class="absolute top-1 right-1 bg-white rounded-full flex items-center justify-center p-0.5">
+<span class="material-icons-round text-primary text-[10px]">verified</span>
+</div>
+</div>
+<div class="flex flex-col justify-center">
+<span class="text-[10px] font-bold text-primary uppercase mb-1">FC Bayern</span>
+<h4 class="font-bold text-sm leading-snug mb-1">Long-term Contract Extension for Academy Star</h4>
+<span class="text-xs text-slate-500">Official • 4 hours ago</span>
+</div>
+</div>
+</div>
+</section>
+<!-- Latest News Grid -->
+<section class="mb-8">
+<h3 class="text-lg font-bold mb-4">Latest Stories</h3>
+<div class="grid grid-cols-2 gap-4">
+<div class="group">
+<div class="aspect-square rounded-xl overflow-hidden mb-2">
+<img alt="News item" class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" data-alt="Football fans cheering in the stadium" src="https://lh3.googleusercontent.com/aida-public/AB6AXuDfppTSbFxi4vZ2wzTNHGLdH8BvYVtAv_lueuwEPJDPo90HEj4b6fbodd5sP99hIIt8PDcY3BWxn_0OQDIOw-2dl1P1sbE7BzCEgSc99B-mmeJOpw1C-BBYAHOaj6jTFvpfu-1aHSGyYYv2wwrfHkCluTCA-qEh44X8FW6u4RiQd4-cfUV5Zucj1l0xnY8VD0OmJVe4P4TMkrbWV7gPb_Uj7RQhXCmjSRlbcs-dnmD3qaMampbThVfTrEbv_dRGP6hj_8DXhNvqtTWO"/>
+</div>
+<span class="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Analysis</span>
+<h4 class="text-sm font-bold line-clamp-2 mt-1">Is Xabi Alonso the future of management?</h4>
+</div>
+<div class="group">
+<div class="aspect-square rounded-xl overflow-hidden mb-2">
+<img alt="News item" class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" data-alt="Macro shot of a soccer ball on grass" src="https://lh3.googleusercontent.com/aida-public/AB6AXuC8T-j7Q8pyELYCUt2YhPJ4rIaLxT_TvlNjHqE5mpSzBgoXd9sKGpY6TeqZr9vMCFcTX08fEOz0uctAP1WRBgcyI1ZpMZ7gjR_Cz-JZNNXovyqYBwddldVPAXWYN6vwATNR0W4Z3C2hO1LcyUaXM5O-WRGaYGhQJ_Gn361ZinGTAgzUOfOTPwCOnsfBcihlQlM4KL2AIe-SczVjDIro4j07ncUuEau-odlsLNPEwfyRtppz6FrlZD7Pv3i6QE0wk5sOE0A7ZLyWczs0"/>
+</div>
+<span class="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Injury Update</span>
+<h4 class="text-sm font-bold line-clamp-2 mt-1">De Bruyne sidelined for crucial 4 weeks</h4>
+</div>
+<div class="group">
+<div class="aspect-square rounded-xl overflow-hidden mb-2">
+<img alt="News item" class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" data-alt="Sports data analytics screen display" src="https://lh3.googleusercontent.com/aida-public/AB6AXuDqUlUalcnLlmB57v63qbsrbeAbwfQ4cvoPJU14AYhEM8_UJQ3Qrm0o03TiOmFs5KJ2O2p-V3Hl16NNCMh-OyQFb3hi_f4mHtbEh6SImi95sEeWymG-SRkfh9weoqTMKShuJBNITcaTL9F23lDDT0omr9W-EbquY7luZFLcr5yHMtW8v47CpR14KDKshzeJKcIB7V9ZlhdagGQkgKXSK7hK9yhp2-DqRTLL924HKCxRLgu3BMZAKz7el7BzA75RewpCa_S1fyzZdrA5"/>
+</div>
+<span class="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Data Focus</span>
+<h4 class="text-sm font-bold line-clamp-2 mt-1">Predicting the Champions League Winner</h4>
+</div>
+<div class="group">
+<div class="aspect-square rounded-xl overflow-hidden mb-2">
+<img alt="News item" class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" data-alt="Soccer referee showing yellow card" src="https://lh3.googleusercontent.com/aida-public/AB6AXuDq1yiW9-5ovqJA2CCiWInHMat4sfS__kPGGfu-DLneG5n7w0c7IXKcUit8P3TYtw3c59cDQplbopFNNPqt-SiAbg1m6RVnjubznTmjv7qWrcJgy3hvn9cSPSInnXdQRqtRGAjDHqTCsBUGqKsoTnkibUZVeuALBHW6bLW7pFWVTC1SerjjHCovvSBvNY6l84irkz21qGN7yqBfVpkngxn7LVgmRl81TPVxpi6I_c7ya_Vj59bktcKGD5-xsU7VBy_K_j5xGuHZ5z4_"/>
+</div>
+<span class="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Referee Watch</span>
+<h4 class="text-sm font-bold line-clamp-2 mt-1">VAR Rule Changes Proposed for 2024</h4>
+</div>
+</div>
+</section>
+</main>
+<!-- Navigation Bar (iOS Tab Bar) -->
+<nav class="fixed bottom-0 left-0 right-0 bg-white/80 dark:bg-background-dark/80 backdrop-blur-xl border-t border-slate-200 dark:border-slate-800 px-6 py-2 pb-8 flex justify-between items-center z-50">
+<button class="flex flex-col items-center gap-1 text-slate-400">
+<span class="material-icons-round">home</span>
+<span class="text-[10px] font-medium">Home</span>
+</button>
+<button class="flex flex-col items-center gap-1 text-slate-400">
+<span class="material-icons-round">analytics</span>
+<span class="text-[10px] font-medium">Tips</span>
+</button>
+<button class="flex flex-col items-center gap-1 text-primary">
+<span class="material-icons-round">newspaper</span>
+<span class="text-[10px] font-medium">News</span>
+</button>
+<button class="flex flex-col items-center gap-1 text-slate-400">
+<span class="material-icons-round">sports_soccer</span>
+<span class="text-[10px] font-medium">Matches</span>
+</button>
+<button class="flex flex-col items-center gap-1 text-slate-400">
+<span class="material-icons-round">person_outline</span>
+<span class="text-[10px] font-medium">Profile</span>
+</button>
+</nav>
+</body></html>

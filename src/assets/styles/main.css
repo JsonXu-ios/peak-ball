@@ -1,0 +1,56 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Global Styles */
+*,
+*::before,
+*::after {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html,
+body {
+  font-family: 'Lexend', sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Scrollbar hiding utility */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+/* Neon glow effect for hot cards */
+.neon-glow {
+  box-shadow: 0 0 15px rgba(19, 91, 236, 0.3);
+}
+
+/* iOS toggle switch */
+.ios-toggle:checked + .ios-toggle-label {
+  background-color: #135bec;
+}
+.ios-toggle:checked + .ios-toggle-label::after {
+  transform: translateX(20px);
+}
+
+/* Podium gradient for leaderboard */
+.podium-gradient {
+  background: radial-gradient(
+    circle at center,
+    rgba(19, 91, 236, 0.15) 0%,
+    rgba(16, 22, 34, 0) 70%
+  );
+}
+
+/* Material Symbols default settings */
+.material-symbols-outlined {
+  font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+}
