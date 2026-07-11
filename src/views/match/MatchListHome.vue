@@ -136,7 +136,7 @@
             <div class="mt-3 overflow-hidden rounded-md border border-slate-200">
               <div class="bg-slate-50 px-3 py-2">
                 <p class="text-xs font-black text-slate-500">邪修正确率</p>
-                <p class="mt-1 text-[11px] font-bold text-slate-400">按完场结果统计小球组、追大组、主推和反向推；大小球统一按半球盘口计算。</p>
+                <p class="mt-1 text-[11px] font-bold text-slate-400">按完场结果统计小球组、追大组、一推、反诱导二推和反向推；大小球统一按半球盘口计算。</p>
               </div>
               <table class="w-full table-fixed text-sm">
                 <thead class="bg-slate-50 text-xs font-black text-slate-500">
@@ -144,7 +144,8 @@
                     <th class="px-2 py-2 text-left">项目</th>
                     <th class="px-2 py-2 text-center">小球组</th>
                     <th class="px-2 py-2 text-center">追大组</th>
-                    <th class="px-2 py-2 text-center">主推</th>
+                    <th class="px-2 py-2 text-center">一推</th>
+                    <th class="px-2 py-2 text-center">二推</th>
                     <th class="px-2 py-2 text-center">反向推</th>
                   </tr>
                 </thead>
@@ -153,6 +154,7 @@
                     <td class="px-2 py-3 font-black text-slate-500">{{ row.label }}</td>
                     <td class="px-2 py-3 text-center font-black text-red-600">{{ accuracyRateText(row.underCorrect, row.sample) }}</td>
                     <td class="px-2 py-3 text-center font-black text-emerald-700">{{ accuracyRateText(row.overCorrect, row.sample) }}</td>
+                    <td class="px-2 py-3 text-center font-black text-slate-700">{{ accuracyRateText(row.firstCorrect, row.sample) }}</td>
                     <td class="px-2 py-3 text-center font-black text-slate-900">{{ accuracyRateText(row.mainCorrect, row.sample) }}</td>
                     <td class="px-2 py-3 text-center font-black text-primary">{{ accuracyRateText(row.reverseCorrect, row.sample) }}</td>
                   </tr>
@@ -300,11 +302,20 @@
                 </tbody>
               </table>
               <div class="border-t border-slate-200 bg-slate-50 px-3 py-2">
-                <p class="text-[11px] font-black text-slate-500">主推</p>
+                <p class="text-[11px] font-black text-slate-500">一推</p>
+                <p class="mt-1 text-sm font-black" :class="evilCultClass(evilCultPrediction(item).firstDirection === 'over' ? 'green' : 'red')">{{ evilCultPrediction(item).firstPick }}</p>
+                <p class="mt-2 text-[11px] font-black text-slate-500">二推（最终主推）</p>
                 <p class="mt-1 text-sm font-black" :class="evilCultClass(evilCultPrediction(item).goalTone)">{{ evilCultPrediction(item).mainPick }}</p>
-                <p class="mt-1 text-[11px] font-bold text-slate-500">{{ evilCultPrediction(item).mainReason }}</p>
+                <p class="mt-1 text-[11px] font-bold" :class="evilCultPrediction(item).secondPassReversed ? 'text-blue-700' : 'text-slate-500'">{{ evilCultPrediction(item).secondPassReason }}</p>
                 <p class="mt-2 text-[11px] font-black text-slate-500">反向推</p>
                 <p class="mt-1 text-sm font-black" :class="evilCultClass(evilCultPrediction(item).reverseTone)">{{ evilCultPrediction(item).reversePick }}</p>
+                <button
+                  class="mt-3 flex h-9 w-full items-center justify-center gap-1 rounded-md border border-slate-300 bg-white text-xs font-black text-slate-700"
+                  @click.stop="openEvilCultAudit(item)"
+                >
+                  <span class="material-symbols-outlined text-base">account_tree</span>
+                  查看主推逻辑
+                </button>
               </div>
             </div>
           </AnalysisSection>
@@ -550,6 +561,124 @@
       </div>
     </div>
 
+    <div v-if="evilCultAuditItem && evilCultAudit" class="fixed inset-0 z-[90] overflow-y-auto bg-slate-950/90" role="dialog" aria-modal="true" @click.stop>
+      <div class="sticky top-0 z-10 flex items-center gap-3 border-b border-slate-800 bg-slate-950 p-4 text-white">
+        <button class="flex size-9 items-center justify-center rounded-md bg-white/10" title="关闭" @click="closeEvilCultAudit">
+          <span class="material-symbols-outlined">close</span>
+        </button>
+        <div class="min-w-0">
+          <h2 class="truncate font-black">邪修主推逻辑</h2>
+          <p class="truncate text-xs font-bold text-slate-400">{{ evilCultAuditItem.home }} vs {{ evilCultAuditItem.guest }}</p>
+        </div>
+      </div>
+
+      <div class="mx-auto max-w-3xl p-3">
+        <div class="overflow-hidden rounded-lg bg-white text-slate-950">
+          <section class="border-b border-slate-200 p-3">
+            <div class="grid grid-cols-3 gap-2 text-center">
+              <div class="rounded-md bg-slate-950 px-2 py-3 text-white">
+                <p class="text-[10px] font-black text-slate-400">最终主推</p>
+                <p class="mt-1 text-sm font-black">{{ evilCultAudit.prediction.mainPick }}</p>
+              </div>
+              <div class="rounded-md bg-emerald-50 px-2 py-3 text-emerald-700">
+                <p class="text-[10px] font-black">一推追大得分</p>
+                <p class="mt-1 text-xl font-black">{{ evilCultScoreText(evilCultAudit.scores.over) }}</p>
+              </div>
+              <div class="rounded-md bg-red-50 px-2 py-3 text-red-600">
+                <p class="text-[10px] font-black">一推先小得分</p>
+                <p class="mt-1 text-xl font-black">{{ evilCultScoreText(evilCultAudit.scores.under) }}</p>
+              </div>
+            </div>
+
+            <div class="mt-3 space-y-2">
+              <p class="text-[10px] font-black text-slate-400">评分占比（用于比较方向，不代表真实概率）</p>
+              <div>
+                <div class="mb-1 flex justify-between text-xs font-black text-emerald-700">
+                  <span>追大</span>
+                  <span>{{ evilCultScorePercent(evilCultAudit.scores, 'over') }}%</span>
+                </div>
+                <div class="h-2 overflow-hidden rounded bg-slate-100">
+                  <div class="h-full bg-emerald-500" :style="{ width: `${evilCultScorePercent(evilCultAudit.scores, 'over')}%` }"></div>
+                </div>
+              </div>
+              <div>
+                <div class="mb-1 flex justify-between text-xs font-black text-red-600">
+                  <span>先小</span>
+                  <span>{{ evilCultScorePercent(evilCultAudit.scores, 'under') }}%</span>
+                </div>
+                <div class="h-2 overflow-hidden rounded bg-slate-100">
+                  <div class="h-full bg-red-500" :style="{ width: `${evilCultScorePercent(evilCultAudit.scores, 'under')}%` }"></div>
+                </div>
+              </div>
+            </div>
+
+            <div class="mt-3 rounded-md border px-3 py-3" :class="evilCultAudit.prediction.secondPassReversed ? 'border-blue-200 bg-blue-50' : 'border-slate-200 bg-slate-50'">
+              <div class="grid grid-cols-2 gap-2 text-xs">
+                <div>
+                  <p class="font-black text-slate-500">一推结论</p>
+                  <p class="mt-1 font-black text-slate-900">{{ evilCultAudit.prediction.firstPick }}</p>
+                </div>
+                <div>
+                  <p class="font-black text-slate-500">二推评分（大 : 小）</p>
+                  <p class="mt-1 font-black text-slate-900">{{ evilCultScoreText(evilCultAudit.prediction.secondOverScore) }} : {{ evilCultScoreText(evilCultAudit.prediction.secondUnderScore) }}</p>
+                </div>
+              </div>
+              <p class="mt-2 text-xs font-black leading-relaxed" :class="evilCultAudit.prediction.secondPassReversed ? 'text-blue-700' : 'text-slate-600'">{{ evilCultAudit.prediction.secondPassReason }}</p>
+            </div>
+          </section>
+
+          <section class="border-b border-slate-200 p-3">
+            <h3 class="mb-2 text-sm font-black">参与计算的数据</h3>
+            <div class="overflow-hidden rounded-md border border-slate-200">
+              <table class="w-full table-fixed text-xs">
+                <thead class="bg-slate-50 text-slate-500">
+                  <tr>
+                    <th class="w-[30%] px-2 py-2 text-left font-black">数据项</th>
+                    <th class="w-[25%] px-2 py-2 text-left font-black">当前值</th>
+                    <th class="px-2 py-2 text-left font-black">作用</th>
+                  </tr>
+                </thead>
+                <tbody class="divide-y divide-slate-100">
+                  <tr v-for="row in evilCultAudit.inputs" :key="row.label">
+                    <td class="px-2 py-2 font-black text-slate-500">{{ row.label }}</td>
+                    <td class="px-2 py-2 font-black text-slate-900 break-words">{{ row.value }}</td>
+                    <td class="px-2 py-2 font-bold text-slate-600 break-words">{{ row.detail }}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
+
+          <section class="p-3">
+            <h3 class="mb-2 text-sm font-black">逐步评分</h3>
+            <div class="overflow-x-auto rounded-md border border-slate-200">
+              <table class="min-w-[620px] w-full text-xs">
+                <thead class="bg-slate-50 text-slate-500">
+                  <tr>
+                    <th class="px-2 py-2 text-left font-black">步骤</th>
+                    <th class="px-2 py-2 text-left font-black">依据</th>
+                    <th class="px-2 py-2 text-center font-black">追大变动</th>
+                    <th class="px-2 py-2 text-center font-black">先小变动</th>
+                    <th class="px-2 py-2 text-center font-black">累计比分</th>
+                  </tr>
+                </thead>
+                <tbody class="divide-y divide-slate-100">
+                  <tr v-for="step in evilCultAudit.scores.steps" :key="step.label">
+                    <td class="px-2 py-2 font-black text-slate-700">{{ step.label }}</td>
+                    <td class="px-2 py-2 font-bold text-slate-500">{{ step.detail }}</td>
+                    <td class="px-2 py-2 text-center font-black text-emerald-700">{{ evilCultDeltaText(step.overDelta) }}</td>
+                    <td class="px-2 py-2 text-center font-black text-red-600">{{ evilCultDeltaText(step.underDelta) }}</td>
+                    <td class="px-2 py-2 text-center font-black text-slate-900">{{ evilCultScoreText(step.overScore) }} : {{ evilCultScoreText(step.underScore) }}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <p class="mt-3 rounded-md bg-slate-100 px-3 py-2 text-xs font-black leading-relaxed text-slate-700">{{ evilCultAudit.prediction.mainReason }}</p>
+          </section>
+        </div>
+      </div>
+    </div>
+
   </div>
 </template>
 
@@ -607,6 +736,49 @@ interface EvilCultRow {
   variant?: 'note'
 }
 
+interface EvilCultScoreStep {
+  label: string
+  detail: string
+  overDelta: number
+  underDelta: number
+  overScore: number
+  underScore: number
+}
+
+interface EvilCultGoalScores {
+  over: number
+  under: number
+  modelLine: number
+  expectedHome: number
+  expectedGuest: number
+  expectedTotal: number
+  scoringAverage: number
+  history: number
+  recent: number
+  goalStatsAverage: number
+  balance: ReturnType<typeof goalBalanceSignalForItem>
+  base: ReturnType<typeof baseGoalSignal>
+  overHeat: number
+  underHeat: number
+  steps: EvilCultScoreStep[]
+}
+
+interface EvilCultSecondPass {
+  initialDirection: 'over' | 'under'
+  finalDirection: 'over' | 'under'
+  overScore: number
+  underScore: number
+  reversed: boolean
+  forced: boolean
+  reason: string
+}
+
+interface EvilCultAuditInput {
+  label: string
+  value: string
+  detail: string
+}
+
 interface GuidePrediction {
   outcome: DirectionOutcome
   goal: { label: string; total: number; tone: StatRow['tone'] }
@@ -632,6 +804,7 @@ interface EvilCultAccuracyRow {
   sample: number
   underCorrect: number
   overCorrect: number
+  firstCorrect: number
   mainCorrect: number
   reverseCorrect: number
 }
@@ -864,6 +1037,7 @@ const list = ref<AnalysisMatch[]>([])
 const showScore = ref(restoredState?.showScore ?? true)
 const viewMode = ref<AnalysisViewMode>(restoredState?.viewMode || 'simple')
 const selectedItem = ref<AnalysisMatch | null>(null)
+const evilCultAuditItem = ref<AnalysisMatch | null>(null)
 const dialogMode = ref<'plan' | 'south'>('plan')
 const dialogPublishTitle = ref('')
 const dialogPublicContent = ref('')
@@ -923,6 +1097,18 @@ const accuracyStatsRangeText = computed(() => `${accuracyStats.value.startDate} 
 const accuracyMatchRowsById = computed(() => {
   const rows = accuracyCommonRows.value.length ? accuracyCommonRows.value : accuracyStats.value.commonRows
   return new Map(buildAccuracyMatchRows(list.value, rows, 'all').map((row) => [row.matchId, row]))
+})
+const evilCultAudit = computed(() => {
+  const item = evilCultAuditItem.value
+  if (!item) return null
+  const line = evilCultGoalLine(item)
+  const scores = evilCultGoalScores(item, evilCultRawGoalLine(item))
+  return {
+    line,
+    scores,
+    prediction: evilCultPrediction(item),
+    inputs: evilCultAuditInputs(item, line, scores),
+  }
 })
 
 const highConfidenceCount = computed(() => list.value.filter((item) => item.confidence === '高信心').length)
@@ -1040,6 +1226,7 @@ function emptyEvilCultAccuracyRow(label: string): EvilCultAccuracyRow {
     sample: 0,
     underCorrect: 0,
     overCorrect: 0,
+    firstCorrect: 0,
     mainCorrect: 0,
     reverseCorrect: 0,
   }
@@ -1130,20 +1317,22 @@ function buildEvilCultAccuracyRows(matches: AnalysisMatch[]): EvilCultAccuracyRo
     ]
 
     checks.forEach(({ row, under, over }) => {
+      const first = prediction.firstDirection === 'under' ? under : over
       const main = prediction.goalDirection === 'under' ? under : over
       const reverse = prediction.goalDirection === 'under' ? over : under
-      addEvilCultAccuracy(row, under, over, main, reverse)
-      addEvilCultAccuracy(rows.overall, under, over, main, reverse)
+      addEvilCultAccuracy(row, under, over, first, main, reverse)
+      addEvilCultAccuracy(rows.overall, under, over, first, main, reverse)
     })
   })
 
   return [rows.overall, rows.goal, rows.total, rows.score, rows.outcome]
 }
 
-function addEvilCultAccuracy(row: EvilCultAccuracyRow, under: boolean, over: boolean, main: boolean, reverse: boolean) {
+function addEvilCultAccuracy(row: EvilCultAccuracyRow, under: boolean, over: boolean, first: boolean, main: boolean, reverse: boolean) {
   row.sample += 1
   if (under) row.underCorrect += 1
   if (over) row.overCorrect += 1
+  if (first) row.firstCorrect += 1
   if (main) row.mainCorrect += 1
   if (reverse) row.reverseCorrect += 1
 }
@@ -1597,6 +1786,27 @@ function syncDateQuery() {
   const current = String(route.query.date || '')
   if (current === selectedDate.value) return
   router.replace({ query: { ...route.query, date: selectedDate.value } })
+}
+
+function openEvilCultAudit(item: AnalysisMatch) {
+  evilCultAuditItem.value = item
+  void hydrateEvilCultAuditDetail(item.matchId)
+}
+
+async function hydrateEvilCultAuditDetail(matchId: string) {
+  try {
+    const { data } = await analysisApi.getAnalysisDetail(matchId)
+    if (!evilCultAuditItem.value || evilCultAuditItem.value.matchId !== matchId) return
+    evilCultAuditItem.value = data
+    const index = list.value.findIndex((item) => item.matchId === matchId)
+    if (index >= 0) list.value[index] = { ...list.value[index], ...data }
+  } catch {
+    // The list payload already contains the inputs required by the audit dialog.
+  }
+}
+
+function closeEvilCultAudit() {
+  evilCultAuditItem.value = null
 }
 
 function openDialog(item: AnalysisMatch, mode: 'plan' | 'south') {
@@ -2957,7 +3167,10 @@ function profitAlignmentWarningRows(item: AnalysisMatch): GuideWarningRow[] {
       rq && rq.outcome === local.outcome ? '让球' : '',
     ].filter(Boolean)
     if (alignedMarkets.length) {
-      warnings.push({ value: `警示：本地盈亏同向：本地${outcomeName(local)}与${alignedMarkets.join('、')}一致`, tone: 'red' })
+      warnings.push({
+        value: `警示：庄家舒服项同向：本地测算、${alignedMarkets.join('、')}均指向${outcomeShortLabel(local.outcome)}（庄家盈利方向）`,
+        tone: 'red',
+      })
     }
   }
 
@@ -3074,9 +3287,16 @@ function evilCultPrediction(item: AnalysisMatch): {
   overScore: string
   underOutcome: DirectionOutcome
   overOutcome: DirectionOutcome
+  firstPick: string
+  firstDirection: 'over' | 'under'
   mainPick: string
   reversePick: string
   mainReason: string
+  secondPassReason: string
+  secondPassReversed: boolean
+  secondPassForced: boolean
+  secondOverScore: number
+  secondUnderScore: number
   mainTotal: number
   secondaryTotalValue: number
   goalDirection: 'over' | 'under'
@@ -3093,10 +3313,12 @@ function evilCultPrediction(item: AnalysisMatch): {
   reason: string
 } {
   const line = evilCultGoalLine(item)
-  const scores = evilCultGoalScores(item, line)
+  const scores = evilCultGoalScores(item, evilCultRawGoalLine(item))
   const underTotal = evilCultUnderTotal(line, scores.expectedTotal)
   const overTotal = evilCultChaseOverTotal(line, scores.expectedTotal)
-  const mainDirection = scores.under >= scores.over ? 'under' : 'over'
+  const secondPass = evilCultSecondPass(item, scores)
+  const firstDirection = secondPass.initialDirection
+  const mainDirection = secondPass.finalDirection
   const mainTotal = mainDirection === 'under' ? underTotal : overTotal
   const secondaryTotal = mainDirection === 'under' ? overTotal : underTotal
   const underLine = line
@@ -3113,6 +3335,10 @@ function evilCultPrediction(item: AnalysisMatch): {
   const overScore = `${overGoals.home}:${overGoals.guest}`
   const goalLineText = trimFixed(line, 2)
   const overLineText = trimFixed(overLine, 2)
+  const firstPick = firstDirection === 'under'
+    ? `小球组：小${goalLineText} / ${underTotal}球 / ${underScore}`
+    : `追大组：追大${goalLineText} / ${overTotal}球 / ${overScore}`
+  const firstReason = evilCultReason(scores, line, underTotal, overTotal)
 
   return {
     goal: mainDirection === 'over' ? `追大${goalLineText}` : `小${goalLineText}`,
@@ -3131,9 +3357,16 @@ function evilCultPrediction(item: AnalysisMatch): {
     overScore,
     underOutcome: scoreOutcome(underScore),
     overOutcome: scoreOutcome(overScore),
+    firstPick,
+    firstDirection,
     mainPick: mainDirection === 'under' ? `小球组：小${goalLineText} / ${underTotal}球 / ${underScore}` : `追大组：追大${goalLineText} / ${overTotal}球 / ${overScore}`,
     reversePick: mainDirection === 'under' ? `追大组：追大${goalLineText} / ${overTotal}球 / ${overScore}` : `小球组：小${goalLineText} / ${underTotal}球 / ${underScore}`,
-    mainReason: evilCultReason(scores, line, underTotal, overTotal),
+    mainReason: `${firstReason}；二推：${secondPass.reason}`,
+    secondPassReason: secondPass.reason,
+    secondPassReversed: secondPass.reversed,
+    secondPassForced: secondPass.forced,
+    secondOverScore: secondPass.overScore,
+    secondUnderScore: secondPass.underScore,
     mainTotal,
     secondaryTotalValue: secondaryTotal,
     goalDirection: mainDirection,
@@ -3147,58 +3380,339 @@ function evilCultPrediction(item: AnalysisMatch): {
     goalTone: mainDirection === 'over' ? 'green' : 'red',
     reverseTone: mainDirection === 'under' ? 'green' : 'red',
     note: mainDirection === 'under' ? '固定先小，错了追大' : '追大剧本更强，保留小球次选',
-    reason: evilCultReason(scores, line, underTotal, overTotal),
+    reason: `${firstReason}；二推：${secondPass.reason}`,
   }
 }
 
-function evilCultGoalScores(item: AnalysisMatch, line: number): { over: number; under: number; expectedTotal: number } {
-  const expected = expectedGoalPair(item)
+function evilCultGoalScores(item: AnalysisMatch, line: number): EvilCultGoalScores {
+  const expected = evilCultGoalProjection(item)
   const expectedTotal = expected.home + expected.guest
   const [historyGoals, recentGoals] = splitPair(item.changguiqiushu)
   const history = historyGoalSampleValue(item, historyGoals)
   const recent = recentGoalSampleValue(item, recentGoals)
-  const homeTotal = parseOptionalNumber(item.qiushuAll?.[0])
-  const guestTotal = parseOptionalNumber(item.qiushuAll?.[2])
-  const homeConcede = parseOptionalNumber(item.qiushuAll?.[4])
-  const guestConcede = parseOptionalNumber(item.qiushuAll?.[5])
+  const homeAttack = parseOptionalNumber(item.liangduiqiushu?.[0])
+  const guestAttack = parseOptionalNumber(item.liangduiqiushu?.[1])
+  const homeConcede = parseOptionalNumber(item.liangduiqiushu?.[2])
+  const guestConcede = parseOptionalNumber(item.liangduiqiushu?.[3])
+  const goalStatsAverage = weightedAverage([
+    { value: homeAttack, weight: 0.25 },
+    { value: guestAttack, weight: 0.25 },
+    { value: homeConcede, weight: 0.25 },
+    { value: guestConcede, weight: 0.25 },
+  ])
   const rawAverage = weightedAverage([
-    { value: expectedTotal, weight: 0.35 },
-    { value: recent, weight: 0.25 },
-    { value: history, weight: 0.15 },
-    { value: line, weight: 0.1 },
-    { value: weightedAverage([
-      { value: homeTotal, weight: 0.25 },
-      { value: guestTotal, weight: 0.25 },
-      { value: homeConcede, weight: 0.25 },
-      { value: guestConcede, weight: 0.25 },
-    ]), weight: 0.15 },
+    { value: expectedTotal, weight: 0.5 },
+    { value: history, weight: 0.1 },
+    { value: line, weight: 0.4 },
   ])
   const average = Number.isFinite(rawAverage) ? rawAverage : line
-  let over = 50 + (average - line) * 18
-  let under = 50 + (line - average) * 18
-  const balance = goalBalanceDirection(goalBalanceSignalForItem(item))
+  const balanceSignal = goalBalanceSignalForItem(item)
+  const balance = goalBalanceDirection(balanceSignal)
+  const scoringAverage = balance === 'under'
+    ? Math.min(average, line)
+    : balance === 'over'
+      ? Math.max(average, line)
+      : average
   const base = baseGoalSignal(item)
-  if (balance === 'over') over += 8
-  if (balance === 'under') under += 8
-  if (base === 'over') over += 6
-  if (base === 'under') under += 6
-  const overReverseWeight = evilCultReverseHeatWeight(item.qiushutouzhu?.[0])
-  const underReverseWeight = evilCultReverseHeatWeight(item.qiushutouzhu?.[1])
-  if (overReverseWeight > 0) {
-    under += overReverseWeight
-    over -= overReverseWeight * 0.4
+  let over = 50
+  let under = 50
+  const steps: EvilCultScoreStep[] = []
+  const addStep = (label: string, detail: string, overDelta: number, underDelta: number) => {
+    over += overDelta
+    under += underDelta
+    steps.push({ label, detail, overDelta, underDelta, overScore: over, underScore: under })
   }
-  if (underReverseWeight > 0) {
-    over += underReverseWeight
-    under -= underReverseWeight * 0.4
+  addStep('基础分', '大小球从50:50开始', 0, 0)
+  const averageDelta = (scoringAverage - line) * 18
+  addStep(
+    '综合均值',
+    balance
+      ? `原均值${trimFixed(average, 2)}触发${goalBalanceSignalLabel(balanceSignal)}，评分均值限制为${trimFixed(scoringAverage, 2)}`
+      : `综合均值${trimFixed(scoringAverage, 2)}与盘口${trimFixed(line, 2)}的差值 × 18`,
+    averageDelta,
+    -averageDelta,
+  )
+  const balanceOverDelta = balanceSignal === 'overCorrected' ? 18 : balance === 'over' ? 12 : 0
+  const balanceUnderDelta = balanceSignal === 'underHidden' ? 18 : balance === 'under' ? 12 : 0
+  addStep(
+    '回归修正',
+    balanceSignal ? `${goalBalanceSignalLabel(balanceSignal)}信号进入主推评分` : '未触发大小球回归信号',
+    balanceOverDelta,
+    balanceUnderDelta,
+  )
+  addStep(
+    '基础球数信号',
+    base ? `现有标签指向${base === 'over' ? '大球' : '小球'}，但它由近期均球推算，为避免重复计权只展示` : '现有球数标签没有明确方向',
+    0,
+    0,
+  )
+  const market = evilCultGoalMarketSignal(item)
+  addStep(
+    '盘口升降',
+    market.lineDetail,
+    market.lineScore > 0 ? market.lineScore : 0,
+    market.lineScore < 0 ? Math.abs(market.lineScore) : 0,
+  )
+  addStep(
+    '大小球水位',
+    market.waterDetail,
+    market.waterScore > 0 ? market.waterScore : 0,
+    market.waterScore < 0 ? Math.abs(market.waterScore) : 0,
+  )
+  const overPressure = parseOptionalNumber(item.qiushutouzhu?.[0])
+  const underPressure = parseOptionalNumber(item.qiushutouzhu?.[1])
+  const pressureDirection = Number.isFinite(overPressure) && Number.isFinite(underPressure)
+    ? overPressure >= underPressure ? 'over' : 'under'
+    : null
+  const pressureValue = pressureDirection === 'over' ? overPressure : underPressure
+  const pressureScore = Number.isFinite(pressureValue)
+    ? roundValue(Math.max(0, Math.min(10, (pressureValue - 50) / 5 * 2)), 1)
+    : 0
+  addStep(
+    '近期压力值',
+    `大${evilCultAuditPercent(overPressure)} / 小${evilCultAuditPercent(underPressure)}，近期压力直接支持${pressureDirection === 'over' ? '大球' : pressureDirection === 'under' ? '小球' : '无方向'}`,
+    pressureDirection === 'over' ? pressureScore : 0,
+    pressureDirection === 'under' ? pressureScore : 0,
+  )
+  return {
+    over,
+    under,
+    modelLine: line,
+    expectedHome: expected.home,
+    expectedGuest: expected.guest,
+    expectedTotal: average,
+    scoringAverage,
+    history,
+    recent,
+    goalStatsAverage,
+    balance: balanceSignal,
+    base,
+    overHeat: overPressure,
+    underHeat: underPressure,
+    steps,
   }
-  return { over, under, expectedTotal: average }
 }
 
-function evilCultReverseHeatWeight(value: unknown): number {
-  const heat = parseOptionalNumber(value)
-  if (!Number.isFinite(heat) || heat <= 60) return 0
-  return (Math.floor((heat - 60) / 5) + 1) * 5
+function evilCultGoalProjection(item: AnalysisMatch): GoalScore {
+  const homeAttack = parseOptionalNumber(item.liangduiqiushu?.[0])
+  const guestAttack = parseOptionalNumber(item.liangduiqiushu?.[1])
+  const homeConcede = parseOptionalNumber(item.liangduiqiushu?.[2])
+  const guestConcede = parseOptionalNumber(item.liangduiqiushu?.[3])
+  const home = weightedAverage([
+    { value: homeAttack, weight: 0.55 },
+    { value: guestConcede, weight: 0.45 },
+  ])
+  const guest = weightedAverage([
+    { value: guestAttack, weight: 0.55 },
+    { value: homeConcede, weight: 0.45 },
+  ])
+  if (Number.isFinite(home) || Number.isFinite(guest)) {
+    return {
+      home: Number.isFinite(home) ? home : 0,
+      guest: Number.isFinite(guest) ? guest : 0,
+    }
+  }
+  return expectedGoalPair(item)
+}
+
+function evilCultGoalMarketSignal(item: AnalysisMatch): {
+  lineScore: number
+  waterScore: number
+  lineDetail: string
+  waterDetail: string
+} {
+  const openingLine = parseOptionalNumber(item.qiushupankou1)
+  const currentLine = parseOptionalNumber(item.qiushupankou2)
+  const validLines = Number.isFinite(openingLine) && openingLine > 0 && Number.isFinite(currentLine) && currentLine > 0
+  const lineDelta = validLines ? currentLine - openingLine : Number.NaN
+  const lineScore = Number.isFinite(lineDelta)
+    ? roundValue(Math.max(-12, Math.min(12, lineDelta / 0.25 * 4)), 1)
+    : 0
+  const lineDetail = !Number.isFinite(lineDelta)
+    ? '初盘或即时盘缺失，不做升降盘修正'
+    : Math.abs(lineDelta) < 0.01
+      ? `盘口维持${trimFixed(currentLine, 2)}，没有升降盘修正`
+      : `${trimFixed(openingLine, 2)} → ${trimFixed(currentLine, 2)}，${lineDelta > 0 ? '升盘支持大球' : '降盘支持小球'}`
+
+  const openingWater = evilCultGoalWaterPair(item.detail?.test15?.[0])
+  const currentWater = evilCultGoalWaterPair(item.detail?.test15?.[1])
+  const validWater = [openingWater.over, openingWater.under, currentWater.over, currentWater.under].every(Number.isFinite)
+  const movementDiscount = Number.isFinite(lineDelta) && Math.abs(lineDelta) >= 0.25 ? 0.5 : 1
+  const rawWaterScore = validWater
+    ? ((openingWater.over - currentWater.over) + (currentWater.under - openingWater.under)) * 20 * movementDiscount
+    : 0
+  const waterScore = roundValue(Math.max(-6, Math.min(6, rawWaterScore)), 1)
+  const waterDetail = !validWater
+    ? '初盘或即时水位缺失，不做水位修正'
+    : `大球${trimFixed(openingWater.over, 2)}→${trimFixed(currentWater.over, 2)}，小球${trimFixed(openingWater.under, 2)}→${trimFixed(currentWater.under, 2)}${movementDiscount < 1 ? '；已升降盘，水位信号减半' : ''}`
+  return { lineScore, waterScore, lineDetail, waterDetail }
+}
+
+function evilCultSecondPass(item: AnalysisMatch, scores: EvilCultGoalScores): EvilCultSecondPass {
+  const initialDirection: 'over' | 'under' = scores.under >= scores.over ? 'under' : 'over'
+  const oppositeDirection: 'over' | 'under' = initialDirection === 'under' ? 'over' : 'under'
+  const market = evilCultGoalMarketSignal(item)
+  const lineDirection = evilCultSignalDirection(market.lineScore)
+  const waterDirection = evilCultSignalDirection(market.waterScore)
+  const pressureValue = initialDirection === 'over' ? scores.overHeat : scores.underHeat
+  const pressureDirection = scores.overHeat > 60
+    ? 'over'
+    : scores.underHeat > 60
+      ? 'under'
+      : null
+  const sameLine = lineDirection === initialDirection
+  const sameWater = waterDirection === initialDirection
+  const samePressure = pressureDirection === initialDirection
+  const reasons: string[] = []
+  let reverseBonus = 0
+
+  if (sameLine) {
+    reverseBonus += 12
+    reasons.push(`${initialDirection === 'under' ? '降盘继续暗示小球' : '升盘继续暗示大球'}`)
+  }
+  if (sameWater) {
+    reverseBonus += 4
+    reasons.push(`${initialDirection === 'under' ? '水位继续暗示小球' : '水位继续暗示大球'}`)
+  }
+  if (samePressure && Number.isFinite(pressureValue)) {
+    const heatBonus = 6 + Math.max(0, Math.floor((pressureValue - 60) / 5)) * 3
+    reverseBonus += Math.min(15, heatBonus)
+    reasons.push(`${initialDirection === 'under' ? '小球' : '大球'}近期压力${evilCultAuditPercent(pressureValue)}`)
+  }
+
+  let overScore = scores.over
+  let underScore = scores.under
+  if (oppositeDirection === 'over') overScore += reverseBonus
+  else underScore += reverseBonus
+
+  const forced = sameLine && samePressure
+  if (forced) {
+    if (oppositeDirection === 'over') overScore = Math.max(overScore, underScore + 1)
+    else underScore = Math.max(underScore, overScore + 1)
+  }
+  const finalDirection: 'over' | 'under' = underScore >= overScore ? 'under' : 'over'
+  const reversed = finalDirection !== initialDirection
+  const initialLabel = initialDirection === 'under' ? '小球' : '大球'
+  const finalLabel = finalDirection === 'under' ? '小球' : '大球'
+  const reason = reasons.length
+    ? `${reasons.join('，')}；反诱导加${evilCultScoreText(reverseBonus)}分${forced ? '并触发强制反向' : ''}，一推${initialLabel} → 二推${finalLabel}`
+    : `没有发现与一推${initialLabel}同向的盘口诱导组合，二推维持${finalLabel}`
+  return { initialDirection, finalDirection, overScore, underScore, reversed, forced, reason }
+}
+
+function evilCultSignalDirection(score: number): 'over' | 'under' | null {
+  if (!Number.isFinite(score) || Math.abs(score) < 0.1) return null
+  return score > 0 ? 'over' : 'under'
+}
+
+function evilCultGoalWaterPair(value: unknown): { over: number; under: number } {
+  if (!Array.isArray(value)) return { over: Number.NaN, under: Number.NaN }
+  return {
+    over: parseOptionalNumber(value[0]),
+    under: parseOptionalNumber(value[1]),
+  }
+}
+
+function evilCultAuditInputs(item: AnalysisMatch, line: number, scores: EvilCultGoalScores): EvilCultAuditInput[] {
+  const openingLine = parseOptionalNumber(item.qiushupankou1)
+  const currentLine = parseOptionalNumber(item.qiushupankou2)
+  const goalStats = [
+    parseOptionalNumber(item.liangduiqiushu?.[0]),
+    parseOptionalNumber(item.liangduiqiushu?.[1]),
+    parseOptionalNumber(item.liangduiqiushu?.[2]),
+    parseOptionalNumber(item.liangduiqiushu?.[3]),
+  ]
+  const openingWater = evilCultGoalWaterPair(item.detail?.test15?.[0])
+  const currentWater = evilCultGoalWaterPair(item.detail?.test15?.[1])
+  const balanceLabel = goalBalanceSignalLabel(scores.balance)
+  const baseLabel = scores.base === 'over' ? '大球' : scores.base === 'under' ? '小球' : '无明确方向'
+  return [
+    {
+      label: '大小球盘口',
+      value: `${evilCultAuditNumber(openingLine)} / ${evilCultAuditNumber(currentLine)} → ${evilCultAuditNumber(line)}`,
+      detail: `初盘 / 即时盘 → 结算半球线；评分保留原始盘口${evilCultAuditNumber(scores.modelLine)}`,
+    },
+    {
+      label: '两队预期进球',
+      value: `${evilCultAuditNumber(scores.expectedHome)} + ${evilCultAuditNumber(scores.expectedGuest)}`,
+      detail: `自身场均进球55% + 对手场均丢球45%，合计权重50%`,
+    },
+    {
+      label: '近期平均球数',
+      value: evilCultAuditNumber(scores.recent),
+      detail: '和攻防场均来自同一批比赛，只用于核对，不再重复加权',
+    },
+    {
+      label: '历史平均球数',
+      value: evilCultAuditNumber(scores.history),
+      detail: '有历史样本时参与，权重10%；缺失时自动剔除',
+    },
+    {
+      label: '进失球统计均值',
+      value: evilCultAuditNumber(scores.goalStatsAverage),
+      detail: `主进/客进/主丢/客丢场均：${goalStats.map(evilCultAuditNumber).join(' / ')}；已修正为场均，不再使用5场总数`,
+    },
+    {
+      label: '盘口锚点',
+      value: evilCultAuditNumber(scores.modelLine),
+      detail: '使用原始即时盘口进入综合均值，权重40%',
+    },
+    {
+      label: '综合均值',
+      value: evilCultAuditNumber(scores.expectedTotal),
+      detail: '攻防预期50% + 历史10% + 原始即时盘口40%',
+    },
+    {
+      label: '回归信号',
+      value: balanceLabel,
+      detail: scores.balance ? '触发后限制同一批高低均值重复给原方向加分，并进入回归修正' : '没有进入额外回归修正',
+    },
+    {
+      label: '实际评分均值',
+      value: evilCultAuditNumber(scores.scoringAverage),
+      detail: scores.balance ? `综合均值经过${balanceLabel}限制后的评分值` : '未触发回归，直接使用综合均值',
+    },
+    {
+      label: '基础球数信号',
+      value: baseLabel,
+      detail: '由近期均球推算，只展示，不再重复加分',
+    },
+    {
+      label: '近期压力值',
+      value: `大${evilCultAuditPercent(scores.overHeat)} / 小${evilCultAuditPercent(scores.underHeat)}`,
+      detail: '参与一推评分；超过60%后，还会作为二推的热门同向诱导信号',
+    },
+    {
+      label: '大小球水位',
+      value: `大${evilCultAuditNumber(openingWater.over)}→${evilCultAuditNumber(currentWater.over)} / 小${evilCultAuditNumber(openingWater.under)}→${evilCultAuditNumber(currentWater.under)}`,
+      detail: '盘口不动时直接判断水位方向；发生升降盘时水位信号减半，避免重复计算',
+    },
+  ]
+}
+
+function evilCultAuditNumber(value: number): string {
+  return Number.isFinite(value) ? trimFixed(value, 2) : '-'
+}
+
+function evilCultAuditPercent(value: number): string {
+  return Number.isFinite(value) ? `${trimFixed(value, 1)}%` : '-'
+}
+
+function evilCultScoreText(value: number): string {
+  return Number.isFinite(value) ? trimFixed(value, 1) : '-'
+}
+
+function evilCultDeltaText(value: number): string {
+  if (!Number.isFinite(value) || Math.abs(value) < 0.01) return '0'
+  return `${value > 0 ? '+' : ''}${trimFixed(value, 1)}`
+}
+
+function evilCultScorePercent(scores: EvilCultGoalScores, side: 'over' | 'under'): number {
+  const over = Math.max(0, scores.over)
+  const under = Math.max(0, scores.under)
+  const total = over + under
+  if (total <= 0) return 50
+  return Math.round(((side === 'over' ? over : under) / total) * 100)
 }
 
 function evilCultUnderTotal(line: number, expectedTotal: number): number {
@@ -3217,10 +3731,14 @@ function evilCultChaseOverTotal(line: number, expectedTotal: number): number {
 }
 
 function evilCultGoalLine(item: AnalysisMatch): number {
+  return normalizeGoalHalfLine(evilCultRawGoalLine(item))
+}
+
+function evilCultRawGoalLine(item: AnalysisMatch): number {
   const current = parseOptionalNumber(item.qiushupankou2)
   const opening = parseOptionalNumber(item.qiushupankou1)
-  if (Number.isFinite(current) && current > 0) return normalizeGoalHalfLine(current)
-  if (Number.isFinite(opening) && opening > 0) return normalizeGoalHalfLine(opening)
+  if (Number.isFinite(current) && current > 0) return current
+  if (Number.isFinite(opening) && opening > 0) return opening
   return 2.5
 }
 
@@ -3230,16 +3748,30 @@ function normalizeGoalHalfLine(value: number): number {
 }
 
 function evilCultGoalAllocation(item: AnalysisMatch, total: number): { home: number; guest: number } {
-  const expected = expectedGoalPair(item)
+  const expected = evilCultGoalProjection(item)
   if (!Number.isFinite(expected.home) || !Number.isFinite(expected.guest) || expected.home + expected.guest <= 0) {
     return allocateIntegerGoalTotal(total, { home: 1, guest: 1 }, item.yapanpankou2)
   }
   return allocateIntegerGoalTotal(total, expected, item.yapanpankou2)
 }
 
-function evilCultReason(scores: { over: number; under: number; expectedTotal: number }, line: number, underTotal: number, overTotal: number): string {
+function evilCultReason(
+  scores: EvilCultGoalScores,
+  line: number,
+  underTotal: number,
+  overTotal: number,
+): string {
   const side = scores.over >= scores.under ? '追大' : '先小'
-  return `小${trimFixed(line, 2)}覆盖0-${Math.floor(line)}球；追大候选${Math.floor(line) + 1}/${Math.floor(line) + 2}/${Math.floor(line) + 4}球；均值${trimFixed(scores.expectedTotal, 2)}，${side}分${Math.round(Math.max(scores.over, scores.under))}，小球点${underTotal}球/追大点${overTotal}球`
+  const balanceText = scores.balance === 'underHidden'
+    ? '盘口隐藏回归小球'
+    : scores.balance === 'under'
+      ? '回归小球'
+      : scores.balance === 'overCorrected'
+        ? '盘口修正回归大球'
+        : scores.balance === 'over'
+          ? '回归大球'
+          : '无回归修正'
+  return `原始盘${trimFixed(scores.modelLine, 2)}，结算按${trimFixed(line, 2)}；小球覆盖0-${Math.floor(line)}球，追大候选${Math.floor(line) + 1}/${Math.floor(line) + 2}/${Math.floor(line) + 4}球；均值${trimFixed(scores.expectedTotal, 2)}，${balanceText}，追大${Math.round(scores.over)}分/先小${Math.round(scores.under)}分，一推${side}，小球点${underTotal}球/追大点${overTotal}球`
 }
 
 function goalBalanceDirection(signal: ReturnType<typeof goalBalanceSignalForItem>): 'over' | 'under' | null {
