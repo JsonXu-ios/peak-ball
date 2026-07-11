@@ -49,9 +49,11 @@ type crawlProgress struct {
 }
 
 type crawlContext struct {
-	logID    uint
-	request  crawlRequest
-	progress crawlProgress
+	mu               sync.Mutex
+	logID            uint
+	request          crawlRequest
+	progress         crawlProgress
+	lastProgressSave time.Time
 }
 
 // GetCrawlerMatches returns paginated crawler match data
@@ -317,15 +319,16 @@ func executeCrawlWithLog(logID uint, req crawlRequest, runKey string) (map[strin
 	ctx.save(status, errMsg)
 	updateCrawlerTaskAfterRun(req.TaskID, status)
 
+	progress := ctx.snapshot()
 	result := map[string]interface{}{
 		"log_id":        logID,
 		"run_key":       runKey,
 		"type":          req.Type,
 		"status":        status,
-		"items_count":   ctx.progress.ItemsCount,
-		"success_count": ctx.progress.SuccessCount,
-		"failed_count":  ctx.progress.FailedCount,
-		"skipped_count": ctx.progress.SkippedCount,
+		"items_count":   progress.ItemsCount,
+		"success_count": progress.SuccessCount,
+		"failed_count":  progress.FailedCount,
+		"skipped_count": progress.SkippedCount,
 	}
 	return result, err
 }
@@ -342,33 +345,47 @@ func buildRunKey(req crawlRequest) string {
 }
 
 func (ctx *crawlContext) setItemsCount(count int) {
+	ctx.mu.Lock()
+	defer ctx.mu.Unlock()
 	ctx.progress.ItemsCount = count
-	ctx.save("running", "")
+	ctx.saveLocked("running", "")
 }
 
 func (ctx *crawlContext) markSuccess(current string) {
+	ctx.mu.Lock()
+	defer ctx.mu.Unlock()
 	ctx.progress.SuccessCount++
 	ctx.progress.Current = current
-	ctx.save("running", "")
+	ctx.saveLocked("running", "")
 }
 
 func (ctx *crawlContext) markFailed(current string, err error) {
+	ctx.mu.Lock()
+	defer ctx.mu.Unlock()
 	ctx.progress.FailedCount++
 	ctx.progress.Current = current
 	if err != nil {
-		ctx.note(fmt.Sprintf("%s: %v", current, err))
+		ctx.noteLocked(fmt.Sprintf("%s: %v", current, err))
 	}
-	ctx.save("running", "")
+	ctx.saveLocked("running", "")
 }
 
 func (ctx *crawlContext) markSkipped(current string) {
+	ctx.mu.Lock()
+	defer ctx.mu.Unlock()
 	ctx.progress.SkippedCount++
 	ctx.progress.Current = current
-	ctx.note("skipped existing data: " + current)
-	ctx.save("running", "")
+	ctx.noteLocked("skipped existing data: " + current)
+	ctx.saveLocked("running", "")
 }
 
 func (ctx *crawlContext) note(message string) {
+	ctx.mu.Lock()
+	defer ctx.mu.Unlock()
+	ctx.noteLocked(message)
+}
+
+func (ctx *crawlContext) noteLocked(message string) {
 	if message == "" {
 		return
 	}
@@ -379,6 +396,16 @@ func (ctx *crawlContext) note(message string) {
 }
 
 func (ctx *crawlContext) save(status string, errMsg string) {
+	ctx.mu.Lock()
+	defer ctx.mu.Unlock()
+	ctx.saveLocked(status, errMsg)
+}
+
+func (ctx *crawlContext) saveLocked(status string, errMsg string) {
+	if status == "running" && !ctx.lastProgressSave.IsZero() && time.Since(ctx.lastProgressSave) < 500*time.Millisecond {
+		return
+	}
+	ctx.lastProgressSave = time.Now()
 	updates := map[string]interface{}{
 		"status":        status,
 		"items_count":   ctx.progress.ItemsCount,
@@ -398,6 +425,37 @@ func (ctx *crawlContext) save(status string, errMsg string) {
 		}
 	}
 	database.DB.Model(&models.CrawlerLog{}).Where("id = ?", ctx.logID).Updates(updates)
+}
+
+func (ctx *crawlContext) setDate(date string) {
+	ctx.mu.Lock()
+	defer ctx.mu.Unlock()
+	ctx.progress.Date = date
+}
+
+func (ctx *crawlContext) setMatchID(matchID string) {
+	ctx.mu.Lock()
+	defer ctx.mu.Unlock()
+	ctx.progress.MatchID = matchID
+}
+
+func (ctx *crawlContext) setCurrent(matchID string) {
+	ctx.mu.Lock()
+	defer ctx.mu.Unlock()
+	ctx.progress.Current = matchID
+}
+
+func (ctx *crawlContext) snapshot() crawlProgress {
+	ctx.mu.Lock()
+	defer ctx.mu.Unlock()
+	progress := ctx.progress
+	progress.Notes = append([]string(nil), ctx.progress.Notes...)
+	return progress
+}
+
+func (ctx *crawlContext) counts() (success int, skipped int, items int) {
+	progress := ctx.snapshot()
+	return progress.SuccessCount, progress.SkippedCount, progress.ItemsCount
 }
 
 func marshalProgress(progress crawlProgress) string {
@@ -444,9 +502,58 @@ var userAgents = []string{
 }
 
 const (
-	vipcAPIBaseURL = "https://www.vipc.cn/i"
-	vipcLiveURL    = "https://www.vipc.cn/live/football"
+	vipcAPIBaseURL         = "https://www.vipc.cn/i"
+	vipcLiveURL            = "https://www.vipc.cn/live/football"
+	crawlerRequestInterval = time.Second
+	crawlerDetailWorkers   = 6
 )
+
+var (
+	vipcHTTPClient = &http.Client{Timeout: 30 * time.Second}
+	vipcLimiter    crawlerRateLimiter
+)
+
+type crawlerRateLimiter struct {
+	mu         sync.Mutex
+	nextByType map[string]time.Time
+}
+
+func (limiter *crawlerRateLimiter) Wait(requestType string) {
+	limiter.mu.Lock()
+	if limiter.nextByType == nil {
+		limiter.nextByType = make(map[string]time.Time)
+	}
+	now := time.Now()
+	startAt := now
+	if next := limiter.nextByType[requestType]; next.After(now) {
+		startAt = next
+	}
+	limiter.nextByType[requestType] = startAt.Add(crawlerRequestInterval)
+	limiter.mu.Unlock()
+
+	if delay := time.Until(startAt); delay > 0 {
+		time.Sleep(delay)
+	}
+}
+
+func crawlerRequestType(rawURL string) string {
+	switch {
+	case strings.Contains(rawURL, "/live/football/date/"):
+		return "match_list"
+	case strings.Contains(rawURL, "/odds/euro"):
+		return "odds_euro"
+	case strings.Contains(rawURL, "/odds/pankou"):
+		return "odds_pankou"
+	case strings.Contains(rawURL, "/match/jczq/lr/"):
+		return "sporttery_trade"
+	case strings.HasSuffix(rawURL, "/history"):
+		return "history"
+	case strings.HasSuffix(rawURL, "/rank"):
+		return "rank"
+	default:
+		return "logo"
+	}
+}
 
 func generateRandomIP() string {
 	return fmt.Sprintf("%d.%d.%d.%d", rand.Intn(256), rand.Intn(256), rand.Intn(256), rand.Intn(256))
@@ -551,7 +658,6 @@ func ensureFootballLogo(rawLogo string) string {
 		return localURL
 	}
 
-	client := &http.Client{Timeout: 30 * time.Second}
 	req, err := http.NewRequest(http.MethodGet, trimmed, nil)
 	if err != nil {
 		return trimmed
@@ -560,7 +666,8 @@ func ensureFootballLogo(rawLogo string) string {
 	req.Header.Set("Accept", "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8")
 	req.Header.Set("Referer", vipcLiveURL)
 
-	resp, err := client.Do(req)
+	vipcLimiter.Wait(crawlerRequestType(trimmed))
+	resp, err := vipcHTTPClient.Do(req)
 	if err != nil {
 		return trimmed
 	}
@@ -623,7 +730,6 @@ func footballImgDir() string {
 }
 
 func makeRequest(url string) ([]byte, error) {
-	client := &http.Client{Timeout: 30 * time.Second}
 	req, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {
 		return nil, err
@@ -637,7 +743,8 @@ func makeRequest(url string) ([]byte, error) {
 	req.Header.Set("X-Forwarded-For", randomIP)
 	req.Header.Set("X-Real-IP", randomIP)
 
-	resp, err := client.Do(req)
+	vipcLimiter.Wait(crawlerRequestType(url))
+	resp, err := vipcHTTPClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -656,7 +763,7 @@ func crawlMatchList(ctx *crawlContext, date string) error {
 	if err != nil {
 		return err
 	}
-	ctx.progress.Date = requestDate
+	ctx.setDate(requestDate)
 	if endDate != requestDate {
 		ctx.note(fmt.Sprintf("match list window: %s to %s", requestDate, endDate))
 	}
@@ -692,7 +799,7 @@ func crawlMatchList(ctx *crawlContext, date string) error {
 			if strings.TrimSpace(match.Model.MatchID) == "" {
 				continue
 			}
-			ctx.progress.Current = match.Model.MatchID
+			ctx.setCurrent(match.Model.MatchID)
 			match.Model.HomeLogo = ensureFootballLogo(match.Model.HomeLogo)
 			match.Model.GuestLogo = ensureFootballLogo(match.Model.GuestLogo)
 
@@ -703,7 +810,6 @@ func crawlMatchList(ctx *crawlContext, date string) error {
 
 			processed++
 			ctx.markSuccess(match.Model.MatchID)
-			time.Sleep(500 * time.Millisecond)
 		}
 	}
 
@@ -718,10 +824,11 @@ func crawlHistory(ctx *crawlContext, matchID string) error {
 	if matchID == "" {
 		return fmt.Errorf("match_id is required")
 	}
-	if ctx.request.Type != "all" && ctx.progress.ItemsCount == 0 {
+	_, _, itemsCount := ctx.counts()
+	if ctx.request.Type != "all" && itemsCount == 0 {
 		ctx.setItemsCount(1)
 	}
-	ctx.progress.MatchID = matchID
+	ctx.setMatchID(matchID)
 	if !ctx.request.Force && hasExistingCrawlerData("history_moneys", "league_stat", matchID) {
 		ctx.markSkipped(matchID)
 		return nil
@@ -751,10 +858,11 @@ func crawlRank(ctx *crawlContext, matchID string) error {
 	if matchID == "" {
 		return fmt.Errorf("match_id is required")
 	}
-	if ctx.request.Type != "all" && ctx.progress.ItemsCount == 0 {
+	_, _, itemsCount := ctx.counts()
+	if ctx.request.Type != "all" && itemsCount == 0 {
 		ctx.setItemsCount(1)
 	}
-	ctx.progress.MatchID = matchID
+	ctx.setMatchID(matchID)
 
 	rankColumn, err := historyRankColumn()
 	if err != nil {
@@ -794,10 +902,11 @@ func crawlOddsEuro(ctx *crawlContext, matchID string) error {
 		ctx.markFailed(matchID, err)
 		return err
 	}
-	if ctx.request.Type != "all" && ctx.progress.ItemsCount == 0 {
+	_, _, itemsCount := ctx.counts()
+	if ctx.request.Type != "all" && itemsCount == 0 {
 		ctx.setItemsCount(1)
 	}
-	ctx.progress.MatchID = matchID
+	ctx.setMatchID(matchID)
 	isJingcai := crawlerMatchIsJingcai(matchID)
 	dataExists := hasExistingCrawlerData("odds_moneys", "data", matchID)
 	tradeExists := !isJingcai || hasExistingCrawlerData("odds_moneys", "sporttery_trade", matchID)
@@ -875,10 +984,11 @@ func crawlOddsPankou(ctx *crawlContext, matchID string) error {
 	if matchID == "" {
 		return fmt.Errorf("match_id is required")
 	}
-	if ctx.request.Type != "all" && ctx.progress.ItemsCount == 0 {
+	_, _, itemsCount := ctx.counts()
+	if ctx.request.Type != "all" && itemsCount == 0 {
 		ctx.setItemsCount(1)
 	}
-	ctx.progress.MatchID = matchID
+	ctx.setMatchID(matchID)
 	if !ctx.request.Force && hasExistingCrawlerData("pankou_moneys", "asia_data", matchID) {
 		ctx.markSkipped(matchID)
 		return nil
@@ -904,12 +1014,43 @@ func crawlOddsPankou(ctx *crawlContext, matchID string) error {
 	return nil
 }
 
+func runCrawlerMatchWorkers(matches []models.Money, crawlMatch func(string)) {
+	workerCount := crawlerDetailWorkers
+	if len(matches) < workerCount {
+		workerCount = len(matches)
+	}
+	if workerCount == 0 {
+		return
+	}
+
+	jobs := make(chan string)
+	var workers sync.WaitGroup
+	workers.Add(workerCount)
+	for index := 0; index < workerCount; index++ {
+		go func() {
+			defer workers.Done()
+			for matchID := range jobs {
+				crawlMatch(matchID)
+			}
+		}()
+	}
+
+	for _, match := range matches {
+		matchID := strings.TrimSpace(match.MatchID)
+		if matchID != "" {
+			jobs <- matchID
+		}
+	}
+	close(jobs)
+	workers.Wait()
+}
+
 func crawlDetailsForDate(ctx *crawlContext, date string, crawlOne func(*crawlContext, string) error) error {
 	resolvedDate, _, err := resolveCrawlerDate(date)
 	if err != nil {
 		return err
 	}
-	ctx.progress.Date = resolvedDate
+	ctx.setDate(resolvedDate)
 
 	var matches []models.Money
 	matchQuery := database.DB.Where("date = ?", resolvedDate)
@@ -934,20 +1075,15 @@ func crawlDetailsForDate(ctx *crawlContext, date string, crawlOne func(*crawlCon
 	}
 
 	ctx.setItemsCount(len(matches))
-	successBefore := ctx.progress.SuccessCount
-	skippedBefore := ctx.progress.SkippedCount
-	for _, match := range matches {
-		matchID := strings.TrimSpace(match.MatchID)
-		if matchID == "" {
-			continue
-		}
+	successBefore, skippedBefore, _ := ctx.counts()
+	runCrawlerMatchWorkers(matches, func(matchID string) {
 		if err := crawlOne(ctx, matchID); err != nil {
 			ctx.note(fmt.Sprintf("%s: %v", matchID, err))
 		}
-		time.Sleep(1500 * time.Millisecond)
-	}
+	})
 
-	if ctx.progress.SuccessCount == successBefore && ctx.progress.SkippedCount == skippedBefore {
+	successAfter, skippedAfter, _ := ctx.counts()
+	if successAfter == successBefore && skippedAfter == skippedBefore {
 		return fmt.Errorf("no %s records completed for date %s", ctx.request.Type, resolvedDate)
 	}
 	return nil
@@ -958,20 +1094,20 @@ func crawlOddsRefresh(ctx *crawlContext, date string) error {
 	if err != nil {
 		return err
 	}
-	ctx.progress.Date = startDate
+	ctx.setDate(startDate)
 	ctx.request.Force = true
 	ctx.note(fmt.Sprintf("odds refresh window: %s to %s", startDate, endDate))
 	if ctx.request.MatchID != "" {
 		ctx.setItemsCount(2)
-		successBefore := ctx.progress.SuccessCount
+		successBefore, _, _ := ctx.counts()
 		if err := crawlOddsEuro(ctx, ctx.request.MatchID); err != nil {
 			ctx.note(fmt.Sprintf("%s odds euro: %v", ctx.request.MatchID, err))
 		}
-		time.Sleep(1500 * time.Millisecond)
 		if err := crawlOddsPankou(ctx, ctx.request.MatchID); err != nil {
 			ctx.note(fmt.Sprintf("%s odds pankou: %v", ctx.request.MatchID, err))
 		}
-		if ctx.progress.SuccessCount == successBefore {
+		successAfter, _, _ := ctx.counts()
+		if successAfter == successBefore {
 			return fmt.Errorf("no odds records refreshed for match %s", ctx.request.MatchID)
 		}
 		return nil
@@ -1000,23 +1136,18 @@ func crawlOddsRefresh(ctx *crawlContext, date string) error {
 	}
 
 	ctx.setItemsCount(len(matches) * 2)
-	successBefore := ctx.progress.SuccessCount
-	for _, match := range matches {
-		matchID := strings.TrimSpace(match.MatchID)
-		if matchID == "" {
-			continue
-		}
+	successBefore, _, _ := ctx.counts()
+	runCrawlerMatchWorkers(matches, func(matchID string) {
 		if err := crawlOddsEuro(ctx, matchID); err != nil {
 			ctx.note(fmt.Sprintf("%s odds euro: %v", matchID, err))
 		}
-		time.Sleep(1500 * time.Millisecond)
 		if err := crawlOddsPankou(ctx, matchID); err != nil {
 			ctx.note(fmt.Sprintf("%s odds pankou: %v", matchID, err))
 		}
-		time.Sleep(1500 * time.Millisecond)
-	}
+	})
 
-	if ctx.progress.SuccessCount == successBefore {
+	successAfter, _, _ := ctx.counts()
+	if successAfter == successBefore {
 		return fmt.Errorf("no odds records refreshed from %s to %s", startDate, endDate)
 	}
 	return nil
@@ -1027,7 +1158,7 @@ func crawlAll(ctx *crawlContext, date string) error {
 	if err != nil {
 		return err
 	}
-	ctx.progress.Date = resolvedDate
+	ctx.setDate(resolvedDate)
 
 	ctx.note("step 1/5: match list and team logos")
 	if err := crawlMatchList(ctx, date); err != nil {
@@ -1041,34 +1172,25 @@ func crawlAll(ctx *crawlContext, date string) error {
 	}
 	matchQuery.Order("match_time ASC").Find(&matches)
 	ctx.setItemsCount(len(matches) * 5)
-	ctx.note(fmt.Sprintf("step 2-5: details for %d matches", len(matches)))
+	ctx.note(fmt.Sprintf("step 2-5: details for %d matches with %d workers and %s same-type request interval", len(matches), crawlerDetailWorkers, crawlerRequestInterval))
 
-	for _, match := range matches {
-		matchID := strings.TrimSpace(match.MatchID)
-		if matchID == "" {
-			continue
-		}
-		time.Sleep(1500 * time.Millisecond) // Anti-bot delay
-
+	runCrawlerMatchWorkers(matches, func(matchID string) {
 		if err := crawlHistory(ctx, matchID); err != nil {
 			ctx.note(fmt.Sprintf("%s history: %v", matchID, err))
 		}
-		time.Sleep(1500 * time.Millisecond)
 
 		if err := crawlRank(ctx, matchID); err != nil {
 			ctx.note(fmt.Sprintf("%s rank: %v", matchID, err))
 		}
-		time.Sleep(1500 * time.Millisecond)
 
 		if err := crawlOddsEuro(ctx, matchID); err != nil {
 			ctx.note(fmt.Sprintf("%s odds euro: %v", matchID, err))
 		}
-		time.Sleep(1500 * time.Millisecond)
 
 		if err := crawlOddsPankou(ctx, matchID); err != nil {
 			ctx.note(fmt.Sprintf("%s odds pankou: %v", matchID, err))
 		}
-	}
+	})
 
 	return nil
 }

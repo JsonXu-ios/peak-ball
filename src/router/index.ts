@@ -6,7 +6,7 @@ const router = createRouter({
     {
       path: '/',
       name: 'home',
-      redirect: '/analysis'
+      component: () => import('../views/match/MatchClassicHome.vue')
     },
     {
       path: '/analysis',
