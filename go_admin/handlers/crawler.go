@@ -722,10 +722,6 @@ func crawlHistory(ctx *crawlContext, matchID string) error {
 		ctx.setItemsCount(1)
 	}
 	ctx.progress.MatchID = matchID
-	if !crawlerMatchIsJingcai(matchID) {
-		ctx.markSkipped(matchID)
-		return nil
-	}
 	if !ctx.request.Force && hasExistingCrawlerData("history_moneys", "league_stat", matchID) {
 		ctx.markSkipped(matchID)
 		return nil
@@ -759,10 +755,6 @@ func crawlRank(ctx *crawlContext, matchID string) error {
 		ctx.setItemsCount(1)
 	}
 	ctx.progress.MatchID = matchID
-	if !crawlerMatchIsJingcai(matchID) {
-		ctx.markSkipped(matchID)
-		return nil
-	}
 
 	rankColumn, err := historyRankColumn()
 	if err != nil {
@@ -806,12 +798,9 @@ func crawlOddsEuro(ctx *crawlContext, matchID string) error {
 		ctx.setItemsCount(1)
 	}
 	ctx.progress.MatchID = matchID
-	if !crawlerMatchIsJingcai(matchID) {
-		ctx.markSkipped(matchID)
-		return nil
-	}
+	isJingcai := crawlerMatchIsJingcai(matchID)
 	dataExists := hasExistingCrawlerData("odds_moneys", "data", matchID)
-	tradeExists := hasExistingCrawlerData("odds_moneys", "sporttery_trade", matchID)
+	tradeExists := !isJingcai || hasExistingCrawlerData("odds_moneys", "sporttery_trade", matchID)
 	if !ctx.request.Force && dataExists && tradeExists {
 		ctx.markSkipped(matchID)
 		return nil
@@ -835,7 +824,7 @@ func crawlOddsEuro(ctx *crawlContext, matchID string) error {
 		}
 	}
 
-	if ctx.request.Force || !tradeExists {
+	if isJingcai && (ctx.request.Force || !tradeExists) {
 		if err := crawlSportteryTrade(ctx, matchID); err != nil {
 			ctx.markFailed(matchID, err)
 			return err
@@ -890,10 +879,6 @@ func crawlOddsPankou(ctx *crawlContext, matchID string) error {
 		ctx.setItemsCount(1)
 	}
 	ctx.progress.MatchID = matchID
-	if !crawlerMatchIsJingcai(matchID) {
-		ctx.markSkipped(matchID)
-		return nil
-	}
 	if !ctx.request.Force && hasExistingCrawlerData("pankou_moneys", "asia_data", matchID) {
 		ctx.markSkipped(matchID)
 		return nil
@@ -928,9 +913,6 @@ func crawlDetailsForDate(ctx *crawlContext, date string, crawlOne func(*crawlCon
 
 	var matches []models.Money
 	matchQuery := database.DB.Where("date = ?", resolvedDate)
-	if databaseColumnExists("moneys", "jingcai_id") {
-		matchQuery = matchQuery.Where("jingcai_id IS NOT NULL AND TRIM(jingcai_id) <> ?", "")
-	}
 	if databaseColumnExists("moneys", "display_state") {
 		matchQuery = matchQuery.Where("display_state IS NULL OR display_state <> ?", "detail_only")
 	}
@@ -941,9 +923,6 @@ func crawlDetailsForDate(ctx *crawlContext, date string, crawlOne func(*crawlCon
 			return fmt.Errorf("failed to crawl match list for %s: %w", resolvedDate, err)
 		}
 		matchQuery = database.DB.Where("date = ?", resolvedDate)
-		if databaseColumnExists("moneys", "jingcai_id") {
-			matchQuery = matchQuery.Where("jingcai_id IS NOT NULL AND TRIM(jingcai_id) <> ?", "")
-		}
 		if databaseColumnExists("moneys", "display_state") {
 			matchQuery = matchQuery.Where("display_state IS NULL OR display_state <> ?", "detail_only")
 		}
@@ -1000,9 +979,6 @@ func crawlOddsRefresh(ctx *crawlContext, date string) error {
 
 	var matches []models.Money
 	matchQuery := database.DB.Where("date BETWEEN ? AND ?", startDate, endDate)
-	if databaseColumnExists("moneys", "jingcai_id") {
-		matchQuery = matchQuery.Where("jingcai_id IS NOT NULL AND TRIM(jingcai_id) <> ?", "")
-	}
 	if databaseColumnExists("moneys", "display_state") {
 		matchQuery = matchQuery.Where("display_state IS NULL OR display_state <> ?", "detail_only")
 	}
@@ -1013,9 +989,6 @@ func crawlOddsRefresh(ctx *crawlContext, date string) error {
 			return fmt.Errorf("failed to crawl match list for odds refresh: %w", err)
 		}
 		matchQuery = database.DB.Where("date BETWEEN ? AND ?", startDate, endDate)
-		if databaseColumnExists("moneys", "jingcai_id") {
-			matchQuery = matchQuery.Where("jingcai_id IS NOT NULL AND TRIM(jingcai_id) <> ?", "")
-		}
 		if databaseColumnExists("moneys", "display_state") {
 			matchQuery = matchQuery.Where("display_state IS NULL OR display_state <> ?", "detail_only")
 		}
@@ -1063,9 +1036,6 @@ func crawlAll(ctx *crawlContext, date string) error {
 
 	var matches []models.Money
 	matchQuery := database.DB.Where("date BETWEEN ? AND ?", resolvedDate, endDate)
-	if databaseColumnExists("moneys", "jingcai_id") {
-		matchQuery = matchQuery.Where("jingcai_id IS NOT NULL AND TRIM(jingcai_id) <> ?", "")
-	}
 	if databaseColumnExists("moneys", "display_state") {
 		matchQuery = matchQuery.Where("display_state IS NULL OR display_state <> ?", "detail_only")
 	}

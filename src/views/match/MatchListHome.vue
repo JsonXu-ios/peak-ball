@@ -4,16 +4,43 @@
       <div class="px-4 py-3 max-w-5xl mx-auto">
         <div class="flex items-center justify-between gap-3">
           <div class="min-w-0">
-            <p class="text-[11px] text-slate-400 font-bold">核心页面 · 竞彩足球 {{ selectedDateLabel }}</p>
+            <p class="text-[11px] text-slate-400 font-bold">核心页面 · {{ matchScopeLabel }} {{ selectedDateLabel }}</p>
             <h1 class="text-xl font-black truncate">比赛分析工作台</h1>
           </div>
-          <button
-            class="size-10 rounded-lg bg-primary flex items-center justify-center disabled:opacity-60"
-            :disabled="loading"
-            @click="loadData"
-          >
-            <span class="material-symbols-outlined" :class="{ 'animate-spin': loading }">sync</span>
-          </button>
+          <div class="flex shrink-0 items-center gap-2">
+            <div class="flex rounded-lg border border-slate-700 bg-slate-900/80 p-1" aria-label="比赛范围">
+              <button
+                v-for="scope in matchScopes"
+                :key="scope.value"
+                class="h-8 rounded-md px-2.5 text-xs font-black transition disabled:opacity-60"
+                :class="matchScope === scope.value ? 'bg-primary text-white shadow-sm' : 'text-slate-400 hover:text-white'"
+                :aria-pressed="matchScope === scope.value"
+                :disabled="loading"
+                @click="setMatchScope(scope.value)"
+              >
+                {{ scope.label }}
+              </button>
+            </div>
+            <select
+              v-model="selectedLeague"
+              class="h-10 w-24 rounded-lg border border-slate-700 bg-slate-900/80 px-2 text-xs font-black text-white [color-scheme:dark] disabled:opacity-60 sm:w-32"
+              :disabled="loading"
+              aria-label="选择联赛"
+              title="选择联赛"
+              @change="applyLeagueSelection"
+            >
+              <option value="all">全部联赛</option>
+              <option v-for="league in availableLeagues" :key="league" :value="league">{{ league }}</option>
+            </select>
+            <button
+              class="size-10 rounded-lg bg-primary flex items-center justify-center disabled:opacity-60"
+              :disabled="loading"
+              title="刷新比赛"
+              @click="loadData"
+            >
+              <span class="material-symbols-outlined" :class="{ 'animate-spin': loading }">sync</span>
+            </button>
+          </div>
         </div>
 
         <div class="mt-3 grid grid-cols-[auto_1fr_auto_auto] gap-2 items-center">
@@ -63,7 +90,7 @@
 
         <div v-if="viewMode !== 'minimal' && viewMode !== 'stats'" class="mt-3 grid grid-cols-3 gap-2">
           <div class="rounded-md border border-slate-800 bg-slate-900/80 px-3 py-2">
-            <p class="text-[10px] text-slate-500 font-bold">竞彩足球</p>
+            <p class="text-[10px] text-slate-500 font-bold">{{ matchScopeLabel }}</p>
             <p class="text-lg font-black">{{ list.length }}</p>
           </div>
           <div class="rounded-md border border-slate-800 bg-slate-900/80 px-3 py-2">
@@ -1034,6 +1061,7 @@ const todayString = localDateString(new Date())
 const restoredState = readAnalysisPageState()
 const loading = ref(false)
 const list = ref<AnalysisMatch[]>([])
+const allMatches = ref<AnalysisMatch[]>([])
 const showScore = ref(restoredState?.showScore ?? true)
 const viewMode = ref<AnalysisViewMode>(restoredState?.viewMode || 'simple')
 const selectedItem = ref<AnalysisMatch | null>(null)
@@ -1045,6 +1073,8 @@ const dialogDetailContent = ref<string[]>([])
 const copying = ref(false)
 const copiedSection = ref<DialogCopySection | null>(null)
 const selectedDate = ref(validDateString(String(route.query.date || '')) || restoredState?.selectedDate || todayString)
+const matchScope = ref<MatchScope>(normalizeMatchScope(route.query.scope || restoredState?.matchScope))
+const selectedLeague = ref(normalizeLeague(route.query.league || restoredState?.selectedLeague))
 const localBookmakerTotalStake = 50000000
 const accuracyHistoryStartDate = '2026-05-28'
 const guideSectionTitle = computed(() => '庄家 / 平台预测')
@@ -1057,6 +1087,10 @@ const analysisViewModes: Array<{ value: AnalysisViewMode; label: string }> = [
   { value: 'minimal', label: '邪修版' },
   { value: 'full', label: '复杂版' },
   { value: 'stats', label: '统计页' },
+]
+const matchScopes: Array<{ value: MatchScope; label: string }> = [
+  { value: 'sporttery', label: '竞彩' },
+  { value: 'all', label: '全部' },
 ]
 
 const publicContentPhrases = [
@@ -1072,11 +1106,14 @@ const publicContentPhrases = [
 
 type DialogCopySection = 'title' | 'public' | 'detail'
 type AnalysisViewMode = 'simple' | 'minimal' | 'full' | 'stats'
+type MatchScope = 'sporttery' | 'all'
 
 interface AnalysisPageState {
   selectedDate: string
   showScore: boolean
   viewMode: AnalysisViewMode
+  matchScope?: MatchScope
+  selectedLeague?: string
   coreOnlyMode?: boolean
   scrollY: number
   dialog?: {
@@ -1092,6 +1129,8 @@ const selectedDateLabel = computed(() => {
   if (selectedDate.value === todayString) return '今天'
   return selectedDate.value
 })
+const matchScopeLabel = computed(() => matchScope.value === 'all' ? '全部比赛' : '竞彩足球')
+const availableLeagues = computed(() => Array.from(new Set(allMatches.value.map((item) => item.league).filter(Boolean))).sort((left, right) => left.localeCompare(right, 'zh-CN')))
 
 const accuracyStatsRangeText = computed(() => `${accuracyStats.value.startDate} 至 ${accuracyStats.value.endDate}`)
 const accuracyMatchRowsById = computed(() => {
@@ -1134,10 +1173,10 @@ async function loadData() {
   try {
     syncDateQuery()
     const [matchesResponse, snapshotResponse] = await Promise.all([
-      analysisApi.getAnalysisMatches({ date: selectedDate.value }),
+      analysisApi.getAnalysisMatches(analysisQueryParams()),
       analysisApi.getAnalysisRuleSnapshot().catch(() => ({ data: null as AnalysisRuleSnapshot | null })),
     ])
-    list.value = matchesResponse.data ?? []
+    setCurrentMatches(matchesResponse.data ?? [])
     accuracyCommonRows.value = snapshotCommonRows(snapshotResponse.data) || emptyAccuracyCommonRows()
     restoreDialogFromState()
     restoreScrollFromState()
@@ -1154,14 +1193,14 @@ async function loadAccuracyStats() {
   accuracyStats.value = emptyAccuracyStats(selectedDate.value)
   try {
     const [responses, currentResponse, snapshotResponse] = await Promise.all([
-      Promise.all(dates.map((date) => analysisApi.getAnalysisMatches({ date }))),
-      analysisApi.getAnalysisMatches({ date: selectedDate.value }),
+      Promise.all(dates.map((date) => analysisApi.getAnalysisMatches(analysisQueryParams(date)))),
+      analysisApi.getAnalysisMatches(analysisQueryParams()),
       analysisApi.getAnalysisRuleSnapshot().catch(() => ({ data: null as AnalysisRuleSnapshot | null })),
     ])
-    const matches = responses.flatMap((response) => response.data ?? []).filter(isSettledMatch)
+    const matches = filterMatchesByLeague(responses.flatMap((response) => response.data ?? [])).filter(isSettledMatch)
     const currentMatches = currentResponse.data ?? []
-    list.value = currentMatches
-    accuracyStats.value = buildAccuracyStats(matches, dates[0] || selectedDate.value, dates[dates.length - 1] || selectedDate.value, currentMatches, snapshotResponse.data)
+    setCurrentMatches(currentMatches)
+    accuracyStats.value = buildAccuracyStats(matches, dates[0] || selectedDate.value, dates[dates.length - 1] || selectedDate.value, list.value, snapshotResponse.data)
     accuracyCommonRows.value = accuracyStats.value.commonRows
   } catch {
     accuracyStatsError.value = '历史统计加载失败，请稍后重试。'
@@ -1648,6 +1687,41 @@ function setDate(value: string) {
   if (viewMode.value === 'stats') void loadAccuracyStats()
 }
 
+function setMatchScope(scope: MatchScope) {
+  if (matchScope.value === scope) return
+  matchScope.value = scope
+  loadData()
+  if (viewMode.value === 'stats') void loadAccuracyStats()
+}
+
+function applyLeagueSelection() {
+  list.value = filterMatchesByLeague(allMatches.value)
+  syncDateQuery()
+  persistAnalysisPageState()
+  if (viewMode.value === 'stats') void loadAccuracyStats()
+}
+
+function setCurrentMatches(matches: AnalysisMatch[]) {
+  allMatches.value = matches
+  if (selectedLeague.value !== 'all' && !matches.some((item) => item.league === selectedLeague.value)) {
+    selectedLeague.value = 'all'
+    syncDateQuery()
+  }
+  list.value = filterMatchesByLeague(matches)
+}
+
+function filterMatchesByLeague(matches: AnalysisMatch[]) {
+  if (selectedLeague.value === 'all') return matches
+  return matches.filter((item) => item.league === selectedLeague.value)
+}
+
+function analysisQueryParams(date = selectedDate.value) {
+  return {
+    date,
+    scope: matchScope.value,
+  }
+}
+
 function shiftDate(days: number) {
   const date = parseLocalDate(selectedDate.value) || new Date()
   date.setDate(date.getDate() + days)
@@ -1784,8 +1858,12 @@ function goalBalanceSignalLabel(signal: ReturnType<typeof goalBalanceSignalForIt
 
 function syncDateQuery() {
   const current = String(route.query.date || '')
-  if (current === selectedDate.value) return
-  router.replace({ query: { ...route.query, date: selectedDate.value } })
+  const currentScope = String(route.query.scope || '')
+  const currentLeague = String(route.query.league || '')
+  const nextScope = matchScope.value === 'all' ? 'all' : undefined
+  const nextLeague = selectedLeague.value === 'all' ? undefined : selectedLeague.value
+  if (current === selectedDate.value && currentScope === (nextScope || '') && currentLeague === (nextLeague || '')) return
+  router.replace({ query: { ...route.query, date: selectedDate.value, scope: nextScope, league: nextLeague } })
 }
 
 function openEvilCultAudit(item: AnalysisMatch) {
@@ -1868,6 +1946,8 @@ function persistAnalysisPageState() {
     selectedDate: selectedDate.value,
     showScore: showScore.value,
     viewMode: viewMode.value,
+    matchScope: matchScope.value,
+    selectedLeague: selectedLeague.value,
     scrollY: window.scrollY || 0,
   }
 
@@ -1900,6 +1980,8 @@ function readAnalysisPageState(): AnalysisPageState | null {
       selectedDate,
       showScore: state.showScore !== false,
       viewMode: normalizeViewMode(state.viewMode, state.coreOnlyMode),
+      matchScope: normalizeMatchScope(state.matchScope),
+      selectedLeague: normalizeLeague(state.selectedLeague),
       scrollY: typeof state.scrollY === 'number' && Number.isFinite(state.scrollY) ? state.scrollY : 0,
       dialog: normalizeDialogState(state.dialog),
     }
@@ -1926,6 +2008,15 @@ function normalizeViewMode(value: unknown, legacyCoreOnlyMode?: unknown): Analys
   if (value === 'full' || value === 'minimal' || value === 'simple' || value === 'stats') return value
   if (legacyCoreOnlyMode === true) return 'simple'
   return 'simple'
+}
+
+function normalizeMatchScope(value: unknown): MatchScope {
+  return value === 'all' ? 'all' : 'sporttery'
+}
+
+function normalizeLeague(value: unknown): string {
+  const league = Array.isArray(value) ? value[0] : value
+  return String(league || '').trim() || 'all'
 }
 
 function setViewMode(mode: AnalysisViewMode) {
@@ -4850,7 +4941,7 @@ function handleAnalysisPageScroll() {
   persistAnalysisPageState()
 }
 
-watch([selectedDate, showScore, viewMode], persistAnalysisPageState)
+watch([selectedDate, showScore, viewMode, matchScope, selectedLeague], persistAnalysisPageState)
 
 onMounted(() => {
   window.addEventListener('scroll', handleAnalysisPageScroll, { passive: true })

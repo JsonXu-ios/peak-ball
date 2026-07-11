@@ -257,7 +257,7 @@ type analysisPankouPayload struct {
 	Dxq  []analysisPankouItem `json:"dxq"`
 }
 
-// GetAnalysisMatches returns old-home compatible sporttery analysis rows.
+// GetAnalysisMatches returns old-home compatible analysis rows.
 func GetAnalysisMatches(c *gin.Context) {
 	startDate, endDate, err := analysisDateWindow(c.Query("date"))
 	if err != nil {
@@ -265,7 +265,10 @@ func GetAnalysisMatches(c *gin.Context) {
 		return
 	}
 	var matches []models.Money
-	query := database.DB.Where("date BETWEEN ? AND ? AND jingcai_id IS NOT NULL AND TRIM(jingcai_id) <> ?", startDate, endDate, "")
+	query := database.DB.Where("date BETWEEN ? AND ?", startDate, endDate)
+	if c.Query("scope") != "all" {
+		query = query.Where("jingcai_id IS NOT NULL AND TRIM(jingcai_id) <> ?", "")
+	}
 	query = query.Where("display_state IS NULL OR display_state <> ?", detailOnlyDisplayState)
 	if err := query.Order("match_time ASC").Find(&matches).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})

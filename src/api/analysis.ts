@@ -3,6 +3,7 @@ import type { AnalysisMatch } from '@/types/analysis'
 
 export interface AnalysisQueryParams {
   date?: string
+  scope?: 'sporttery' | 'all'
 }
 
 export interface AnalysisRuleSnapshot {
