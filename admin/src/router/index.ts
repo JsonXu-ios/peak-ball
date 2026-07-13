@@ -77,6 +77,12 @@ const routes: RouteRecordRaw[] = [
         component: () => import('@/views/data/MatchData.vue'),
         meta: { title: '比赛数据', icon: 'mdi-soccer' },
       },
+      {
+        path: 'statistics/matches',
+        name: 'MatchStatistics',
+        component: () => import('@/views/statistics/MatchStatistics.vue'),
+        meta: { title: '统计分析', icon: 'mdi-chart-box-outline' },
+      },
     ],
   },
   {

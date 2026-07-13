@@ -135,3 +135,7 @@ export const getOperationLogs = (params?: Record<string, unknown>) =>
 // ---- Dashboard ----
 export const getDashboardStats = () =>
   api.get('/admin/dashboard/stats')
+
+// ---- Match Statistics ----
+export const getMatchStatistics = (params?: { start_date?: string; end_date?: string }) =>
+  api.get('/admin/statistics/matches', { params })

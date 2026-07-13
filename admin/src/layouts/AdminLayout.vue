@@ -52,6 +52,13 @@ const menuItems = computed(() => [
       { title: '比赛数据', icon: 'mdi-soccer', to: '/data/matches' },
     ],
   },
+  {
+    title: '统计分析',
+    icon: 'mdi-chart-box-outline',
+    children: [
+      { title: '完赛基础统计', icon: 'mdi-chart-bar', to: '/statistics/matches' },
+    ],
+  },
 ])
 
 const pageTitle = computed(() => {
