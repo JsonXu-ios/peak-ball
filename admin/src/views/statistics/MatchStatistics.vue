@@ -1,20 +1,43 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { onMounted, reactive, ref } from 'vue'
 import { getMatchStatistics } from '@/api'
+import MatchDetailTable from './MatchDetailTable.vue'
 
-interface StatisticRow {
-  key: string
-  label: string
-  sample: number
-  correct: number
-  accuracy: number
+interface MatchDetail {
+  match_id: string
+  date: string
+  home: string
+  guest: string
+  home_score: number
+  guest_score: number
+  state: string
+  pick: string
+  result: string
+  hit: boolean
+  value: number
 }
 
-interface StatisticGroup {
+interface HeatBucket {
+  key: string
+  title: string
+  tier: number
+  matched: number
+  hit: number
+  miss: number
+  accuracy: number
+  matches: MatchDetail[]
+}
+
+interface Signal {
   key: string
   title: string
   definition: string
-  rows: StatisticRow[]
+  matched: number
+  hit: number
+  miss: number
+  accuracy: number
+  matches?: MatchDetail[]
+  buckets?: HeatBucket[]
 }
 
 interface Report {
@@ -22,19 +45,38 @@ interface Report {
   start_date: string
   end_date: string
   generated_at: string
-  groups: StatisticGroup[]
+  signals: Signal[]
 }
+
+const DETAIL_CAP = 300
 
 const loading = ref(false)
 const startDate = ref('')
 const endDate = ref('')
 const report = ref<Report | null>(null)
 const error = ref('')
+// which detail tables are open, keyed by signal/bucket key
+const expanded = reactive<Record<string, boolean>>({})
 
-const sourceRange = computed(() => {
+function toggle(key: string) {
+  expanded[key] = !expanded[key]
+}
+
+function accuracyColor(accuracy: number, matched: number) {
+  if (!matched) return 'default'
+  if (accuracy >= 60) return 'success'
+  if (accuracy >= 50) return 'primary'
+  return 'warning'
+}
+
+function sourceRange() {
   if (!report.value?.start_date && !report.value?.end_date) return '全部历史完赛比赛'
-  return `${report.value.start_date || '最早'} 至 ${report.value.end_date || '最新'}`
-})
+  return `${report.value?.start_date || '最早'} 至 ${report.value?.end_date || '最新'}`
+}
+
+function cappedMatches(matches: MatchDetail[]) {
+  return matches.slice(0, DETAIL_CAP)
+}
 
 async function fetchReport() {
   loading.value = true
@@ -45,6 +87,7 @@ async function fetchReport() {
       end_date: endDate.value || undefined,
     })
     report.value = data as Report
+    Object.keys(expanded).forEach((key) => delete expanded[key])
   } catch (requestError) {
     error.value = requestError instanceof Error ? requestError.message : '加载统计失败'
   } finally {
@@ -58,12 +101,6 @@ function resetRange() {
   fetchReport()
 }
 
-function accuracyColor(accuracy: number) {
-  if (accuracy >= 60) return 'success'
-  if (accuracy >= 50) return 'primary'
-  return 'warning'
-}
-
 onMounted(fetchReport)
 </script>
 
@@ -71,8 +108,10 @@ onMounted(fetchReport)
   <div>
     <div class="d-flex flex-wrap align-center mb-4 ga-3">
       <div>
-        <h2 class="text-h5 font-weight-bold">完赛比赛统计分析</h2>
-        <div class="text-body-2 text-medium-emphasis mt-1">不区分比赛级别，仅使用已经完赛且数据完整的比赛。</div>
+        <h2 class="text-h5 font-weight-bold">完赛比赛信号统计</h2>
+        <div class="text-body-2 text-medium-emphasis mt-1">
+          基于全部完赛比赛，逐个信号统计符合条件的场次、命中率，并可下钻查看具体比赛。所有计算均在后端完成。
+        </div>
       </div>
       <v-spacer />
       <v-btn :loading="loading" color="primary" prepend-icon="mdi-refresh" @click="fetchReport">重新统计</v-btn>
@@ -103,40 +142,82 @@ onMounted(fetchReport)
           <v-card variant="tonal">
             <v-card-text>
               <div class="text-body-2 text-medium-emphasis">统计范围</div>
-              <div class="text-subtitle-1 font-weight-medium mt-1">{{ sourceRange }}</div>
-              <div class="text-caption text-medium-emphasis mt-1">正确率 = 命中数 ÷ 有效样本；缺少原始数据、走盘或无法形成方向的比赛会自动剔除。</div>
+              <div class="text-subtitle-1 font-weight-medium mt-1">{{ sourceRange() }}</div>
+              <div class="text-caption text-medium-emphasis mt-1">
+                每个信号显示“符合条件的场次 / 命中 / 命中率”。命中率按已完赛结果判断该信号方向猜没猜对；仅有盘口/赔率数据的比赛才会进入相应信号。
+              </div>
             </v-card-text>
           </v-card>
         </v-col>
       </v-row>
 
-      <v-card v-for="group in report.groups" :key="group.key" class="mb-5">
-        <v-card-title class="pt-5">{{ group.title }}</v-card-title>
-        <v-card-subtitle class="pb-2 text-wrap">{{ group.definition }}</v-card-subtitle>
+      <v-card v-for="signal in report.signals" :key="signal.key" class="mb-5">
+        <v-card-title class="pt-5 d-flex align-center flex-wrap ga-2">
+          <span>{{ signal.title }}</span>
+          <v-chip color="primary" size="small" variant="tonal">符合 {{ signal.matched.toLocaleString() }} 场</v-chip>
+          <v-chip :color="accuracyColor(signal.accuracy, signal.matched)" size="small" variant="tonal">
+            命中率 {{ signal.matched ? signal.accuracy.toFixed(2) + '%' : '-' }}
+          </v-chip>
+          <v-chip size="small" variant="text">命中 {{ signal.hit }} / 未命中 {{ signal.miss }}</v-chip>
+        </v-card-title>
+        <v-card-subtitle class="pb-2 text-wrap">{{ signal.definition }}</v-card-subtitle>
+
         <v-card-text>
-          <v-table density="comfortable" class="statistics-table">
-            <thead>
-              <tr>
-                <th>统计维度</th>
-                <th class="text-right">有效样本</th>
-                <th class="text-right">命中</th>
-                <th class="text-right">正确率</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="row in group.rows" :key="row.key">
-                <td class="font-weight-medium">{{ row.label }}</td>
-                <td class="text-right">{{ row.sample.toLocaleString() }}</td>
-                <td class="text-right">{{ row.correct.toLocaleString() }}</td>
-                <td class="text-right">
-                  <v-chip :color="accuracyColor(row.accuracy)" size="small" variant="tonal">{{ row.sample ? `${row.accuracy.toFixed(2)}%` : '-' }}</v-chip>
-                </td>
-              </tr>
-              <tr v-if="!group.rows.length">
-                <td colspan="4" class="text-center text-medium-emphasis py-6">暂无可统计数据</td>
-              </tr>
-            </tbody>
-          </v-table>
+          <!-- Heat signals: bucket table, each bucket drills into its matches -->
+          <template v-if="signal.buckets">
+            <v-table density="comfortable" class="stat-table">
+              <thead>
+                <tr>
+                  <th>热度档位</th>
+                  <th class="text-right">符合场次</th>
+                  <th class="text-right">命中</th>
+                  <th class="text-right">命中率</th>
+                  <th class="text-right">明细</th>
+                </tr>
+              </thead>
+              <tbody>
+                <template v-for="bucket in signal.buckets" :key="bucket.key">
+                  <tr>
+                    <td class="font-weight-medium">{{ bucket.title }}</td>
+                    <td class="text-right">{{ bucket.matched.toLocaleString() }}</td>
+                    <td class="text-right">{{ bucket.hit }}</td>
+                    <td class="text-right">
+                      <v-chip v-if="bucket.matched" :color="accuracyColor(bucket.accuracy, bucket.matched)" size="small" variant="tonal">
+                        {{ bucket.accuracy.toFixed(2) }}%
+                      </v-chip>
+                      <span v-else>-</span>
+                    </td>
+                    <td class="text-right">
+                      <v-btn v-if="bucket.matched" size="small" variant="text" @click="toggle(bucket.key)">
+                        {{ expanded[bucket.key] ? '收起' : '查看' }}
+                      </v-btn>
+                      <span v-else>-</span>
+                    </td>
+                  </tr>
+                  <tr v-if="expanded[bucket.key]">
+                    <td colspan="5" class="pa-0">
+                      <div class="detail-wrap">
+                        <MatchDetailTable :matches="cappedMatches(bucket.matches)" :total="bucket.matched" :cap="DETAIL_CAP" show-value />
+                      </div>
+                    </td>
+                  </tr>
+                </template>
+              </tbody>
+            </v-table>
+          </template>
+
+          <!-- Normal signals: single drill-down of matched matches -->
+          <template v-else>
+            <div v-if="!signal.matched" class="text-medium-emphasis py-4">暂无符合条件的比赛。</div>
+            <template v-else>
+              <v-btn size="small" variant="tonal" class="mb-3" @click="toggle(signal.key)">
+                {{ expanded[signal.key] ? '收起明细' : `查看明细（${signal.matched} 场）` }}
+              </v-btn>
+              <div v-if="expanded[signal.key]" class="detail-wrap">
+                <MatchDetailTable :matches="cappedMatches(signal.matches || [])" :total="signal.matched" :cap="DETAIL_CAP" show-value />
+              </div>
+            </template>
+          </template>
         </v-card-text>
       </v-card>
     </template>
@@ -148,7 +229,12 @@ onMounted(fetchReport)
 </template>
 
 <style scoped>
-.statistics-table th {
+.stat-table th {
   white-space: nowrap;
+}
+.detail-wrap {
+  max-height: 460px;
+  overflow: auto;
+  background: rgba(var(--v-theme-surface-light), 0.4);
 }
 </style>

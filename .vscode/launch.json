@@ -57,12 +57,12 @@
     {
       "name": "5. 启动全部",
       "configurations": [
-        "1. 启动前台 H5",
+        "1.1 启动前台 H5（dev）",
         "2. 启动管理后台",
         "3. 启动前台 API",
         "4. 启动管理 API"
       ],
-      "stopAll": true
+      "stopAll": false
     }
   ]
 }

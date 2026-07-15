@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"math"
 	"net/http"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -54,6 +53,7 @@ func GetMatchStatistics(c *gin.Context) {
 type statisticsMatch struct {
 	ID, Date, Home, Guest string
 	HomeScore, GuestScore int
+	State                 string
 	Settled               bool
 }
 
@@ -66,32 +66,106 @@ type statisticsTeamForm struct {
 	For, Against, Matches float64
 }
 
-type statisticsCounter struct{ Sample, Correct int }
+// Tuning knobs for the directional signals. Kept as named constants so the
+// thresholds are easy to review and adjust without hunting through the logic.
+const (
+	statisticsHandicapBand    = 0.25 // |让球期望| ≤ 此值算平局，否则算主/客
+	statisticsGoalDiscrepancy = 0.75 // #7 / #11 期望与盘口的最小背离
+	statisticsPushEpsilon     = 0.001
+)
 
-func (s *statisticsCounter) add(correct bool) {
-	s.Sample++
-	if correct {
-		s.Correct++
+var statisticsHeatTiers = []int{90, 85, 80, 75, 70, 65, 60}
+
+// statisticsDetail is one drill-down row: the completed match plus what the
+// signal picked and whether it hit.
+type statisticsDetail struct {
+	MatchID    string  `json:"match_id"`
+	Date       string  `json:"date"`
+	Home       string  `json:"home"`
+	Guest      string  `json:"guest"`
+	HomeScore  int     `json:"home_score"`
+	GuestScore int     `json:"guest_score"`
+	State      string  `json:"state"`
+	Pick       string  `json:"pick"`
+	Result     string  `json:"result"`
+	Hit        bool    `json:"hit"`
+	Value      float64 `json:"value"`
+}
+
+// statisticsSignal accumulates the matches that satisfied one condition.
+type statisticsSignal struct {
+	details []statisticsDetail
+	hit     int
+}
+
+func (s *statisticsSignal) add(d statisticsDetail) {
+	s.details = append(s.details, d)
+	if d.Hit {
+		s.hit++
 	}
 }
-func (s statisticsCounter) row(key, label string) gin.H {
-	accuracy := 0.0
-	if s.Sample > 0 {
-		accuracy = math.Round(float64(s.Correct)/float64(s.Sample)*10000) / 100
+
+func (s *statisticsSignal) accuracy() float64 {
+	if len(s.details) == 0 {
+		return 0
 	}
-	return gin.H{"key": key, "label": label, "sample": s.Sample, "correct": s.Correct, "accuracy": accuracy}
+	return math.Round(float64(s.hit)/float64(len(s.details))*10000) / 100
+}
+
+func (s *statisticsSignal) list() []statisticsDetail {
+	if s.details == nil {
+		return []statisticsDetail{}
+	}
+	return s.details
+}
+
+func (s *statisticsSignal) payload(key, title, definition string) gin.H {
+	return gin.H{
+		"key": key, "title": title, "definition": definition,
+		"matched": len(s.details), "hit": s.hit, "miss": len(s.details) - s.hit,
+		"accuracy": s.accuracy(), "matches": s.list(),
+	}
+}
+
+func statisticsRound2(value float64) float64 { return math.Round(value*100) / 100 }
+
+func statisticsOutcomeLabel(outcome string) string {
+	switch outcome {
+	case "home":
+		return "主胜"
+	case "away":
+		return "客胜"
+	default:
+		return "平局"
+	}
 }
 
 func buildMatchStatistics(matches []statisticsMatch, histories, pankous, odds map[string]map[string]interface{}) gin.H {
-	ahByLine, ouByLine := map[string]statisticsCounter{}, map[string]statisticsCounter{}
-	kellySporttery := statisticsCounter{}
-	heat := map[string]statisticsCounter{}
-	for _, market := range []string{"ah", "ou"} {
-		for _, threshold := range []int{60, 70, 80, 90} {
-			heat[fmt.Sprintf("%s-%d", market, threshold)] = statisticsCounter{}
-		}
+	return buildSignalStatistics(matches, histories, pankous, odds)
+}
+
+// buildSignalStatistics walks every completed match once and files it under each
+// signal whose condition it satisfies. Every signal reports how many matches it
+// matched, how many it got right, and the full drill-down list.
+func buildSignalStatistics(matches []statisticsMatch, histories, pankous, odds map[string]map[string]interface{}) gin.H {
+	asianHeat := map[int]*statisticsSignal{}
+	asianHeatAlt := map[int]*statisticsSignal{}
+	goalsHeat := map[int]*statisticsSignal{}
+	for _, tier := range statisticsHeatTiers {
+		asianHeat[tier] = &statisticsSignal{}
+		asianHeatAlt[tier] = &statisticsSignal{}
+		goalsHeat[tier] = &statisticsSignal{}
 	}
-	metrics := map[string]statisticsCounter{}
+	proSignal := &statisticsSignal{}
+	tradeComfort := &statisticsSignal{}
+	historyHandicap := &statisticsSignal{}
+	recentHandicap := &statisticsSignal{}
+	asianComposite := &statisticsSignal{}
+	lineDiscrepancy := &statisticsSignal{}
+	historyGoalsSig := &statisticsSignal{}
+	recentGoalsSig := &statisticsSignal{}
+	goalsComposite := &statisticsSignal{}
+	goalsDiscrepancy := &statisticsSignal{}
 
 	for _, match := range matches {
 		history := histories[match.ID]
@@ -105,91 +179,109 @@ func buildMatchStatistics(matches []statisticsMatch, histories, pankous, odds ma
 		guestForm := statisticsRecentForm(guestRecent, match.Guest)
 		recentDiff, hasRecentDiff := statisticsRecentDifference(homeForm, guestForm)
 		recentGoals, hasRecentGoals := statisticsRecentGoals(homeRecent, guestRecent)
-		attackDefenseGoals, hasAttackDefense := statisticsAttackDefenseGoals(homeForm, guestForm)
-
-		// 1. Asian handicap line: settle the home side at the collected current line.
-		if hasAH {
-			if correct, valid := statisticsAsianCorrect(match, ahLine); valid {
-				key := statisticsLineKey(ahLine)
-				counter := ahByLine[key]
-				counter.add(correct)
-				ahByLine[key] = counter
-			}
-		}
-		// 2. O/U line: use the current line and settle the over side; pushes are excluded.
-		if hasOU {
-			if correct, valid := statisticsOverCorrect(match, ouLine); valid {
-				key := statisticsLineKey(ouLine)
-				counter := ouByLine[key]
-				counter.add(correct)
-				ouByLine[key] = counter
-			}
-		}
-
-		// 3. A prediction is included only when the Kelly and Sporttery proxies overlap.
-		if choices := statisticsKellySportteryChoices(oddsRow); len(choices) > 0 {
-			kellySporttery.add(choices[statisticsActualOutcome(match)])
-		}
-
 		probabilities := statisticsProbabilities(oddsRow)
-		if len(probabilities) == 3 {
-			if hasAH {
-				homeHeat := statisticsAsianHeat(probabilities[0], probabilities[2], ahLine)
-				if actual, valid := statisticsOutcomeFromValue(float64(match.HomeScore-match.GuestScore), 0); valid {
-					pred, _ := statisticsOutcomeFromValue(homeHeat-50, 0)
-					for _, threshold := range []int{60, 70, 80, 90} {
-						if math.Max(homeHeat, 100-homeHeat) >= float64(threshold) {
-							counter := heat[fmt.Sprintf("ah-%d", threshold)]
-							counter.add(pred == actual)
-							heat[fmt.Sprintf("ah-%d", threshold)] = counter
-						}
-					}
-				}
+
+		// 1a / 1c. Asian betting heat, bucketed into a single (non-overlapping) tier.
+		// Two lenses are recorded from the same inputs so their distributions can be
+		// compared: the original nudge-off-50 formula and the wider prob-lean lens.
+		if hasAH && len(probabilities) == 3 {
+			if correct, valid := statisticsAsianCorrect(match, ahLine); valid {
+				statisticsFileAsianHeat(asianHeat, match, correct,
+					statisticsAsianHeat(probabilities[0], probabilities[2], ahLine))
+				statisticsFileAsianHeat(asianHeatAlt, match, correct,
+					statisticsAsianHeatAlt(probabilities[0], probabilities[2], ahLine))
 			}
 		}
+		// 1b. Over/under betting heat, same bucketing.
 		if hasOU && (hasRecentGoals || hasHistory) {
-			expected := statisticsMean(recentGoals, hasRecentGoals, historyGoals, hasHistory)
-			overHeat := statisticsClamp(50+(expected-ouLine)*18, 0, 100)
-			if actual, valid := statisticsOverOutcome(match, ouLine); valid {
-				prediction := overHeat >= 50
-				for _, threshold := range []int{60, 70, 80, 90} {
-					if math.Max(overHeat, 100-overHeat) >= float64(threshold) {
-						counter := heat[fmt.Sprintf("ou-%d", threshold)]
-						counter.add(prediction == actual)
-						heat[fmt.Sprintf("ou-%d", threshold)] = counter
-					}
+			if over, valid := statisticsOverOutcome(match, ouLine); valid {
+				expected := statisticsMean(recentGoals, hasRecentGoals, historyGoals, hasHistory)
+				overHeat := statisticsClamp(50+(expected-ouLine)*18, 0, 100)
+				heat := math.Max(overHeat, 100-overHeat)
+				if tier, ok := statisticsHeatTier(heat); ok {
+					pickOver := overHeat >= 50
+					detail := statisticsBaseDetail(match)
+					detail.Value = statisticsRound2(heat)
+					detail.Pick = statisticsOverLabel(pickOver)
+					detail.Result = statisticsOverLabel(over)
+					detail.Hit = pickOver == over
+					goalsHeat[tier].add(detail)
 				}
 			}
 		}
 
-		// 5-7: handicap forecasts are compared with the normal-time result (home/draw/away).
+		// 2. Professional signal: Kelly and Sporttery proxies agree on a direction.
+		if choices := statisticsKellySportteryChoices(oddsRow); len(choices) > 0 {
+			actual := statisticsActualOutcome(match)
+			detail := statisticsBaseDetail(match)
+			detail.Pick = statisticsChoiceLabel(choices)
+			detail.Result = statisticsOutcomeLabel(actual)
+			detail.Hit = choices[actual]
+			proSignal.add(detail)
+		}
+
+		// 3. Trade profit alignment (Sporttery only): 胜平负 & 让球 most-comfortable side agree.
+		if dir, ok := statisticsBookmakerComfort(statisticsValue(oddsRow, "sporttery_trade", "sportteryTrade")); ok {
+			actual := statisticsActualOutcome(match)
+			detail := statisticsBaseDetail(match)
+			detail.Pick = statisticsOutcomeLabel(dir)
+			detail.Result = statisticsOutcomeLabel(actual)
+			detail.Hit = dir == actual
+			tradeComfort.add(detail)
+		}
+
+		// 4-6. Handicap expectations, each read as a home/draw/away call.
 		if hasHistory {
-			statisticsAddOutcome(&metrics, "history_handicap", historyDiff, match)
+			statisticsOutcomeSignal(historyHandicap, match, historyDiff)
 		}
 		if hasRecentDiff {
-			statisticsAddOutcome(&metrics, "recent_handicap", recentDiff, match)
+			statisticsOutcomeSignal(recentHandicap, match, recentDiff)
 		}
 		if composite, ok := statisticsAverage(historyDiff, hasHistory, recentDiff, hasRecentDiff, ahLine, hasAH); ok {
-			statisticsAddOutcome(&metrics, "asian_composite", composite, match)
+			statisticsOutcomeSignal(asianComposite, match, composite)
 		}
 
-		// 8-11: goal forecasts are compared against the current O/U line; pushes and equal forecasts are excluded.
+		// 7. Current Asian line diverges from both history and recent form by ≥0.75.
+		if hasAH && hasHistory && hasRecentDiff {
+			diffHistory := ahLine - historyDiff
+			diffRecent := ahLine - recentDiff
+			fired, pickHome := false, false
+			if diffHistory >= statisticsGoalDiscrepancy && diffRecent >= statisticsGoalDiscrepancy {
+				fired = true // 盘口高估主队 → 站客队赢盘
+			} else if diffHistory <= -statisticsGoalDiscrepancy && diffRecent <= -statisticsGoalDiscrepancy {
+				fired, pickHome = true, true
+			}
+			if fired {
+				if correct, valid := statisticsAsianCorrect(match, ahLine); valid {
+					detail := statisticsBaseDetail(match)
+					detail.Value = statisticsRound2(math.Min(math.Abs(diffHistory), math.Abs(diffRecent)))
+					detail.Pick = statisticsCoverLabel(pickHome)
+					detail.Result = statisticsCoverLabel(correct)
+					detail.Hit = pickHome == correct
+					lineDiscrepancy.add(detail)
+				}
+			}
+		}
+
+		// 8-11. Goal expectations vs the current O/U line.
 		if hasOU {
 			if hasHistory {
-				statisticsAddGoals(&metrics, "history_goals", historyGoals, ouLine, match)
+				statisticsGoalSignal(historyGoalsSig, match, historyGoals, ouLine)
 			}
 			if hasRecentGoals {
-				statisticsAddGoals(&metrics, "recent_goals", recentGoals, ouLine, match)
+				statisticsGoalSignal(recentGoalsSig, match, recentGoals, ouLine)
 			}
 			if composite, ok := statisticsAverage(historyGoals, hasHistory, recentGoals, hasRecentGoals); ok {
-				statisticsAddGoals(&metrics, "ou_composite", composite, ouLine, match)
-			}
-			if hasAttackDefense {
-				statisticsAddGoals(&metrics, "last_five_attack_defense", attackDefenseGoals, ouLine, match)
-			}
-			if equilibrium, ok := statisticsAverage(historyGoals, hasHistory, recentGoals, hasRecentGoals, attackDefenseGoals, hasAttackDefense); ok {
-				if actual, valid := statisticsOverOutcome(match, 2.5); valid {
-					metrics["balance_25"] = statisticsCounter{Sample: metrics["balance_25"].Sample + 1, Correct: metrics["balance_25"].Correct + statisticsBoolInt((equilibrium > 2.5) == actual)}
+				statisticsGoalSignal(goalsComposite, match, composite, ouLine)
+				if composite-ouLine >= statisticsGoalDiscrepancy {
+					if over, valid := statisticsOverOutcome(match, ouLine); valid {
+						detail := statisticsBaseDetail(match)
+						detail.Value = statisticsRound2(composite - ouLine)
+						detail.Pick = statisticsOverLabel(true)
+						detail.Result = statisticsOverLabel(over)
+						detail.Hit = over
+						goalsDiscrepancy.add(detail)
+					}
 				}
 			}
 		}
@@ -197,43 +289,185 @@ func buildMatchStatistics(matches []statisticsMatch, histories, pankous, odds ma
 
 	return gin.H{
 		"settled_total": len(matches),
-		"groups": []gin.H{
-			statisticsRowsGroup("asian_handicap_lines", "1. 亚盘各盘口正确率", "按当前亚盘的主队让球结算；走盘不计入样本。", ahByLine),
-			statisticsRowsGroup("over_under_lines", "2. 大小球各盘口正确率", "按当前大小球盘口买大球结算；走盘不计入样本。", ouByLine),
-			{"key": "kelly_sporttery", "title": "3. 凯利与体彩同向推测", "definition": "凯利结果与体彩参考结果有交集时纳入；实际赛果落在交集内即命中。", "rows": []gin.H{kellySporttery.row("kelly_sporttery", "凯利 × 体彩同向")}},
-			statisticsHeatGroup(heat),
-			{"key": "handicap_models", "title": "5-7. 让球模型正确率", "definition": "历史交锋只统计赛前 3 年内记录；近期状态取各队最近 5 场。", "rows": []gin.H{metrics["history_handicap"].row("history_handicap", "历史期望让球（3年内）"), metrics["recent_handicap"].row("recent_handicap", "近期状态让球"), metrics["asian_composite"].row("asian_composite", "亚盘综合均值")}},
-			{"key": "goal_models", "title": "8-12. 球数模型正确率", "definition": "历史交锋只统计赛前 3 年内记录；与当前大小球盘口比较，走盘不计入样本。2.5 均衡值以全部可用球数预期均值判断大/小 2.5。", "rows": []gin.H{metrics["history_goals"].row("history_goals", "历史平均球数（3年内）"), metrics["recent_goals"].row("recent_goals", "近期平均球数"), metrics["ou_composite"].row("ou_composite", "大小球综合均值"), metrics["last_five_attack_defense"].row("last_five_attack_defense", "最近5场平均进球/丢球"), metrics["balance_25"].row("balance_25", "2.5 均衡值")}},
+		"signals": []gin.H{
+			statisticsHeatPayload("asian_heat", "1a. 亚盘投注热度分档（改良份额法）", "热度=平衡点 + (主队胜负份额-50)×1.4 - 让球线×8；份额系数由0.45提到1.4，使强弱分明的盘口扩散到高档。命中=热度方向赢盘。", asianHeat),
+			statisticsHeatPayload("asian_heat_alt", "1c. 亚盘投注热度分档（备选概率差法）", "另一视角：热度=50 + (主胜率-客胜率)×0.95 - 让球线×7；直接用胜负概率差，分布更宽。命中=热度方向赢盘。", asianHeatAlt),
+			statisticsHeatPayload("goals_heat", "1b. 大小球投注热度分档", "按大小球投注热度(大/小压力较大值)分档，档位不重合、从高到低；命中=大/小方向正确。", goalsHeat),
+			proSignal.payload("pro_signal", "2. 专业信号（凯利×体彩同向）", "凯利与体彩参考同时给出且方向一致时纳入；实际赛果落在其中即命中。"),
+			tradeComfort.payload("trade_comfort", "3. 交易盈亏同向（庄家舒服）", "仅体彩比赛；胜平负交易盈亏与让球交易盈亏最舒服方向一致且均为庄家盈利；命中=该方向即实际赛果。"),
+			historyHandicap.payload("history_handicap", "4. 历史期望让球", "赛前3年内交锋净胜球期望；|期望|≤0.25判平，否则判主/客；命中=胜平负判断正确。"),
+			recentHandicap.payload("recent_handicap", "5. 近期状态让球", "两队各自最近5场净胜球差；判断口径同上。"),
+			asianComposite.payload("asian_composite", "6. 亚盘综合均值", "取【历史期望让球】【近期状态让球】【当前亚盘线】中有值者求平均；判断口径同上。"),
+			lineDiscrepancy.payload("line_discrepancy", "7. 亚盘即时盘背离≥0.75", "当前亚盘线较历史与近期期望同时背离≥0.75时纳入；盘口高估一方则站另一方赢盘。"),
+			historyGoalsSig.payload("history_goals", "8. 历史平均球数", "赛前3年内交锋场均总进球；与当前大小球线比较判大/小；命中=大小球判断正确。"),
+			recentGoalsSig.payload("recent_goals", "9. 近期平均球数", "两队最近5场场均总进球；判断口径同上。"),
+			goalsComposite.payload("goals_composite", "10. 球数综合均值", "取【历史平均球数】【近期平均球数】求平均(不含盘口线)；判断口径同上。"),
+			goalsDiscrepancy.payload("goals_discrepancy", "11. 期望球数高于大小球即时盘≥0.75", "球数综合均值高于当前大小球线≥0.75时纳入，判大球；命中=实际打出大球。"),
 		},
 	}
 }
 
-func statisticsRowsGroup(key, title, definition string, counters map[string]statisticsCounter) gin.H {
-	keys := make([]string, 0, len(counters))
-	for key := range counters {
-		keys = append(keys, key)
+func statisticsBaseDetail(match statisticsMatch) statisticsDetail {
+	return statisticsDetail{
+		MatchID: match.ID, Date: match.Date, Home: match.Home, Guest: match.Guest,
+		HomeScore: match.HomeScore, GuestScore: match.GuestScore, State: match.State,
 	}
-	sort.Slice(keys, func(i, j int) bool {
-		a, _ := strconv.ParseFloat(keys[i], 64)
-		b, _ := strconv.ParseFloat(keys[j], 64)
-		return a < b
-	})
-	rows := make([]gin.H, 0, len(keys))
-	for _, key := range keys {
-		rows = append(rows, counters[key].row(key, key))
-	}
-	return gin.H{"key": key, "title": title, "definition": definition, "rows": rows}
 }
 
-func statisticsHeatGroup(counters map[string]statisticsCounter) gin.H {
-	rows := make([]gin.H, 0, 8)
-	for _, market := range []struct{ key, label string }{{"ah", "亚盘热度"}, {"ou", "大小球热度"}} {
-		for _, threshold := range []int{60, 70, 80, 90} {
-			key := fmt.Sprintf("%s-%d", market.key, threshold)
-			rows = append(rows, counters[key].row(key, fmt.Sprintf("%s ≥ %d%%", market.label, threshold)))
+// statisticsFileAsianHeat buckets one Asian-heat reading (home-cover confidence)
+// and records whether that side actually covered.
+func statisticsFileAsianHeat(buckets map[int]*statisticsSignal, match statisticsMatch, homeCovered bool, homeHeat float64) {
+	heat := math.Max(homeHeat, 100-homeHeat)
+	tier, ok := statisticsHeatTier(heat)
+	if !ok {
+		return
+	}
+	pickHome := homeHeat >= 50
+	detail := statisticsBaseDetail(match)
+	detail.Value = statisticsRound2(heat)
+	detail.Pick = statisticsCoverLabel(pickHome)
+	detail.Result = statisticsCoverLabel(homeCovered)
+	detail.Hit = pickHome == homeCovered
+	buckets[tier].add(detail)
+}
+
+// statisticsHeatTier returns the highest tier the heat clears; buckets do not
+// overlap, so each match lands in exactly one tier.
+func statisticsHeatTier(heat float64) (int, bool) {
+	for _, tier := range statisticsHeatTiers { // descending
+		if heat >= float64(tier) {
+			return tier, true
 		}
 	}
-	return gin.H{"key": "heat", "title": "4. 投注比例热度正确率", "definition": "分别统计亚盘/大小球热度达到阈值的场次；阈值为累计口径（≥）。", "rows": rows}
+	return 0, false
+}
+
+func statisticsCoverLabel(home bool) string {
+	if home {
+		return "主队赢盘"
+	}
+	return "客队赢盘"
+}
+
+func statisticsOverLabel(over bool) string {
+	if over {
+		return "大球"
+	}
+	return "小球"
+}
+
+func statisticsChoiceLabel(choices map[string]bool) string {
+	labels := make([]string, 0, 3)
+	for _, key := range []string{"home", "draw", "away"} {
+		if choices[key] {
+			labels = append(labels, statisticsOutcomeLabel(key))
+		}
+	}
+	return strings.Join(labels, "/")
+}
+
+// statisticsOutcomeSignal files a home/draw/away call derived from a handicap
+// expectation (positive = home favoured).
+func statisticsOutcomeSignal(sig *statisticsSignal, match statisticsMatch, value float64) {
+	pred, _ := statisticsOutcomeFromValue(value, statisticsHandicapBand)
+	actual := statisticsActualOutcome(match)
+	detail := statisticsBaseDetail(match)
+	detail.Value = statisticsRound2(value)
+	detail.Pick = statisticsOutcomeLabel(pred)
+	detail.Result = statisticsOutcomeLabel(actual)
+	detail.Hit = pred == actual
+	sig.add(detail)
+}
+
+// statisticsGoalSignal files an over/under call from a goals expectation against
+// the current line; pushes and too-close forecasts are dropped.
+func statisticsGoalSignal(sig *statisticsSignal, match statisticsMatch, value, line float64) {
+	if math.Abs(value-line) < statisticsPushEpsilon {
+		return
+	}
+	over, valid := statisticsOverOutcome(match, line)
+	if !valid {
+		return
+	}
+	predOver := value > line
+	detail := statisticsBaseDetail(match)
+	detail.Value = statisticsRound2(value)
+	detail.Pick = statisticsOverLabel(predOver)
+	detail.Result = statisticsOverLabel(over)
+	detail.Hit = predOver == over
+	sig.add(detail)
+}
+
+func statisticsHeatPayload(key, title, definition string, buckets map[int]*statisticsSignal) gin.H {
+	rows := make([]gin.H, 0, len(statisticsHeatTiers))
+	matched, hit := 0, 0
+	for index, tier := range statisticsHeatTiers {
+		sig := buckets[tier]
+		if sig == nil {
+			sig = &statisticsSignal{}
+		}
+		matched += len(sig.details)
+		hit += sig.hit
+		label := fmt.Sprintf("%d%% ~ %d%%", tier, tier+5)
+		if index == 0 {
+			label = fmt.Sprintf("≥ %d%%", tier)
+		}
+		row := sig.payload(fmt.Sprintf("%s-%d", key, tier), label, "")
+		row["tier"] = tier
+		rows = append(rows, row)
+	}
+	accuracy := 0.0
+	if matched > 0 {
+		accuracy = math.Round(float64(hit)/float64(matched)*10000) / 100
+	}
+	return gin.H{
+		"key": key, "title": title, "definition": definition,
+		"matched": matched, "hit": hit, "miss": matched - hit, "accuracy": accuracy,
+		"buckets": rows,
+	}
+}
+
+// statisticsBookmakerComfort reads the Sporttery trade payload and returns the
+// outcome direction that is most profitable for the bookmaker when 胜平负 and
+// 让球胜平负 agree on it and both are net profits (庄家舒服).
+func statisticsBookmakerComfort(value interface{}) (string, bool) {
+	payload, ok := statisticsJSON(value).(map[string]interface{})
+	if !ok {
+		return "", false
+	}
+	if data, ok := payload["data"].(map[string]interface{}); ok {
+		payload = data
+	}
+	spf, ok1 := statisticsJSON(payload["jyykSpf"]).(map[string]interface{})
+	rq, ok2 := statisticsJSON(payload["jyykRqspf"]).(map[string]interface{})
+	if !ok1 || !ok2 {
+		return "", false
+	}
+	spfDir, spfProfit := statisticsBestProfit(spf)
+	rqDir, rqProfit := statisticsBestProfit(rq)
+	if spfDir == "" || spfDir != rqDir || spfProfit <= 0 || rqProfit <= 0 {
+		return "", false
+	}
+	return spfDir, true
+}
+
+// statisticsBestProfit returns the outcome with the highest bookmaker profit
+// rate (hy/dy/ay) and that rate; missing fields are skipped.
+func statisticsBestProfit(row map[string]interface{}) (string, float64) {
+	best, bestValue := "", math.Inf(-1)
+	for _, item := range []struct{ key, dir string }{{"hy", "home"}, {"dy", "draw"}, {"ay", "away"}} {
+		raw := statisticsValue(row, item.key)
+		if raw == nil {
+			continue
+		}
+		if value := statisticsNumber(raw); value > bestValue {
+			best, bestValue = item.dir, value
+		}
+	}
+	if best == "" {
+		return "", 0
+	}
+	return best, bestValue
 }
 
 func loadStatisticsRows(table string, ids []string) map[string]map[string]interface{} {
@@ -256,7 +490,14 @@ func loadStatisticsRows(table string, ids []string) map[string]map[string]interf
 func parseStatisticsMatch(row map[string]interface{}) statisticsMatch {
 	status := statisticsText(statisticsValue(row, "status"))
 	display := statisticsText(statisticsValue(row, "display_state", "displayState"))
-	return statisticsMatch{ID: statisticsText(statisticsValue(row, "match_id", "matchId")), Date: statisticsDate(statisticsValue(row, "date", "match_time", "matchTime")), Home: statisticsText(statisticsValue(row, "home")), Guest: statisticsText(statisticsValue(row, "guest")), HomeScore: int(statisticsNumber(statisticsValue(row, "home_score", "homeScore"))), GuestScore: int(statisticsNumber(statisticsValue(row, "guest_score", "guestScore"))), Settled: strings.Contains(display, "完") || strings.Contains(status, "完") || strings.EqualFold(status, "finished") || statisticsNumber(statisticsValue(row, "status", "match_state", "matchState")) >= 4}
+	state := display
+	if strings.TrimSpace(state) == "" {
+		state = status
+	}
+	if strings.TrimSpace(state) == "" {
+		state = "完赛"
+	}
+	return statisticsMatch{ID: statisticsText(statisticsValue(row, "match_id", "matchId")), Date: statisticsDate(statisticsValue(row, "date", "match_time", "matchTime")), Home: statisticsText(statisticsValue(row, "home")), Guest: statisticsText(statisticsValue(row, "guest")), HomeScore: int(statisticsNumber(statisticsValue(row, "home_score", "homeScore"))), GuestScore: int(statisticsNumber(statisticsValue(row, "guest_score", "guestScore"))), State: state, Settled: strings.Contains(display, "完") || strings.Contains(status, "完") || strings.EqualFold(status, "finished") || statisticsNumber(statisticsValue(row, "status", "match_state", "matchState")) >= 4}
 }
 
 func statisticsDateRange(start, end string) (string, string, error) {
@@ -384,11 +625,31 @@ func statisticsRecentGoals(homeRows, guestRows []statisticsHistoryMatch) (float6
 	}
 	return statisticsSliceMean(totals), true
 }
-func statisticsAttackDefenseGoals(home, guest statisticsTeamForm) (float64, bool) {
-	if home.Matches == 0 || guest.Matches == 0 {
-		return 0, false
+// statisticsPankouRows returns the per-company rows for a market, tolerating both
+// storage shapes the crawler produced: a bare JSON array of companies (newer rows),
+// or the combined object {"asia":[...],"dxq":[...]} that older rows packed into
+// asia_data while leaving dxq_data null.
+func statisticsPankouRows(row map[string]interface{}, rowsKey string) []interface{} {
+	market := strings.TrimSuffix(rowsKey, "_data")
+	if rows := statisticsMarketRows(statisticsValue(row, rowsKey), market); rows != nil {
+		return rows
 	}
-	return ((home.For / home.Matches) + (guest.Against / guest.Matches) + (guest.For / guest.Matches) + (home.Against / home.Matches)) / 2, true
+	if rowsKey != "asia_data" {
+		return statisticsMarketRows(statisticsValue(row, "asia_data"), market)
+	}
+	return nil
+}
+
+func statisticsMarketRows(value interface{}, market string) []interface{} {
+	switch typed := statisticsJSON(value).(type) {
+	case []interface{}:
+		return typed
+	case map[string]interface{}:
+		if rows, ok := statisticsJSON(typed[market]).([]interface{}); ok {
+			return rows
+		}
+	}
+	return nil
 }
 
 func statisticsPankouLine(row map[string]interface{}, preferred, rowsKey string) (float64, bool) {
@@ -397,7 +658,7 @@ func statisticsPankouLine(row map[string]interface{}, preferred, rowsKey string)
 			return line, true
 		}
 	}
-	items, _ := statisticsJSON(statisticsValue(row, rowsKey)).([]interface{})
+	items := statisticsPankouRows(row, rowsKey)
 	for _, value := range items {
 		item, ok := value.(map[string]interface{})
 		if !ok || int(statisticsNumber(statisticsValue(item, "companyId", "company_id"))) != 8 {
@@ -417,6 +678,37 @@ func statisticsPankouLine(row map[string]interface{}, preferred, rowsKey string)
 	return 0, false
 }
 
+// statisticsPankouTerms maps the Chinese handicap wording to its numeric line.
+// Both 二/两 spellings are included because the crawler stores 二球 for O/U while
+// Asian lines use 两球; combined quarter lines (含「/」) fall back to averaging the
+// two adjacent single terms, so this table only needs the base terms plus the few
+// combinations worth spelling out for clarity.
+var statisticsPankouTerms = map[string]float64{
+	"平手": 0, "平": 0,
+	"半": 0.5, "半球": 0.5,
+	"一球": 1,
+	"球半": 1.5, "一球半": 1.5,
+	"两球": 2, "二球": 2,
+	"两球半": 2.5, "二球半": 2.5,
+	"三球": 3,
+	"三球半": 3.5, "三半": 3.5,
+	"四球": 4,
+	"四球半": 4.5,
+	"五球": 5,
+	"平/半": 0.25, "平手/半球": 0.25,
+	"半/一": 0.75, "半球/一球": 0.75,
+	"一/球半": 1.25, "一球/球半": 1.25, "一球/一球半": 1.25,
+	"球半/两": 1.75, "球半/两球": 1.75, "一球半/二球": 1.75,
+	"两/两半": 2.25, "两球/两球半": 2.25, "二球/二球半": 2.25,
+	"两半/三": 2.75, "两球半/三球": 2.75, "二球半/三球": 2.75,
+	"三/三半": 3.25, "三球/三球半": 3.25,
+	"三球半/四球": 3.75,
+	"四球/四球半": 4.25,
+}
+
+// statisticsLine converts a raw handicap string into a numeric line. It returns
+// ok=false when the value cannot be resolved so callers can drop that match
+// instead of mistaking an unparseable line for a pick'em (0) line.
 func statisticsLine(value string) (float64, bool) {
 	value = strings.TrimSpace(value)
 	if value == "" {
@@ -426,9 +718,7 @@ func statisticsLine(value string) (float64, bool) {
 		return number, true
 	}
 	negative := strings.Contains(value, "受")
-	value = strings.ReplaceAll(value, "受", "")
-	mapping := map[string]float64{"平手": 0, "平": 0, "平/半": .25, "半": .5, "半球": .5, "半/一": .75, "一球": 1, "一/球半": 1.25, "一球/球半": 1.25, "球半": 1.5, "一球半": 1.5, "球半/两球": 1.75, "两球": 2, "两/两半": 2.25, "两球/两球半": 2.25, "两球半": 2.5, "两半/三": 2.75, "两球半/三球": 2.75, "三球": 3, "三/三半": 3.25, "三球半": 3.5}
-	line, ok := mapping[value]
+	line, ok := statisticsPankouTerm(strings.ReplaceAll(value, "受", ""))
 	if !ok {
 		return 0, false
 	}
@@ -438,16 +728,40 @@ func statisticsLine(value string) (float64, bool) {
 	return line, true
 }
 
+// statisticsPankouTerm resolves a single 受-stripped term to its numeric line,
+// averaging the parts of a combined line such as "两球/两球半".
+func statisticsPankouTerm(term string) (float64, bool) {
+	term = strings.TrimSpace(term)
+	if term == "" {
+		return 0, false
+	}
+	if number, err := strconv.ParseFloat(term, 64); err == nil {
+		return number, true
+	}
+	if line, ok := statisticsPankouTerms[term]; ok {
+		return line, true
+	}
+	if strings.Contains(term, "/") {
+		parts := strings.Split(term, "/")
+		total := 0.0
+		for _, part := range parts {
+			line, ok := statisticsPankouTerm(part)
+			if !ok {
+				return 0, false
+			}
+			total += line
+		}
+		return total / float64(len(parts)), true
+	}
+	return 0, false
+}
+
 func statisticsAsianCorrect(match statisticsMatch, line float64) (bool, bool) {
 	result := float64(match.HomeScore-match.GuestScore) - line
 	if math.Abs(result) < .001 {
 		return false, false
 	}
 	return result > 0, true
-}
-func statisticsOverCorrect(match statisticsMatch, line float64) (bool, bool) {
-	over, valid := statisticsOverOutcome(match, line)
-	return over, valid
 }
 func statisticsOverOutcome(match statisticsMatch, line float64) (bool, bool) {
 	result := float64(match.HomeScore+match.GuestScore) - line
@@ -474,25 +788,6 @@ func statisticsOutcomeFromValue(value, tolerance float64) (string, bool) {
 	}
 	return "away", true
 }
-func statisticsAddOutcome(metrics *map[string]statisticsCounter, key string, projection float64, match statisticsMatch) {
-	prediction, _ := statisticsOutcomeFromValue(projection, .12)
-	counter := (*metrics)[key]
-	counter.add(prediction == statisticsActualOutcome(match))
-	(*metrics)[key] = counter
-}
-func statisticsAddGoals(metrics *map[string]statisticsCounter, key string, projection, line float64, match statisticsMatch) {
-	if math.Abs(projection-line) < .001 {
-		return
-	}
-	actual, valid := statisticsOverOutcome(match, line)
-	if !valid {
-		return
-	}
-	counter := (*metrics)[key]
-	counter.add((projection > line) == actual)
-	(*metrics)[key] = counter
-}
-
 func statisticsProbabilities(row map[string]interface{}) []float64 {
 	avg := statisticsOdds(statisticsValue(row, "avg_odds", "avgOdds"))
 	if len(avg) < 3 {
@@ -515,7 +810,21 @@ func statisticsAsianHeat(home, away, line float64) float64 {
 	} else if line < 0 {
 		balance = 45
 	}
-	return statisticsClamp(balance+(base-50)*.45-line*8, 0, 100)
+	// The share-based strength (base-50) is compressed by the /(home+away)
+	// normalisation, so the original *.45 kept heat pinned near 50 and it never
+	// reached the high tiers. 1.4 restores a usable spread while keeping the same
+	// balance + share-strength + line structure.
+	return statisticsClamp(balance+(base-50)*1.4-line*8, 0, 100)
+}
+
+// statisticsAsianHeatAlt is an alternative, more aggressive heat lens for the
+// Asian market. Instead of nudging off 50, it reads the raw win-vs-lose
+// probability lean (which spreads far more widely than the original formula)
+// and tempers it by the current handicap: giving a deep line (line>0) makes the
+// favourite's cover less certain, receiving one (line<0) makes it more certain.
+// The returned value is the home-cover confidence in [0,100].
+func statisticsAsianHeatAlt(home, away, line float64) float64 {
+	return statisticsClamp(50+(home-away)*0.95-line*7, 0, 100)
 }
 
 func statisticsKellySportteryChoices(row map[string]interface{}) map[string]bool {
@@ -743,7 +1052,6 @@ func statisticsDate(value interface{}) string {
 	}
 	return text
 }
-func statisticsLineKey(value float64) string { return strconv.FormatFloat(value, 'f', 2, 64) }
 func statisticsSliceMean(values []float64) float64 {
 	sum := 0.0
 	for _, value := range values {
@@ -771,9 +1079,3 @@ func statisticsAverage(values ...interface{}) (float64, bool) {
 	return sum / float64(count), true
 }
 func statisticsClamp(value, min, max float64) float64 { return math.Max(min, math.Min(max, value)) }
-func statisticsBoolInt(value bool) int {
-	if value {
-		return 1
-	}
-	return 0
-}

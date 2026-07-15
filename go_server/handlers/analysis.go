@@ -909,7 +909,11 @@ func pressurePair(homeProbability float64, guestProbability float64, firstLine f
 		balanceBase = 45
 	}
 
-	strengthAdjustment := (strengthBase - 50) * 0.45
+	// The share-based strength (strengthBase-50) is compressed by the
+	// /(home+away) normalisation, so the old *0.45 kept 让球投注热度 pinned near
+	// 50 and it never reached the high tiers. 1.4 restores a usable spread,
+	// matching the admin statistics 亚盘热度 (statisticsAsianHeat)改良.
+	strengthAdjustment := (strengthBase - 50) * 1.4
 	handicapCost := currentLine * 8
 	movementCost := (currentLine - firstLine) / 0.25 * 1.5
 	home := clamp(balanceBase+strengthAdjustment-handicapCost-movementCost, 0, 100)
