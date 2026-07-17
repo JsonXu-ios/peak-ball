@@ -3,6 +3,8 @@ package main
 
 import (
 	"log"
+	"net"
+	"strings"
 
 	"go_admin/config"
 	"go_admin/database"
@@ -28,9 +30,26 @@ func main() {
 
 	r := gin.Default()
 
-	// CORS middleware
+	// CORS middleware: allow localhost and private-LAN origins (dev/内网访问，
+	// e.g. http://192.168.x.x:5174), so the admin panel works from any machine
+	// on the LAN without maintaining an IP whitelist.
 	r.Use(cors.New(cors.Config{
-		AllowOrigins:     []string{"http://localhost:5174", "http://localhost:3000", "http://127.0.0.1:5174", "http://127.0.0.1:3000"},
+		AllowOriginFunc: func(origin string) bool {
+			host := strings.TrimPrefix(strings.TrimPrefix(origin, "http://"), "https://")
+			if i := strings.LastIndex(host, ":"); i >= 0 {
+				host = host[:i]
+			}
+			if host == "localhost" || host == "127.0.0.1" {
+				return true
+			}
+			// 内网穿透域名（与前端 vite allowedHosts 保持一致）
+			if host == "lazyperson.top" || strings.HasSuffix(host, ".lazyperson.top") ||
+				strings.HasSuffix(host, ".vicp.fun") {
+				return true
+			}
+			ip := net.ParseIP(host)
+			return ip != nil && ip.IsPrivate()
+		},
 		AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"},
 		AllowHeaders:     []string{"Origin", "Content-Type", "Authorization"},
 		AllowCredentials: true,

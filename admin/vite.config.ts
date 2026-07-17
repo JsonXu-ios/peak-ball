@@ -15,6 +15,9 @@ export default defineConfig({
   },
   server: {
     port: 5174,
+    strictPort: true,
+    host: true,
+    allowedHosts: ['zq1283fj623.vicp.fun', '.lazyperson.top'],
     proxy: {
       '/api': {
         target: 'http://localhost:8081',

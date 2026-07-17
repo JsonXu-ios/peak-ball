@@ -6,6 +6,7 @@ const allowedHosts = Array.from(
   new Set(
     [
       'zq1283fj623.vicp.fun',
+      '.lazyperson.top',
       ...(process.env.VITE_ALLOWED_HOSTS ?? '').split(','),
       ...(process.env.__VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS ?? '').split(','),
     ]
