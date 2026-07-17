@@ -22,6 +22,11 @@ export default defineConfig({
       '/api': {
         target: 'http://localhost:8081',
         changeOrigin: true,
+        // 摘掉浏览器的 Origin 头：经代理的请求对后端而言就是同源请求，
+        // 后端 CORS 白名单不再参与，换任何访问域名/IP 都不会再 403。
+        configure: (proxy) => {
+          proxy.on('proxyReq', (proxyReq) => proxyReq.removeHeader('origin'))
+        },
       },
       '/footballimg': {
         target: 'http://localhost:18080',
