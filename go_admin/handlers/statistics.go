@@ -28,10 +28,20 @@ func statisticsDB() *gorm.DB {
 // refresh clicks cannot pile up concurrent multi-hundred-MB computations.
 var statisticsRecomputeMu sync.Mutex
 
+// Column lists for the side tables: only what the signal builders actually read.
+// history_moneys in particular carries several unused multi-KB JSON columns
+// (future_*, rank_data, *_summary) that would double the working set.
+const (
+	statisticsMoneysColumns  = "match_id, date, match_time, home, guest, home_score, guest_score, status, display_state, league, home_logo, guest_logo"
+	statisticsHistoryColumns = "match_id, against_list, recent_home_list, recent_guest_list, league_stat"
+	statisticsPankouColumns  = "match_id, bet365_asia, bet365_dxq, asia_data, dxq_data"
+	statisticsOddsColumns    = "match_id, avg_odds, pinnacle, bet365, william, sporttery_trade, data"
+)
+
 // computeMatchStatistics builds the full report for the given date range.
 func computeMatchStatistics(start, end string) (gin.H, error) {
 	var rawMatches []map[string]interface{}
-	if err := statisticsDB().Table("moneys").Find(&rawMatches).Error; err != nil {
+	if err := statisticsDB().Table("moneys").Select(statisticsMoneysColumns).Find(&rawMatches).Error; err != nil {
 		return nil, err
 	}
 	matches := make([]statisticsMatch, 0, len(rawMatches))
@@ -45,15 +55,16 @@ func computeMatchStatistics(start, end string) (gin.H, error) {
 		ids = append(ids, match.ID)
 	}
 
-	historyByMatch := loadStatisticsRows("history_moneys", ids)
-	pankouByMatch := loadStatisticsRows("pankou_moneys", ids)
-	oddsByMatch := loadStatisticsRows("odds_moneys", ids)
+	historyByMatch := loadStatisticsRows("history_moneys", statisticsHistoryColumns, ids)
+	pankouByMatch := loadStatisticsRows("pankou_moneys", statisticsPankouColumns, ids)
+	oddsByMatch := loadStatisticsRows("odds_moneys", statisticsOddsColumns, ids)
 	report := buildMatchStatistics(matches, historyByMatch, pankouByMatch, oddsByMatch)
 	if signals, ok := report["signals"].([]gin.H); ok {
 		pickSignals, pickProfile := buildPickSignals(matches, loadUserPicks(ids), historyByMatch, pankouByMatch, oddsByMatch)
 		signals = append(signals, buildWarningSignals(matches, historyByMatch, pankouByMatch, oddsByMatch))
 		signals = append(signals, buildDeviationSignals(matches, historyByMatch, pankouByMatch))
 		signals = append(signals, buildChaseSignals(matches, historyByMatch, pankouByMatch))
+		signals = append(signals, buildDirectOverSignals(matches, historyByMatch, pankouByMatch))
 		report["signals"] = append(signals, pickSignals...)
 		report["pick_profile"] = pickProfile
 	}
@@ -544,18 +555,24 @@ func statisticsBestProfit(row map[string]interface{}) (string, float64) {
 	return best, bestValue
 }
 
-func loadStatisticsRows(table string, ids []string) map[string]map[string]interface{} {
+// loadStatisticsRows fetches only the listed columns, in id batches, so the
+// per-query result set stays bounded as the match count grows.
+func loadStatisticsRows(table, columns string, ids []string) map[string]map[string]interface{} {
 	result := map[string]map[string]interface{}{}
-	if len(ids) == 0 {
-		return result
-	}
-	var rows []map[string]interface{}
-	if statisticsDB().Table(table).Where("match_id IN ?", ids).Find(&rows).Error != nil {
-		return result
-	}
-	for _, row := range rows {
-		if id := statisticsText(statisticsValue(row, "match_id", "matchId")); id != "" {
-			result[id] = row
+	const batch = 500
+	for start := 0; start < len(ids); start += batch {
+		end := start + batch
+		if end > len(ids) {
+			end = len(ids)
+		}
+		var rows []map[string]interface{}
+		if statisticsDB().Table(table).Select(columns).Where("match_id IN ?", ids[start:end]).Find(&rows).Error != nil {
+			continue
+		}
+		for _, row := range rows {
+			if id := statisticsText(statisticsValue(row, "match_id", "matchId")); id != "" {
+				result[id] = row
+			}
 		}
 	}
 	return result

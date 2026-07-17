@@ -624,7 +624,7 @@ var (
 
 func recomputeRecommendSnapshot() (*recommendSnapshot, error) {
 	var rawMatches []map[string]interface{}
-	if err := statisticsDB().Table("moneys").Find(&rawMatches).Error; err != nil {
+	if err := statisticsDB().Table("moneys").Select(statisticsMoneysColumns).Find(&rawMatches).Error; err != nil {
 		return nil, err
 	}
 	settled := make([]statisticsMatch, 0, len(rawMatches))
@@ -637,9 +637,9 @@ func recomputeRecommendSnapshot() (*recommendSnapshot, error) {
 		settled = append(settled, match)
 		ids = append(ids, match.ID)
 	}
-	histories := loadStatisticsRows("history_moneys", ids)
-	pankous := loadStatisticsRows("pankou_moneys", ids)
-	odds := loadStatisticsRows("odds_moneys", ids)
+	histories := loadStatisticsRows("history_moneys", statisticsHistoryColumns, ids)
+	pankous := loadStatisticsRows("pankou_moneys", statisticsPankouColumns, ids)
+	odds := loadStatisticsRows("odds_moneys", statisticsOddsColumns, ids)
 
 	catalogue := recommendCatalogue()
 	stats := map[string]*recommendStat{}
@@ -797,7 +797,7 @@ func GetSignalRecommendations(c *gin.Context) {
 
 	// upcoming scan (cheap): only matches in the window, only active conditions
 	var rawMatches []map[string]interface{}
-	if err := statisticsDB().Table("moneys").Find(&rawMatches).Error; err != nil {
+	if err := statisticsDB().Table("moneys").Select(statisticsMoneysColumns).Find(&rawMatches).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -813,9 +813,9 @@ func GetSignalRecommendations(c *gin.Context) {
 		upcoming = append(upcoming, match)
 		ids = append(ids, match.ID)
 	}
-	histories := loadStatisticsRows("history_moneys", ids)
-	pankous := loadStatisticsRows("pankou_moneys", ids)
-	odds := loadStatisticsRows("odds_moneys", ids)
+	histories := loadStatisticsRows("history_moneys", statisticsHistoryColumns, ids)
+	pankous := loadStatisticsRows("pankou_moneys", statisticsPankouColumns, ids)
+	odds := loadStatisticsRows("odds_moneys", statisticsOddsColumns, ids)
 
 	type recommendationRow struct {
 		sortKey string

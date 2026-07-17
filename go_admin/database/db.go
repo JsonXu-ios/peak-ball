@@ -4,6 +4,8 @@ package database
 import (
 	"fmt"
 	"log"
+	"os"
+	"time"
 
 	"go_admin/config"
 	"go_admin/models"
@@ -26,8 +28,18 @@ func Init() error {
 		config.DBName,
 	)
 
+	// ParameterizedQueries keeps bound values out of the SQL log. Without it a
+	// single snapshot save inlines the multi-MB report JSON into one log line,
+	// which freezes the IDE console.
 	db, err := gorm.Open(mysql.Open(dsn), &gorm.Config{
-		Logger: logger.Default.LogMode(logger.Info),
+		Logger: logger.New(
+			log.New(os.Stdout, "\r\n", log.LstdFlags),
+			logger.Config{
+				SlowThreshold:        200 * time.Millisecond,
+				LogLevel:             logger.Info,
+				ParameterizedQueries: true,
+			},
+		),
 	})
 	if err != nil {
 		return fmt.Errorf("failed to connect to database: %w", err)
