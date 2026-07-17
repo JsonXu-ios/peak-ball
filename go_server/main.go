@@ -49,6 +49,13 @@ func main() {
 		api.POST("/analysis/rule-snapshot/generate", handlers.GenerateAnalysisRuleSnapshot)
 		api.GET("/analysis/match/:id", handlers.GetAnalysisDetail)
 
+		// Owner pick recording (blind backfill: entry rows hide real results)
+		api.GET("/picks/entry", handlers.GetPickEntryMatches)
+		api.GET("/picks/profile", handlers.GetPickProfile)
+		api.GET("/picks", handlers.ListUserPicks)
+		api.POST("/picks", handlers.SaveUserPick)
+		api.DELETE("/picks/:id", handlers.DeleteUserPick)
+
 		// Expert routes
 		api.GET("/experts", handlers.GetExperts)
 		api.GET("/match/:id/expert-tips", handlers.GetMatchExpertTips)

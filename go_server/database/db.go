@@ -47,6 +47,8 @@ func Init() error {
 		&models.Reward{},
 		// Search
 		&models.SearchHistory{},
+		// Owner betting picks (portable sample data)
+		&models.UserPick{},
 		// League standings
 		&models.LeagueStanding{},
 		&models.TopScorer{},

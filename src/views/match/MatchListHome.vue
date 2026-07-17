@@ -33,6 +33,13 @@
               <option v-for="league in availableLeagues" :key="league" :value="league">{{ league }}</option>
             </select>
             <button
+              class="size-10 rounded-lg border border-slate-700 bg-slate-900/80 flex items-center justify-center"
+              title="投注补录"
+              @click="router.push('/picks')"
+            >
+              <span class="material-symbols-outlined text-base">edit_note</span>
+            </button>
+            <button
               class="size-10 rounded-lg bg-primary flex items-center justify-center disabled:opacity-60"
               :disabled="loading"
               title="刷新比赛"
@@ -299,6 +306,17 @@
 
           <AnalysisSection v-if="viewMode === 'minimal'" title="盘口信号" icon="tune">
             <GuideMetaTable :rows="guideMetaRows(item)" />
+          </AnalysisSection>
+
+          <AnalysisSection v-if="viewMode !== 'minimal' && item.myAngle && item.myAngle.totalPicks > 0" title="我的镜像" icon="person_search">
+            <div class="space-y-1 text-xs">
+              <p v-for="row in myAngleRows(item)" :key="row.label" class="flex items-center justify-between gap-2">
+                <span class="font-black text-slate-500">{{ row.label }}</span>
+                <span class="font-bold text-slate-700">{{ row.stat }}</span>
+                <span class="shrink-0 rounded px-2 py-0.5 font-black" :class="row.verdictClass">{{ row.verdictText }}</span>
+              </p>
+              <p class="text-[11px] font-bold text-slate-400">按你已录 {{ item.myAngle.totalPicks }} 条选择，在本场同类盘型下的历史表现；红区≥65%可信直觉，黑区≤35%考虑反向（样本≥5才判定）。</p>
+            </div>
           </AnalysisSection>
 
           <AnalysisSection v-if="viewMode !== 'minimal'" :title="guideSectionTitle" icon="ssid_chart">
@@ -715,7 +733,7 @@ import { useRoute, useRouter } from 'vue-router'
 import analysisApi from '@/api/analysis'
 import type { AnalysisRuleSnapshot } from '@/api/analysis'
 import { resolveAssetUrl } from '@/api/request'
-import type { AnalysisMatch, BookmakerMarket, BookmakerOutcome, DirectionValues } from '@/types/analysis'
+import type { AnalysisMatch, BookmakerMarket, BookmakerOutcome, DirectionValues, PlatformEvilCultPrediction, PlatformGoalPair } from '@/types/analysis'
 
 interface StatRow {
   label: string
@@ -761,49 +779,6 @@ interface EvilCultRow {
   primaryTone?: StatRow['tone']
   secondaryTone?: StatRow['tone']
   variant?: 'note'
-}
-
-interface EvilCultScoreStep {
-  label: string
-  detail: string
-  overDelta: number
-  underDelta: number
-  overScore: number
-  underScore: number
-}
-
-interface EvilCultGoalScores {
-  over: number
-  under: number
-  modelLine: number
-  expectedHome: number
-  expectedGuest: number
-  expectedTotal: number
-  scoringAverage: number
-  history: number
-  recent: number
-  goalStatsAverage: number
-  balance: ReturnType<typeof goalBalanceSignalForItem>
-  base: ReturnType<typeof baseGoalSignal>
-  overHeat: number
-  underHeat: number
-  steps: EvilCultScoreStep[]
-}
-
-interface EvilCultSecondPass {
-  initialDirection: 'over' | 'under'
-  finalDirection: 'over' | 'under'
-  overScore: number
-  underScore: number
-  reversed: boolean
-  forced: boolean
-  reason: string
-}
-
-interface EvilCultAuditInput {
-  label: string
-  value: string
-  detail: string
 }
 
 interface GuidePrediction {
@@ -1139,14 +1114,13 @@ const accuracyMatchRowsById = computed(() => {
 })
 const evilCultAudit = computed(() => {
   const item = evilCultAuditItem.value
-  if (!item) return null
-  const line = evilCultGoalLine(item)
-  const scores = evilCultGoalScores(item, evilCultRawGoalLine(item))
+  if (!item?.platform) return null
+  const block = item.platform.evilCult
   return {
-    line,
-    scores,
-    prediction: evilCultPrediction(item),
-    inputs: evilCultAuditInputs(item, line, scores),
+    line: block.line,
+    scores: block.scores,
+    prediction: block.prediction,
+    inputs: block.inputs,
   }
 })
 
@@ -1627,11 +1601,47 @@ function accuracyFitTextClass(tone: StatRow['tone']): string {
   return 'text-slate-500'
 }
 
+function handicapPressureSignalLabel(item: AnalysisMatch): string {
+  return item.platform?.handicapPressureLabel ?? ''
+}
+
+interface MyAngleRow {
+  label: string
+  stat: string
+  verdictText: string
+  verdictClass: string
+}
+
+// 我的镜像：后端按我的历史选择算出的同盘型表现，前端只渲染。
+function myAngleRows(item: AnalysisMatch): MyAngleRow[] {
+  const angle = item.myAngle
+  if (!angle) return []
+  const build = (label: string, market: NonNullable<AnalysisMatch['myAngle']>['spf']): MyAngleRow => {
+    const verdictText = market.verdict === 'red' ? '红区·可信' : market.verdict === 'black' ? '黑区·防反' : market.sample ? '中性' : '无样本'
+    const verdictClass = market.verdict === 'red'
+      ? 'bg-red-50 text-red-600'
+      : market.verdict === 'black'
+        ? 'bg-slate-900 text-white'
+        : 'bg-slate-100 text-slate-500'
+    return {
+      label: `${label} @ ${market.bucket}`,
+      stat: market.sample ? `${market.hit}/${market.sample} · ${market.accuracy.toFixed(0)}%` : '-',
+      verdictText,
+      verdictClass,
+    }
+  }
+  return [
+    build('胜平负', angle.spf),
+    build('让球', angle.rqspf),
+    build('大小球', angle.dxq),
+  ]
+}
+
 function resultCommonElements(item: AnalysisMatch, bookmaker: GuidePrediction, platform: GuidePrediction): string[] {
-  const sportteryComfort = marketComfortOutcome(item, 'sporttery')
-  const rqComfort = marketComfortOutcome(item, 'sportteryRqspf')
-  const professionalConsensus = professionalConsensusOutcome(item)
-  const drawRisk = drawRiskSignal(item)
+  const sportteryComfort = (item.platform?.sportteryComfort || null) as DirectionOutcome | null
+  const rqComfort = (item.platform?.rqspfComfort || null) as DirectionOutcome | null
+  const professionalConsensus = (item.platform?.professionalConsensus || null) as DirectionOutcome | null
+  const drawRisk = item.platform?.drawRisk ?? { score: 0, reasons: [] }
   return [
     `庄家${outcomeShortLabel(bookmaker.outcome)}`,
     `平台${outcomeShortLabel(platform.outcome)}`,
@@ -1643,7 +1653,7 @@ function resultCommonElements(item: AnalysisMatch, bookmaker: GuidePrediction, p
     `让球热度${heatBucket(item.yapantouzhu?.[0], item.yapantouzhu?.[1], '主热', '客热')}`,
     sportteryComfort ? `竞彩舒服${outcomeShortLabel(sportteryComfort)}` : '',
     rqComfort ? `让球舒服${outcomeShortLabel(rqComfort)}` : '',
-    platformSignalWarning(item, platform.outcome).value ? '平台过热' : '',
+    platform.warning ? '平台过热' : '',
     handicapPressureSignalLabel(item) ? `让球${handicapPressureSignalLabel(item)}` : '',
     drawRisk.score >= 4 ? '平局风险高' : '',
     drawRisk.score >= 5 ? '平局风险强' : '',
@@ -2156,7 +2166,7 @@ function buildPlanContext(item: AnalysisMatch): PlanContext {
   const historyGoalValue = historyGoalSampleValue(item, historyGoals)
   const recentGoalValue = recentGoalSampleValue(item, recentGoals)
   const combinedGoalValue = combinedGoalAverageValue(historyGoalValue, recentGoalValue)
-  const goalAdviceLine = buildGoalAdviceLine(item, historyGoalValue, recentGoalValue, combinedGoalValue)
+  const goalAdviceLine = buildGoalAdviceLine(item)
   const rows = localProfitRows(item)
   const pressureRow = rows.slice().sort((a, b) => a.bookmakerProfit - b.bookmakerProfit)[0]
   const bestRow = rows.slice().sort((a, b) => b.bookmakerProfit - a.bookmakerProfit)[0]
@@ -2189,16 +2199,16 @@ function buildPlanContext(item: AnalysisMatch): PlanContext {
   }
 }
 
-function buildGoalAdviceLine(item: AnalysisMatch, historyGoals: unknown, recentGoals: unknown, combinedGoals: unknown): string {
+function buildGoalAdviceLine(item: AnalysisMatch): string {
   const expectedGoals = expectedGoalPair(item)
-  const alerts = goalBalanceAlertRows(historyGoals, recentGoals, combinedGoals, item.qiushupankou1)
+  const alerts = item.platform?.goalBalanceAlertRows ?? []
   const alertText = alerts
     .filter((row) => row.label !== '2.5均衡值')
     .map((row) => `${row.label}：${row.value}`)
     .join('；')
   const balanceRow = alerts.find((row) => row.label === '2.5均衡值')
   const balanceText = balanceRow ? `${balanceRow.label}：${balanceRow.value}；` : ''
-  const zeroRiskText = zeroGoalAdviceText(item, expectedGoals)
+  const zeroRiskText = zeroGoalAdviceText(item)
   return `预测本场进球数：${item.home}${expectedGoalText(expectedGoals.home)}，${item.guest}${expectedGoalText(expectedGoals.guest)}。${zeroRiskText}${balanceText}${alertText || `大小球先看${item.qiuprediction}，临场继续按2.5上下平衡观察。`}`
 }
 
@@ -2543,77 +2553,9 @@ function localRetailTriplet(item: AnalysisMatch): string {
 }
 
 function localProfitMarket(item: AnalysisMatch): BookmakerMarket | null {
-  const odds = parseOddsDistribution(item.detail.test8)
-  const retailDistribution = parseRetailDistribution(item.sanhuxinli?.slice(0, 3))
-  if (!odds || !retailDistribution) return null
-
-  return {
-    key: 'localAverageOdds',
-    name: '本地测算',
-    odds,
-    oddsAvailable: true,
-    retailDistribution,
-    bookmakerByOutcome: buildLocalProfitRows(odds, retailDistribution, localStakeBase(item)),
-  }
+  return item.platform?.localMarket ?? null
 }
 
-function parseOddsDistribution(values: unknown[] | undefined): DirectionValues | null {
-  if (!values || values.length < 3) return null
-  const home = parseNumericValue(values[0])
-  const draw = parseNumericValue(values[1])
-  const away = parseNumericValue(values[2])
-  if (home <= 0 || draw <= 0 || away <= 0) return null
-  return { home, draw, away }
-}
-
-function parseRetailDistribution(values: unknown[] | undefined): DirectionValues | null {
-  if (!values || values.length < 3) return null
-  const home = parseNumericValue(values[0])
-  const draw = parseNumericValue(values[1])
-  const away = parseNumericValue(values[2])
-  const total = home + draw + away
-  if (total <= 0) return null
-  return {
-    home: roundValue(home / total * 100),
-    draw: roundValue(draw / total * 100),
-    away: roundValue(away / total * 100),
-  }
-}
-
-function buildLocalProfitRows(odds: DirectionValues, retailDistribution: DirectionValues, totalStake: number): BookmakerOutcome[] {
-  const definitions: Array<{ outcome: BookmakerOutcome['outcome']; outcomeLabel: string; odds: number; share: number }> = [
-    { outcome: 'home', outcomeLabel: '主胜打出', odds: odds.home, share: retailDistribution.home },
-    { outcome: 'draw', outcomeLabel: '平局打出', odds: odds.draw, share: retailDistribution.draw },
-    { outcome: 'away', outcomeLabel: '客胜打出', odds: odds.away, share: retailDistribution.away },
-  ]
-
-  return definitions.map((definition) => {
-    const betStake = roundValue(totalStake * definition.share / 100)
-    const payout = roundValue(betStake * definition.odds)
-    const bookmakerProfit = roundValue(totalStake - payout)
-    return {
-      outcome: definition.outcome,
-      outcomeLabel: definition.outcomeLabel,
-      retailShare: roundValue(definition.share),
-      betStake,
-      totalStake,
-      odds: roundValue(definition.odds),
-      payout,
-      bookmakerProfit,
-      bookmakerLoss: roundValue(payout - totalStake),
-      bookmakerRoi: roundValue(bookmakerProfit / totalStake * 100),
-      bookmakerOutcome: bookmakerOutcomeLabel(bookmakerProfit),
-      available: true,
-    }
-  })
-}
-
-function parseNumericValue(value: unknown): number {
-  if (typeof value === 'number') return Number.isFinite(value) ? value : 0
-  const text = String(value || '').trim().replace(/%$/, '')
-  const numeric = Number.parseFloat(text)
-  return Number.isFinite(numeric) ? numeric : 0
-}
 
 function parseOptionalNumber(value: unknown): number {
   if (typeof value === 'number') return Number.isFinite(value) ? value : Number.NaN
@@ -2623,16 +2565,7 @@ function parseOptionalNumber(value: unknown): number {
   return Number.isFinite(numeric) ? numeric : Number.NaN
 }
 
-function roundValue(value: number, fractionDigits = 2): number {
-  const factor = 10 ** fractionDigits
-  return Math.round(value * factor) / factor
-}
 
-function bookmakerOutcomeLabel(value: number): string {
-  if (value > 0) return '庄家盈利'
-  if (value < 0) return '庄家亏损'
-  return '庄家持平'
-}
 
 function sportteryMarket(item: AnalysisMatch): BookmakerMarket | undefined {
   return bookmakerMarkets(item).find((market) => market.key === 'sporttery')
@@ -2871,258 +2804,6 @@ function scoreMini(value: unknown[] | undefined) {
   return `${value[3] ?? '-'}:${value[4] ?? '-'}`
 }
 
-function bookmakerResultOutcome(item: AnalysisMatch): DirectionOutcome {
-  return outcomeFromScores(bookmakerCorrectionScores(item))
-}
-
-function bookmakerCorrectionScores(item: AnalysisMatch): Record<DirectionOutcome, number> {
-  const scores: Record<DirectionOutcome, number> = { home: 0, draw: 0, away: 0 }
-  const add = (outcome: DirectionOutcome | null, weight: number) => {
-    if (outcome) scores[outcome] += weight
-  }
-
-  const oddsProbabilities = bookmakerOddsProbabilities(item)
-  const handicapOutcome = handicapGuideOutcome(item)
-  const oddsOutcome = lowestOddsOutcome(item)
-  const drawScore = bookmakerDrawScore(item)
-  const currentHandicap = parseOptionalNumber(item.yapanpankou2)
-  const strongHandicap = Number.isFinite(currentHandicap) && Math.abs(currentHandicap) >= 0.75
-
-  if (oddsProbabilities) {
-    scores.home += oddsProbabilities.home * 7
-    scores.draw += oddsProbabilities.draw * 7
-    scores.away += oddsProbabilities.away * 7
-  }
-  if (handicapOutcome && oddsOutcome && handicapOutcome === oddsOutcome) add(handicapOutcome, 1.6)
-  add(handicapOutcome, strongHandicap ? 1.6 : 0.9)
-  if (!oddsProbabilities) add(oddsOutcome, oddsOutcome === 'draw' ? 2.2 : 1.8)
-  if (drawScore >= 4) add('draw', 1.8)
-  else if (drawScore >= 3 && !strongHandicap) add('draw', 1.2)
-  else if (drawScore >= 2 && !handicapOutcome) add('draw', 0.8)
-  return scores
-}
-
-function bookmakerOddsDistribution(item: AnalysisMatch): DirectionValues | null {
-  return parseOddsDistribution(item.sportteryOdds) || parseOddsDistribution(item.detail.test8)
-}
-
-function bookmakerOddsProbabilities(item: AnalysisMatch): DirectionValues | null {
-  const odds = bookmakerOddsDistribution(item)
-  if (!odds) return null
-  const home = 1 / odds.home
-  const draw = 1 / odds.draw
-  const away = 1 / odds.away
-  const total = home + draw + away
-  if (total <= 0) return null
-  return { home: home / total, draw: draw / total, away: away / total }
-}
-
-function bookmakerGoalResult(item: AnalysisMatch): { label: string; total: number; tone: StatRow['tone'] } {
-  const openingLine = parseOptionalNumber(item.qiushupankou1)
-  const currentLine = parseOptionalNumber(item.qiushupankou2)
-  const line = Number.isFinite(currentLine) ? currentLine : openingLine
-  const delta = currentLine - openingLine
-
-  let lineResult: { label: string; total: number; tone: StatRow['tone'] }
-  if (Number.isFinite(delta) && delta >= 0.25) {
-    const total = Number.isFinite(line) ? Math.max(3, Math.floor(line + 1.5)) : 3
-    lineResult = { label: `${total}球以上`, total, tone: 'green' }
-  } else if (Number.isFinite(delta) && delta <= -0.25) {
-    const total = Number.isFinite(line) ? Math.max(0, Math.ceil(line) - 1) : 2
-    lineResult = { label: `${total}球以内`, total, tone: 'red' }
-  } else if (Number.isFinite(line) && line >= 2.75) {
-    lineResult = { label: '3球左右', total: 3, tone: 'green' }
-  } else if (Number.isFinite(line) && line <= 2.25) {
-    lineResult = { label: '2球以内', total: 2, tone: 'red' }
-  } else {
-    lineResult = { label: '2-3球', total: 2, tone: 'normal' }
-  }
-
-  return lineResult
-}
-
-function bookmakerFusedScore(item: AnalysisMatch, outcome: DirectionOutcome, total: number): string {
-  const normalizedTotal = Math.max(0, Math.round(total))
-  if (normalizedTotal <= 0) return '0:0'
-
-  const handicap = parseOptionalNumber(item.yapanpankou2)
-  const openingHandicap = parseOptionalNumber(item.yapanpankou1)
-  const handicapLine = Number.isFinite(handicap) ? handicap : openingHandicap
-  const favorite = Number.isFinite(handicapLine)
-    ? (handicapLine > 0 ? 'home' : handicapLine < 0 ? 'away' : outcome)
-    : outcome
-  const favoriteGoals = Math.max(1, Math.ceil((normalizedTotal + 1) / 2))
-  const underdogGoals = Math.max(0, normalizedTotal - favoriteGoals)
-  const home = favorite === 'home' ? favoriteGoals : underdogGoals
-  const guest = favorite === 'home' ? underdogGoals : favoriteGoals
-  return normalizeScoreByOutcome(home, guest, outcome, normalizedTotal)
-}
-
-function platformFusedScore(item: AnalysisMatch, outcome: DirectionOutcome, total: number): string {
-  const normalizedTotal = Math.max(0, Math.round(total))
-  if (normalizedTotal <= 0) return '0:0'
-  const goals = allocateIntegerGoalTotal(normalizedTotal, expectedGoalPair(item))
-  return normalizeScoreByOutcome(Math.round(goals.home), Math.round(goals.guest), outcome, normalizedTotal)
-}
-
-function secondaryGuideScore(item: AnalysisMatch, outcome: DirectionOutcome, goal: GuidePrediction['goal'], source: 'bookmaker' | 'platform'): string {
-  const bands = expectedGoalBands(item)
-  const band = secondaryGoalBand(item, goal)
-  const goals = band === 'over' ? bands.over : bands.under
-  const total = Math.max(0, Math.round(goals.home + goals.guest))
-  if (!Number.isFinite(goals.home) || !Number.isFinite(goals.guest) || !Number.isFinite(total)) return '-'
-  if (source === 'bookmaker') return bookmakerFusedScore(item, outcome, total)
-  return normalizeScoreByOutcome(Math.round(goals.home), Math.round(goals.guest), outcome, total)
-}
-
-function secondaryGoalBand(item: AnalysisMatch, goal: GuidePrediction['goal']): 'under' | 'over' {
-  if (goal.label.includes('以内')) return 'over'
-  if (goal.label.includes('以上')) return 'under'
-  const line = parseOptionalNumber(item.qiushupankou2)
-  if (Number.isFinite(line)) return goal.total <= line ? 'over' : 'under'
-  return 'under'
-}
-
-function normalizeScoreByOutcome(homeGoals: number, guestGoals: number, outcome: DirectionOutcome, total: number): string {
-  let home = Math.max(0, homeGoals)
-  let guest = Math.max(0, guestGoals)
-  const normalizedTotal = Math.max(0, Math.round(total))
-
-  if (outcome === 'draw') {
-    const side = Math.max(0, Math.floor(normalizedTotal / 2))
-    return `${side}:${side}`
-  }
-
-  const winner = outcome === 'home' ? 'home' : 'guest'
-  const currentWinnerGoals = winner === 'home' ? home : guest
-  const currentLoserGoals = winner === 'home' ? guest : home
-  if (currentWinnerGoals > currentLoserGoals) return `${home}:${guest}`
-
-  const winnerGoals = Math.max(1, Math.ceil((normalizedTotal + 1) / 2))
-  const loserGoals = Math.max(0, normalizedTotal - winnerGoals)
-  if (winner === 'home') {
-    home = winnerGoals
-    guest = loserGoals
-  } else {
-    home = loserGoals
-    guest = winnerGoals
-  }
-  return `${home}:${guest}`
-}
-
-function handicapGuideOutcome(item: AnalysisMatch): DirectionOutcome | null {
-  const openingLine = parseOptionalNumber(item.yapanpankou1)
-  const currentLine = parseOptionalNumber(item.yapanpankou2)
-  const delta = currentLine - openingLine
-  if (Number.isFinite(delta) && delta >= 0.25) return 'home'
-  if (Number.isFinite(delta) && delta <= -0.25) return 'away'
-  if (Number.isFinite(currentLine)) {
-    if (currentLine >= 0.25) return 'home'
-    if (currentLine <= -0.25) return 'away'
-  }
-  return null
-}
-
-function bookmakerDrawScore(item: AnalysisMatch): number {
-  let score = 0
-  const openingHandicap = parseOptionalNumber(item.yapanpankou1)
-  const currentHandicap = parseOptionalNumber(item.yapanpankou2)
-  if (Number.isFinite(currentHandicap)) {
-    if (Math.abs(currentHandicap) <= 0.25) score += 2
-    if (Number.isFinite(openingHandicap) && Math.abs(currentHandicap) < Math.abs(openingHandicap)) score += 1
-  }
-
-  const odds = bookmakerOddsDistribution(item)
-  if (odds) {
-    const homeImplied = 1 / odds.home
-    const drawImplied = 1 / odds.draw
-    const awayImplied = 1 / odds.away
-    const totalImplied = homeImplied + drawImplied + awayImplied
-    const drawProbability = totalImplied > 0 ? drawImplied / totalImplied * 100 : 0
-    const sideProbability = totalImplied > 0 ? Math.max(homeImplied, awayImplied) / totalImplied * 100 : 0
-    if (drawProbability >= sideProbability - 6) score += 2
-    else if (drawProbability >= sideProbability - 10) score += 1
-    if (odds.draw <= Math.min(odds.home, odds.away) * 1.35) score += 1
-  }
-
-  const openingGoalLine = parseOptionalNumber(item.qiushupankou1)
-  const currentGoalLine = parseOptionalNumber(item.qiushupankou2)
-  if (Number.isFinite(currentGoalLine)) {
-    if (currentGoalLine <= 2.25) score += 1
-    if (Number.isFinite(openingGoalLine) && currentGoalLine < openingGoalLine) score += 1
-  }
-  return score
-}
-
-function drawRiskSignal(item: AnalysisMatch): { score: number; reasons: string[] } {
-  let score = 0
-  const reasons: string[] = []
-  const add = (condition: boolean, weight: number, reason: string) => {
-    if (!condition) return
-    score += weight
-    reasons.push(reason)
-  }
-
-  const openingHandicap = parseOptionalNumber(item.yapanpankou1)
-  const currentHandicap = parseOptionalNumber(item.yapanpankou2)
-  const absHandicap = Math.abs(currentHandicap)
-  add(Number.isFinite(currentHandicap) && absHandicap <= 0.25, 2, '亚盘浅')
-  add(Number.isFinite(currentHandicap) && absHandicap > 0.25 && absHandicap <= 0.5, 1, '受让/让球浅盘')
-  add(Number.isFinite(openingHandicap) && Number.isFinite(currentHandicap) && Math.abs(openingHandicap) - Math.abs(currentHandicap) >= 0.25, 1.5, '盘口变浅')
-
-  const odds = bookmakerOddsDistribution(item)
-  if (odds) {
-    const homeImplied = 1 / odds.home
-    const drawImplied = 1 / odds.draw
-    const awayImplied = 1 / odds.away
-    const totalImplied = homeImplied + drawImplied + awayImplied
-    const drawProbability = totalImplied > 0 ? drawImplied / totalImplied * 100 : 0
-    const sideProbability = totalImplied > 0 ? Math.max(homeImplied, awayImplied) / totalImplied * 100 : 0
-    add(odds.draw <= 3.45 && drawProbability >= sideProbability - 10, 1.5, '平赔不高')
-    add(odds.draw <= Math.min(odds.home, odds.away) * 1.35, 1, '平赔差距小')
-  } else if (bookmakerDrawScore(item) >= 3) {
-    add(true, 1, '欧赔平局支撑')
-  }
-
-  const goalLine = parseOptionalNumber(item.qiushupankou2)
-  add(Number.isFinite(goalLine) && goalLine <= 2.5, 1, '大小球低盘')
-
-  const bookmaker = bookmakerResultOutcome(item)
-  const base = basePredictionOutcome(item)
-  add(Boolean(bookmaker && base && bookmaker !== base && bookmaker !== 'draw' && base !== 'draw'), 1, '庄平胜负分歧')
-  add(Boolean(professionalConflictWarning(item)), 1, '凯利/体彩反差')
-
-  const goals = expectedGoalPair(item)
-  const expectedTotal = goals.home + goals.guest
-  add(Number.isFinite(expectedTotal) && expectedTotal > 0 && expectedTotal <= 2.5 && goals.home <= 1.5 && goals.guest <= 1.5, 1, '近期进丢球一般')
-
-  const historyOutcome = historyMatchOutcome(item)
-  add(historyOutcome === 'draw', 1.5, '历史有平局')
-  add(historySmallScore(item), 1, '历史小比分')
-
-  return { score, reasons: uniqueStrings(reasons) }
-}
-
-function historySmallScore(item: AnalysisMatch): boolean {
-  const record = item.liangduibisai
-  if (!record?.length) return false
-  const homeScore = parseOptionalNumber(record[3])
-  const guestScore = parseOptionalNumber(record[4])
-  return Number.isFinite(homeScore) && Number.isFinite(guestScore) && homeScore + guestScore <= 2
-}
-
-function lowestOddsOutcome(item: AnalysisMatch): DirectionOutcome | null {
-  const odds = bookmakerOddsDistribution(item)
-  if (!odds) return null
-  const candidates: Array<{ outcome: DirectionOutcome; value: number }> = [
-    { outcome: 'home', value: odds.home },
-    { outcome: 'draw', value: odds.draw },
-    { outcome: 'away', value: odds.away },
-  ]
-  const rows = candidates.filter((row) => Number.isFinite(row.value) && row.value > 0)
-  return rows.sort((a, b) => a.value - b.value)[0]?.outcome ?? null
-}
-
 function outcomeLabelByKey(outcome: DirectionOutcome | null, item: AnalysisMatch): string {
   if (outcome === 'home') return `主胜(${item.home})`
   if (outcome === 'away') return `客胜(${item.guest})`
@@ -3187,26 +2868,9 @@ function guideMetaRows(item: AnalysisMatch): GuideMetaRow[] {
   ]
 }
 
+// 警示全部由后端 platform 块计算，前端只渲染。
 function guideWarningRows(item: AnalysisMatch): GuideWarningRow[] {
-  const platform = platformLivePrediction(item)
-  const professionalWarning = professionalConflictWarning(item)
-  const warnings: GuideWarningRow[] = [
-    ...warningRowsFromText(professionalWarning ? professionalWarning.value : '', 'red'),
-    ...warningRowsFromText(heatWarningSummary(item), 'red'),
-    ...profitAlignmentWarningRows(item),
-    ...platformIntegratedWarningRows(item),
-    ...warningRowsFromText(platform.warning ? `平台${platform.warning}` : '', 'red'),
-  ]
-  const seen = new Set<string>()
-  return warnings.filter((warning) => {
-    if (seen.has(warning.value)) return false
-    seen.add(warning.value)
-    return true
-  })
-}
-
-function warningRowsFromText(value: string, tone: StatRow['tone']): GuideWarningRow[] {
-  return value ? [{ value: `警示：${value}`, tone }] : []
+  return item.platform?.warningRows ?? []
 }
 
 function guideWarningClass(tone: StatRow['tone']): string {
@@ -3219,574 +2883,34 @@ function heatCellTone(...values: unknown[]): StatRow['tone'] {
   return values.some((value) => parseOptionalNumber(value) > 65) ? 'red' : 'normal'
 }
 
-function heatWarningSummary(item: AnalysisMatch): string {
-  const warnings: string[] = []
-  const addHeatWarning = (category: string, name: string, value: unknown) => {
-    if (parseOptionalNumber(value) > 65) warnings.push(`${category}${name}${percentText(value)}`)
-  }
-
-  addHeatWarning('让球', item.home, item.yapantouzhu?.[0])
-  addHeatWarning('让球', item.guest, item.yapantouzhu?.[1])
-  addHeatWarning('大小球', '大球', item.qiushutouzhu?.[0])
-  addHeatWarning('大小球', '小球', item.qiushutouzhu?.[1])
-
-  return warnings.length ? `投注热度过热：${warnings.join('，')}` : ''
-}
-
-function profitAlignmentWarningRows(item: AnalysisMatch): GuideWarningRow[] {
-  const local = strongLocalComfortRow(item)
-  const sporttery = strongMarketComfortRow(item, 'sporttery')
-  const rq = strongMarketComfortRow(item, 'sportteryRqspf')
-  const sportteryLoss = strongMarketLossRow(item, 'sporttery')
-  const rqLoss = strongMarketLossRow(item, 'sportteryRqspf')
-  const warnings: GuideWarningRow[] = []
-
-  if (sporttery && rq && sporttery.outcome === rq.outcome) {
-    warnings.push({
-      value: `警示：交易盈亏同向：胜平负${outcomeName(sporttery)}${signedMoneyText(sporttery.bookmakerProfit, sporttery.available)}、让球${outcomeName(rq)}${signedMoneyText(rq.bookmakerProfit, rq.available)}，均为庄家舒服项`,
-      tone: 'red',
-    })
-  }
-
-  if (sportteryLoss?.outcome === 'away' && rqLoss?.outcome === 'away') {
-    warnings.push({ value: '警示：庄家同向亏损：胜平负负、让球负均为最大亏损项', tone: 'green' })
-  }
-
-  if (local) {
-    const alignedMarkets = [
-      sporttery && sporttery.outcome === local.outcome ? '竞彩' : '',
-      rq && rq.outcome === local.outcome ? '让球' : '',
-    ].filter(Boolean)
-    if (alignedMarkets.length) {
-      warnings.push({
-        value: `警示：庄家舒服项同向：本地测算、${alignedMarkets.join('、')}均指向${outcomeShortLabel(local.outcome)}（庄家盈利方向）`,
-        tone: 'red',
-      })
-    }
-  }
-
-  return warnings
-}
-
-function platformIntegratedWarningRows(item: AnalysisMatch): GuideWarningRow[] {
-  const rows: GuideWarningRow[] = []
-  const handicapLabel = handicapPressureSignalLabel(item)
-  const goalSignal = goalBalanceSignalForItem(item)
-  const overheat = platformOverheatOutcome(item)
-  const hotOutcome = handicapHotOutcome(item)
-  const sportteryLoss = strongMarketLossRow(item, 'sporttery')
-  const rqLoss = strongMarketLossRow(item, 'sportteryRqspf')
-  const professionalWarning = professionalConflictWarning(item)
-  const drawRisk = drawRiskSignal(item)
-
-  if (handicapLabel) {
-    rows.push({ value: `警示：平台已纳入让球修正：${handicapLabel}`, tone: 'blue' })
-  }
-  if (hotOutcome) {
-    rows.push({ value: `警示：平台已纳入让球热度修正：${outcomeShortLabel(hotOutcome)}过热`, tone: 'blue' })
-  }
-  if (overheat) {
-    rows.push({ value: `警示：平台已纳入过热修正：${outcomeShortLabel(overheat)}信号过热`, tone: 'blue' })
-  }
-  if (sportteryLoss && rqLoss && sportteryLoss.outcome === rqLoss.outcome) {
-    rows.push({ value: `警示：平台已纳入庄家同向亏损修正：${outcomeShortLabel(sportteryLoss.outcome)}`, tone: 'green' })
-  }
-  if (professionalWarning) {
-    rows.push({ value: '警示：平台已纳入凯利/体彩反差修正', tone: 'blue' })
-  }
-  if (drawRisk.score >= 4) {
-    rows.push({ value: `警示：平台已纳入平局风险：${drawRisk.reasons.join('，')}`, tone: drawRisk.score >= 5 ? 'red' : 'blue' })
-  }
-  if (goalSignal === 'underHidden') {
-    rows.push({ value: '警示：平台已纳入大小球修正：回归小球 + 盘口隐藏', tone: 'red' })
-  } else if (goalSignal === 'under') {
-    rows.push({ value: '警示：平台已纳入大小球修正：回归小球', tone: 'red' })
-  } else if (goalSignal === 'overCorrected') {
-    rows.push({ value: '警示：平台已纳入大小球修正：回归大球 + 盘口修正', tone: 'green' })
-  } else if (goalSignal === 'over') {
-    rows.push({ value: '警示：平台已纳入大小球修正：回归大球', tone: 'green' })
-  }
-  const overGoalHeat = parseOptionalNumber(item.qiushutouzhu?.[0])
-  const underGoalHeat = parseOptionalNumber(item.qiushutouzhu?.[1])
-  if (overGoalHeat > 65) {
-    rows.push({ value: `警示：平台已纳入大小球热度修正：大球过热${percentText(overGoalHeat)}`, tone: 'red' })
-  } else if (underGoalHeat > 65) {
-    rows.push({ value: `警示：平台已纳入大小球热度修正：小球过热${percentText(underGoalHeat)}`, tone: 'green' })
-  }
-
-  return rows
-}
-
 function guideWarningPredictionSummary(item: AnalysisMatch): string {
-  const prediction = warningAdjustedPrediction(item)
-  if (!prediction) return ''
-  return `警示后预测：${outcomeLabelByKey(prediction.outcome, item)} / ${prediction.goal.label} / ${prediction.score}`
+  return item.platform?.warningAdjustedSummary ?? ''
 }
 
+// 邪修全部数据由后端 platform.evilCult 提供。
 function evilCultRows(item: AnalysisMatch): EvilCultRow[] {
-  const prediction = evilCultPrediction(item)
-  return [
-    {
-      label: '大小球',
-      primary: prediction.underGoal,
-      secondary: prediction.overGoal,
-      tone: 'normal',
-      primaryTone: 'red',
-      secondaryTone: 'green',
-    },
-    {
-      label: '球数',
-      primary: prediction.underTotalText,
-      secondary: prediction.overTotalText,
-      tone: 'normal',
-      primaryTone: 'red',
-      secondaryTone: 'green',
-    },
-    {
-      label: '比分',
-      primary: prediction.underScore,
-      secondary: prediction.overScore,
-      tone: 'normal',
-      primaryTone: scoreTone(prediction.underScore),
-      secondaryTone: scoreTone(prediction.overScore),
-    },
-    {
-      label: '胜平负',
-      primary: outcomeLabelByKey(prediction.underOutcome, item),
-      secondary: outcomeLabelByKey(prediction.overOutcome, item),
-      tone: 'normal',
-      primaryTone: outcomeTone(prediction.underOutcome),
-      secondaryTone: outcomeTone(prediction.overOutcome),
-    },
-  ]
+  return (item.platform?.evilCult.rows ?? []) as EvilCultRow[]
 }
 
-function evilCultPrediction(item: AnalysisMatch): {
-  goal: string
-  secondaryGoal: string
-  total: string
-  secondaryTotal: string
-  underGoal: string
-  overGoal: string
-  underTotalText: string
-  overTotalText: string
-  underTotalValue: number
-  overTotalValue: number
-  underGoalLine: number
-  overGoalLine: number
-  underScore: string
-  overScore: string
-  underOutcome: DirectionOutcome
-  overOutcome: DirectionOutcome
-  firstPick: string
-  firstDirection: 'over' | 'under'
-  mainPick: string
-  reversePick: string
-  mainReason: string
-  secondPassReason: string
-  secondPassReversed: boolean
-  secondPassForced: boolean
-  secondOverScore: number
-  secondUnderScore: number
-  mainTotal: number
-  secondaryTotalValue: number
-  goalDirection: 'over' | 'under'
-  secondaryGoalDirection: 'over' | 'under'
-  goalLine: number
-  secondaryGoalLine: number
-  score: string
-  secondaryScore: string
-  outcome: DirectionOutcome
-  secondaryOutcome: DirectionOutcome
-  goalTone: StatRow['tone']
-  reverseTone: StatRow['tone']
-  note: string
-  reason: string
-} {
-  const line = evilCultGoalLine(item)
-  const scores = evilCultGoalScores(item, evilCultRawGoalLine(item))
-  const underTotal = evilCultUnderTotal(line, scores.expectedTotal)
-  const overTotal = evilCultChaseOverTotal(line, scores.expectedTotal)
-  const secondPass = evilCultSecondPass(item, scores)
-  const firstDirection = secondPass.initialDirection
-  const mainDirection = secondPass.finalDirection
-  const mainTotal = mainDirection === 'under' ? underTotal : overTotal
-  const secondaryTotal = mainDirection === 'under' ? overTotal : underTotal
-  const underLine = line
-  const overLine = line
-  const mainLine = line
-  const secondaryLine = line
-  const underGoals = evilCultGoalAllocation(item, underTotal)
-  const overGoals = evilCultGoalAllocation(item, overTotal)
-  const mainGoals = evilCultGoalAllocation(item, mainTotal)
-  const secondaryGoals = evilCultGoalAllocation(item, secondaryTotal)
-  const score = `${mainGoals.home}:${mainGoals.guest}`
-  const secondaryScore = `${secondaryGoals.home}:${secondaryGoals.guest}`
-  const underScore = `${underGoals.home}:${underGoals.guest}`
-  const overScore = `${overGoals.home}:${overGoals.guest}`
-  const goalLineText = trimFixed(line, 2)
-  const overLineText = trimFixed(overLine, 2)
-  const firstPick = firstDirection === 'under'
-    ? `小球组：小${goalLineText} / ${underTotal}球 / ${underScore}`
-    : `追大组：追大${goalLineText} / ${overTotal}球 / ${overScore}`
-  const firstReason = evilCultReason(scores, line, underTotal, overTotal)
-
-  return {
-    goal: mainDirection === 'over' ? `追大${goalLineText}` : `小${goalLineText}`,
-    secondaryGoal: mainDirection === 'under' ? `追大${goalLineText}` : `小${goalLineText}`,
-    total: `${mainTotal}球`,
-    secondaryTotal: `${secondaryTotal}球`,
-    underGoal: `小${goalLineText}`,
-    overGoal: `追大${overLineText}`,
-    underTotalText: `${underTotal}球`,
-    overTotalText: `${overTotal}球`,
-    underTotalValue: underTotal,
-    overTotalValue: overTotal,
-    underGoalLine: underLine,
-    overGoalLine: overLine,
-    underScore,
-    overScore,
-    underOutcome: scoreOutcome(underScore),
-    overOutcome: scoreOutcome(overScore),
-    firstPick,
-    firstDirection,
-    mainPick: mainDirection === 'under' ? `小球组：小${goalLineText} / ${underTotal}球 / ${underScore}` : `追大组：追大${goalLineText} / ${overTotal}球 / ${overScore}`,
-    reversePick: mainDirection === 'under' ? `追大组：追大${goalLineText} / ${overTotal}球 / ${overScore}` : `小球组：小${goalLineText} / ${underTotal}球 / ${underScore}`,
-    mainReason: `${firstReason}；二推：${secondPass.reason}`,
-    secondPassReason: secondPass.reason,
-    secondPassReversed: secondPass.reversed,
-    secondPassForced: secondPass.forced,
-    secondOverScore: secondPass.overScore,
-    secondUnderScore: secondPass.underScore,
-    mainTotal,
-    secondaryTotalValue: secondaryTotal,
-    goalDirection: mainDirection,
-    secondaryGoalDirection: mainDirection === 'under' ? 'over' : 'under',
-    goalLine: mainLine,
-    secondaryGoalLine: secondaryLine,
-    score,
-    secondaryScore,
-    outcome: scoreOutcome(score),
-    secondaryOutcome: scoreOutcome(secondaryScore),
-    goalTone: mainDirection === 'over' ? 'green' : 'red',
-    reverseTone: mainDirection === 'under' ? 'green' : 'red',
-    note: mainDirection === 'under' ? '固定先小，错了追大' : '追大剧本更强，保留小球次选',
-    reason: `${firstReason}；二推：${secondPass.reason}`,
-  }
+const emptyEvilCultPrediction: PlatformEvilCultPrediction = {
+  goal: '-', secondaryGoal: '-', total: '-', secondaryTotal: '-',
+  underGoal: '-', overGoal: '-', underTotalText: '-', overTotalText: '-',
+  underTotalValue: 0, overTotalValue: 0, underGoalLine: 2.5, overGoalLine: 2.5,
+  underScore: '-', overScore: '-', underOutcome: 'draw', overOutcome: 'draw',
+  firstPick: '-', firstDirection: 'under', mainPick: '-', reversePick: '-',
+  mainReason: '', secondPassReason: '', secondPassReversed: false, secondPassForced: false,
+  secondOverScore: 0, secondUnderScore: 0, mainTotal: 0, secondaryTotalValue: 0,
+  goalDirection: 'under', secondaryGoalDirection: 'over', goalLine: 2.5, secondaryGoalLine: 2.5,
+  score: '-', secondaryScore: '-', outcome: 'draw', secondaryOutcome: 'draw',
+  goalTone: 'red', reverseTone: 'green', note: '', reason: '',
 }
 
-function evilCultGoalScores(item: AnalysisMatch, line: number): EvilCultGoalScores {
-  const expected = evilCultGoalProjection(item)
-  const expectedTotal = expected.home + expected.guest
-  const [historyGoals, recentGoals] = splitPair(item.changguiqiushu)
-  const history = historyGoalSampleValue(item, historyGoals)
-  const recent = recentGoalSampleValue(item, recentGoals)
-  const homeAttack = parseOptionalNumber(item.liangduiqiushu?.[0])
-  const guestAttack = parseOptionalNumber(item.liangduiqiushu?.[1])
-  const homeConcede = parseOptionalNumber(item.liangduiqiushu?.[2])
-  const guestConcede = parseOptionalNumber(item.liangduiqiushu?.[3])
-  const goalStatsAverage = weightedAverage([
-    { value: homeAttack, weight: 0.25 },
-    { value: guestAttack, weight: 0.25 },
-    { value: homeConcede, weight: 0.25 },
-    { value: guestConcede, weight: 0.25 },
-  ])
-  const rawAverage = weightedAverage([
-    { value: expectedTotal, weight: 0.5 },
-    { value: history, weight: 0.1 },
-    { value: line, weight: 0.4 },
-  ])
-  const average = Number.isFinite(rawAverage) ? rawAverage : line
-  const balanceSignal = goalBalanceSignalForItem(item)
-  const balance = goalBalanceDirection(balanceSignal)
-  const scoringAverage = balance === 'under'
-    ? Math.min(average, line)
-    : balance === 'over'
-      ? Math.max(average, line)
-      : average
-  const base = baseGoalSignal(item)
-  let over = 50
-  let under = 50
-  const steps: EvilCultScoreStep[] = []
-  const addStep = (label: string, detail: string, overDelta: number, underDelta: number) => {
-    over += overDelta
-    under += underDelta
-    steps.push({ label, detail, overDelta, underDelta, overScore: over, underScore: under })
-  }
-  addStep('基础分', '大小球从50:50开始', 0, 0)
-  const averageDelta = (scoringAverage - line) * 18
-  addStep(
-    '综合均值',
-    balance
-      ? `原均值${trimFixed(average, 2)}触发${goalBalanceSignalLabel(balanceSignal)}，评分均值限制为${trimFixed(scoringAverage, 2)}`
-      : `综合均值${trimFixed(scoringAverage, 2)}与盘口${trimFixed(line, 2)}的差值 × 18`,
-    averageDelta,
-    -averageDelta,
-  )
-  const balanceOverDelta = balanceSignal === 'overCorrected' ? 18 : balance === 'over' ? 12 : 0
-  const balanceUnderDelta = balanceSignal === 'underHidden' ? 18 : balance === 'under' ? 12 : 0
-  addStep(
-    '回归修正',
-    balanceSignal ? `${goalBalanceSignalLabel(balanceSignal)}信号进入主推评分` : '未触发大小球回归信号',
-    balanceOverDelta,
-    balanceUnderDelta,
-  )
-  addStep(
-    '基础球数信号',
-    base ? `现有标签指向${base === 'over' ? '大球' : '小球'}，但它由近期均球推算，为避免重复计权只展示` : '现有球数标签没有明确方向',
-    0,
-    0,
-  )
-  const market = evilCultGoalMarketSignal(item)
-  addStep(
-    '盘口升降',
-    market.lineDetail,
-    market.lineScore > 0 ? market.lineScore : 0,
-    market.lineScore < 0 ? Math.abs(market.lineScore) : 0,
-  )
-  addStep(
-    '大小球水位',
-    market.waterDetail,
-    market.waterScore > 0 ? market.waterScore : 0,
-    market.waterScore < 0 ? Math.abs(market.waterScore) : 0,
-  )
-  const overPressure = parseOptionalNumber(item.qiushutouzhu?.[0])
-  const underPressure = parseOptionalNumber(item.qiushutouzhu?.[1])
-  const pressureDirection = Number.isFinite(overPressure) && Number.isFinite(underPressure)
-    ? overPressure >= underPressure ? 'over' : 'under'
-    : null
-  const pressureValue = pressureDirection === 'over' ? overPressure : underPressure
-  const pressureScore = Number.isFinite(pressureValue)
-    ? roundValue(Math.max(0, Math.min(10, (pressureValue - 50) / 5 * 2)), 1)
-    : 0
-  addStep(
-    '近期压力值',
-    `大${evilCultAuditPercent(overPressure)} / 小${evilCultAuditPercent(underPressure)}，近期压力直接支持${pressureDirection === 'over' ? '大球' : pressureDirection === 'under' ? '小球' : '无方向'}`,
-    pressureDirection === 'over' ? pressureScore : 0,
-    pressureDirection === 'under' ? pressureScore : 0,
-  )
-  return {
-    over,
-    under,
-    modelLine: line,
-    expectedHome: expected.home,
-    expectedGuest: expected.guest,
-    expectedTotal: average,
-    scoringAverage,
-    history,
-    recent,
-    goalStatsAverage,
-    balance: balanceSignal,
-    base,
-    overHeat: overPressure,
-    underHeat: underPressure,
-    steps,
-  }
+function evilCultPrediction(item: AnalysisMatch): PlatformEvilCultPrediction {
+  return item.platform?.evilCult.prediction ?? emptyEvilCultPrediction
 }
 
-function evilCultGoalProjection(item: AnalysisMatch): GoalScore {
-  const homeAttack = parseOptionalNumber(item.liangduiqiushu?.[0])
-  const guestAttack = parseOptionalNumber(item.liangduiqiushu?.[1])
-  const homeConcede = parseOptionalNumber(item.liangduiqiushu?.[2])
-  const guestConcede = parseOptionalNumber(item.liangduiqiushu?.[3])
-  const home = weightedAverage([
-    { value: homeAttack, weight: 0.55 },
-    { value: guestConcede, weight: 0.45 },
-  ])
-  const guest = weightedAverage([
-    { value: guestAttack, weight: 0.55 },
-    { value: homeConcede, weight: 0.45 },
-  ])
-  if (Number.isFinite(home) || Number.isFinite(guest)) {
-    return {
-      home: Number.isFinite(home) ? home : 0,
-      guest: Number.isFinite(guest) ? guest : 0,
-    }
-  }
-  return expectedGoalPair(item)
-}
-
-function evilCultGoalMarketSignal(item: AnalysisMatch): {
-  lineScore: number
-  waterScore: number
-  lineDetail: string
-  waterDetail: string
-} {
-  const openingLine = parseOptionalNumber(item.qiushupankou1)
-  const currentLine = parseOptionalNumber(item.qiushupankou2)
-  const validLines = Number.isFinite(openingLine) && openingLine > 0 && Number.isFinite(currentLine) && currentLine > 0
-  const lineDelta = validLines ? currentLine - openingLine : Number.NaN
-  const lineScore = Number.isFinite(lineDelta)
-    ? roundValue(Math.max(-12, Math.min(12, lineDelta / 0.25 * 4)), 1)
-    : 0
-  const lineDetail = !Number.isFinite(lineDelta)
-    ? '初盘或即时盘缺失，不做升降盘修正'
-    : Math.abs(lineDelta) < 0.01
-      ? `盘口维持${trimFixed(currentLine, 2)}，没有升降盘修正`
-      : `${trimFixed(openingLine, 2)} → ${trimFixed(currentLine, 2)}，${lineDelta > 0 ? '升盘支持大球' : '降盘支持小球'}`
-
-  const openingWater = evilCultGoalWaterPair(item.detail?.test15?.[0])
-  const currentWater = evilCultGoalWaterPair(item.detail?.test15?.[1])
-  const validWater = [openingWater.over, openingWater.under, currentWater.over, currentWater.under].every(Number.isFinite)
-  const movementDiscount = Number.isFinite(lineDelta) && Math.abs(lineDelta) >= 0.25 ? 0.5 : 1
-  const rawWaterScore = validWater
-    ? ((openingWater.over - currentWater.over) + (currentWater.under - openingWater.under)) * 20 * movementDiscount
-    : 0
-  const waterScore = roundValue(Math.max(-6, Math.min(6, rawWaterScore)), 1)
-  const waterDetail = !validWater
-    ? '初盘或即时水位缺失，不做水位修正'
-    : `大球${trimFixed(openingWater.over, 2)}→${trimFixed(currentWater.over, 2)}，小球${trimFixed(openingWater.under, 2)}→${trimFixed(currentWater.under, 2)}${movementDiscount < 1 ? '；已升降盘，水位信号减半' : ''}`
-  return { lineScore, waterScore, lineDetail, waterDetail }
-}
-
-function evilCultSecondPass(item: AnalysisMatch, scores: EvilCultGoalScores): EvilCultSecondPass {
-  const initialDirection: 'over' | 'under' = scores.under >= scores.over ? 'under' : 'over'
-  const oppositeDirection: 'over' | 'under' = initialDirection === 'under' ? 'over' : 'under'
-  const market = evilCultGoalMarketSignal(item)
-  const lineDirection = evilCultSignalDirection(market.lineScore)
-  const waterDirection = evilCultSignalDirection(market.waterScore)
-  const pressureValue = initialDirection === 'over' ? scores.overHeat : scores.underHeat
-  const pressureDirection = scores.overHeat > 60
-    ? 'over'
-    : scores.underHeat > 60
-      ? 'under'
-      : null
-  const sameLine = lineDirection === initialDirection
-  const sameWater = waterDirection === initialDirection
-  const samePressure = pressureDirection === initialDirection
-  const reasons: string[] = []
-  let reverseBonus = 0
-
-  if (sameLine) {
-    reverseBonus += 12
-    reasons.push(`${initialDirection === 'under' ? '降盘继续暗示小球' : '升盘继续暗示大球'}`)
-  }
-  if (sameWater) {
-    reverseBonus += 4
-    reasons.push(`${initialDirection === 'under' ? '水位继续暗示小球' : '水位继续暗示大球'}`)
-  }
-  if (samePressure && Number.isFinite(pressureValue)) {
-    const heatBonus = 6 + Math.max(0, Math.floor((pressureValue - 60) / 5)) * 3
-    reverseBonus += Math.min(15, heatBonus)
-    reasons.push(`${initialDirection === 'under' ? '小球' : '大球'}近期压力${evilCultAuditPercent(pressureValue)}`)
-  }
-
-  let overScore = scores.over
-  let underScore = scores.under
-  if (oppositeDirection === 'over') overScore += reverseBonus
-  else underScore += reverseBonus
-
-  const forced = sameLine && samePressure
-  if (forced) {
-    if (oppositeDirection === 'over') overScore = Math.max(overScore, underScore + 1)
-    else underScore = Math.max(underScore, overScore + 1)
-  }
-  const finalDirection: 'over' | 'under' = underScore >= overScore ? 'under' : 'over'
-  const reversed = finalDirection !== initialDirection
-  const initialLabel = initialDirection === 'under' ? '小球' : '大球'
-  const finalLabel = finalDirection === 'under' ? '小球' : '大球'
-  const reason = reasons.length
-    ? `${reasons.join('，')}；反诱导加${evilCultScoreText(reverseBonus)}分${forced ? '并触发强制反向' : ''}，一推${initialLabel} → 二推${finalLabel}`
-    : `没有发现与一推${initialLabel}同向的盘口诱导组合，二推维持${finalLabel}`
-  return { initialDirection, finalDirection, overScore, underScore, reversed, forced, reason }
-}
-
-function evilCultSignalDirection(score: number): 'over' | 'under' | null {
-  if (!Number.isFinite(score) || Math.abs(score) < 0.1) return null
-  return score > 0 ? 'over' : 'under'
-}
-
-function evilCultGoalWaterPair(value: unknown): { over: number; under: number } {
-  if (!Array.isArray(value)) return { over: Number.NaN, under: Number.NaN }
-  return {
-    over: parseOptionalNumber(value[0]),
-    under: parseOptionalNumber(value[1]),
-  }
-}
-
-function evilCultAuditInputs(item: AnalysisMatch, line: number, scores: EvilCultGoalScores): EvilCultAuditInput[] {
-  const openingLine = parseOptionalNumber(item.qiushupankou1)
-  const currentLine = parseOptionalNumber(item.qiushupankou2)
-  const goalStats = [
-    parseOptionalNumber(item.liangduiqiushu?.[0]),
-    parseOptionalNumber(item.liangduiqiushu?.[1]),
-    parseOptionalNumber(item.liangduiqiushu?.[2]),
-    parseOptionalNumber(item.liangduiqiushu?.[3]),
-  ]
-  const openingWater = evilCultGoalWaterPair(item.detail?.test15?.[0])
-  const currentWater = evilCultGoalWaterPair(item.detail?.test15?.[1])
-  const balanceLabel = goalBalanceSignalLabel(scores.balance)
-  const baseLabel = scores.base === 'over' ? '大球' : scores.base === 'under' ? '小球' : '无明确方向'
-  return [
-    {
-      label: '大小球盘口',
-      value: `${evilCultAuditNumber(openingLine)} / ${evilCultAuditNumber(currentLine)} → ${evilCultAuditNumber(line)}`,
-      detail: `初盘 / 即时盘 → 结算半球线；评分保留原始盘口${evilCultAuditNumber(scores.modelLine)}`,
-    },
-    {
-      label: '两队预期进球',
-      value: `${evilCultAuditNumber(scores.expectedHome)} + ${evilCultAuditNumber(scores.expectedGuest)}`,
-      detail: `自身场均进球55% + 对手场均丢球45%，合计权重50%`,
-    },
-    {
-      label: '近期平均球数',
-      value: evilCultAuditNumber(scores.recent),
-      detail: '和攻防场均来自同一批比赛，只用于核对，不再重复加权',
-    },
-    {
-      label: '历史平均球数',
-      value: evilCultAuditNumber(scores.history),
-      detail: '有历史样本时参与，权重10%；缺失时自动剔除',
-    },
-    {
-      label: '进失球统计均值',
-      value: evilCultAuditNumber(scores.goalStatsAverage),
-      detail: `主进/客进/主丢/客丢场均：${goalStats.map(evilCultAuditNumber).join(' / ')}；已修正为场均，不再使用5场总数`,
-    },
-    {
-      label: '盘口锚点',
-      value: evilCultAuditNumber(scores.modelLine),
-      detail: '使用原始即时盘口进入综合均值，权重40%',
-    },
-    {
-      label: '综合均值',
-      value: evilCultAuditNumber(scores.expectedTotal),
-      detail: '攻防预期50% + 历史10% + 原始即时盘口40%',
-    },
-    {
-      label: '回归信号',
-      value: balanceLabel,
-      detail: scores.balance ? '触发后限制同一批高低均值重复给原方向加分，并进入回归修正' : '没有进入额外回归修正',
-    },
-    {
-      label: '实际评分均值',
-      value: evilCultAuditNumber(scores.scoringAverage),
-      detail: scores.balance ? `综合均值经过${balanceLabel}限制后的评分值` : '未触发回归，直接使用综合均值',
-    },
-    {
-      label: '基础球数信号',
-      value: baseLabel,
-      detail: '由近期均球推算，只展示，不再重复加分',
-    },
-    {
-      label: '近期压力值',
-      value: `大${evilCultAuditPercent(scores.overHeat)} / 小${evilCultAuditPercent(scores.underHeat)}`,
-      detail: '参与一推评分；超过60%后，还会作为二推的热门同向诱导信号',
-    },
-    {
-      label: '大小球水位',
-      value: `大${evilCultAuditNumber(openingWater.over)}→${evilCultAuditNumber(currentWater.over)} / 小${evilCultAuditNumber(openingWater.under)}→${evilCultAuditNumber(currentWater.under)}`,
-      detail: '盘口不动时直接判断水位方向；发生升降盘时水位信号减半，避免重复计算',
-    },
-  ]
-}
-
-function evilCultAuditNumber(value: number): string {
-  return Number.isFinite(value) ? trimFixed(value, 2) : '-'
-}
-
-function evilCultAuditPercent(value: number): string {
-  return Number.isFinite(value) ? `${trimFixed(value, 1)}%` : '-'
+function evilCultScorePercent(scores: { overPercent: number; underPercent: number }, side: 'over' | 'under'): number {
+  return side === 'over' ? scores.overPercent : scores.underPercent
 }
 
 function evilCultScoreText(value: number): string {
@@ -3798,625 +2922,31 @@ function evilCultDeltaText(value: number): string {
   return `${value > 0 ? '+' : ''}${trimFixed(value, 1)}`
 }
 
-function evilCultScorePercent(scores: EvilCultGoalScores, side: 'over' | 'under'): number {
-  const over = Math.max(0, scores.over)
-  const under = Math.max(0, scores.under)
-  const total = over + under
-  if (total <= 0) return 50
-  return Math.round(((side === 'over' ? over : under) / total) * 100)
-}
-
-function evilCultUnderTotal(line: number, expectedTotal: number): number {
-  const maxUnder = Number.isFinite(line) ? Math.max(0, Math.floor(line)) : 2
-  const target = Number.isFinite(expectedTotal) ? Math.round(expectedTotal) : maxUnder
-  return Math.max(0, Math.min(maxUnder, target))
-}
-
-function evilCultChaseOverTotal(line: number, expectedTotal: number): number {
-  const base = Number.isFinite(line) ? Math.max(0, Math.floor(line)) : 2
-  const candidates = [base + 1, base + 2, base + 4]
-  const target = Number.isFinite(expectedTotal) ? Math.max(base + 1, expectedTotal) : base + 1
-  return candidates
-    .map((total) => ({ total, gap: Math.abs(total - target) }))
-    .sort((a, b) => a.gap - b.gap || a.total - b.total)[0].total
-}
-
-function evilCultGoalLine(item: AnalysisMatch): number {
-  return normalizeGoalHalfLine(evilCultRawGoalLine(item))
-}
-
-function evilCultRawGoalLine(item: AnalysisMatch): number {
-  const current = parseOptionalNumber(item.qiushupankou2)
-  const opening = parseOptionalNumber(item.qiushupankou1)
-  if (Number.isFinite(current) && current > 0) return current
-  if (Number.isFinite(opening) && opening > 0) return opening
-  return 2.5
-}
-
-function normalizeGoalHalfLine(value: number): number {
-  if (!Number.isFinite(value) || value < 0) return 2.5
-  return Math.max(0.5, Math.floor(value) + 0.5)
-}
-
-function evilCultGoalAllocation(item: AnalysisMatch, total: number): { home: number; guest: number } {
-  const expected = evilCultGoalProjection(item)
-  if (!Number.isFinite(expected.home) || !Number.isFinite(expected.guest) || expected.home + expected.guest <= 0) {
-    return allocateIntegerGoalTotal(total, { home: 1, guest: 1 }, item.yapanpankou2)
-  }
-  return allocateIntegerGoalTotal(total, expected, item.yapanpankou2)
-}
-
-function evilCultReason(
-  scores: EvilCultGoalScores,
-  line: number,
-  underTotal: number,
-  overTotal: number,
-): string {
-  const side = scores.over >= scores.under ? '追大' : '先小'
-  const balanceText = scores.balance === 'underHidden'
-    ? '盘口隐藏回归小球'
-    : scores.balance === 'under'
-      ? '回归小球'
-      : scores.balance === 'overCorrected'
-        ? '盘口修正回归大球'
-        : scores.balance === 'over'
-          ? '回归大球'
-          : '无回归修正'
-  return `原始盘${trimFixed(scores.modelLine, 2)}，结算按${trimFixed(line, 2)}；小球覆盖0-${Math.floor(line)}球，追大候选${Math.floor(line) + 1}/${Math.floor(line) + 2}/${Math.floor(line) + 4}球；均值${trimFixed(scores.expectedTotal, 2)}，${balanceText}，追大${Math.round(scores.over)}分/先小${Math.round(scores.under)}分，一推${side}，小球点${underTotal}球/追大点${overTotal}球`
-}
-
-function goalBalanceDirection(signal: ReturnType<typeof goalBalanceSignalForItem>): 'over' | 'under' | null {
-  if (signal === 'over' || signal === 'overCorrected') return 'over'
-  if (signal === 'under' || signal === 'underHidden') return 'under'
-  return null
-}
-
-function evilCultClass(tone: StatRow['tone']): string {
+function evilCultClass(tone: StatRow['tone'] | string): string {
   if (tone === 'green') return 'text-emerald-700'
   if (tone === 'red') return 'text-red-600'
   if (tone === 'blue') return 'text-sky-700'
   return 'text-slate-800'
 }
 
+const emptyGuidePrediction: GuidePrediction = {
+  outcome: 'draw',
+  goal: { label: '-', total: 0, tone: 'normal' },
+  score: '-',
+  secondaryScore: '-',
+}
+
+// 庄家/平台预测全部由后端 platform 块计算。
 function bookmakerGuidePrediction(item: AnalysisMatch): GuidePrediction {
-  const outcome = bookmakerResultOutcome(item)
-  const goal = bookmakerGoalResult(item)
-  const score = bookmakerFusedScore(item, outcome, goal.total)
-  return {
-    outcome,
-    goal,
-    score,
-    secondaryScore: secondaryGuideScore(item, outcome, goal, 'bookmaker'),
-  }
+  return item.platform?.bookmaker ?? emptyGuidePrediction
 }
 
 function platformLivePrediction(item: AnalysisMatch): GuidePrediction {
-  const outcome = platformLiveOutcome(item)
-  const goal = platformLiveGoalResult(item)
-  const score = platformFusedScore(item, outcome, goal.total)
-  const warning = platformSignalWarning(item, outcome)
-  return {
-    outcome,
-    goal,
-    score,
-    secondaryScore: secondaryGuideScore(item, outcome, goal, 'platform'),
-    warning: warning.value,
-    warningTone: warning.tone,
-  }
-}
-
-function platformLiveOutcome(item: AnalysisMatch): DirectionOutcome {
-  const base = basePredictionOutcome(item)
-  const correctionScores = platformLiveCorrectionScores(item)
-  const correction = outcomeFromScores(correctionScores)
-  if (!base) return correction
-
-  const correctionScore = correctionScores[correction]
-  const baseScore = correctionScores[base]
-  const hasHandicapAlert = Boolean(handicapPressureSignal(item).outcome)
-  const drawRisk = drawRiskSignal(item)
-  const drawCanCoverSides = correctionScores.draw >= Math.max(correctionScores.home, correctionScores.away) - 0.8
-  if (drawRisk.score >= 5 && drawCanCoverSides) return 'draw'
-  const reverseThreshold = hasHandicapAlert ? 4.2 : 5
-  const gapThreshold = hasHandicapAlert ? 1.6 : 2.8
-  const shouldReverseBase = correction !== base && correctionScore >= reverseThreshold && correctionScore - baseScore >= gapThreshold
-  return shouldReverseBase ? correction : base
-}
-
-function platformLiveCorrectionScores(item: AnalysisMatch): Record<DirectionOutcome, number> {
-  const scores: Record<DirectionOutcome, number> = { home: 0, draw: 0, away: 0 }
-  const add = (outcome: DirectionOutcome | null, weight: number) => {
-    if (outcome) scores[outcome] += weight
-  }
-  const kellyOutcomes = platformTextOutcomes(item.kailiresult)
-  const ticaiOutcomes = platformTextOutcomes(item.ticairesult)
-  const kellyOutcome = kellyOutcomes[0] ?? null
-  const ticaiOutcome = ticaiOutcomes[0] ?? null
-  const professionalConsensus = professionalConsensusOutcome(item)
-  const base = basePredictionOutcome(item)
-
-  add(marketComfortOutcome(item, 'sporttery'), 3)
-  add(marketComfortOutcome(item, 'sportteryRqspf'), 2.5)
-  add(localComfortOutcome(item), 1.1)
-  add(handicapExpectationOutcome(item), 1.8)
-  const handicapAlert = handicapPressureSignal(item)
-  add(handicapAlert.outcome, handicapAlert.weight * 1.6)
-  add(handicapHeatOutcome(item), 0.8)
-  add(expectedGoalOutcome(item), 1.2)
-  add(kellyOutcome, 2.2)
-  add(ticaiOutcome, 2.2)
-  add(professionalConsensus, professionalConsensus && professionalConsensus !== base ? 2.2 : 1.2)
-  platformTagOutcomes(item).forEach((outcome) => add(outcome, 0.8))
-  add(historyMatchOutcome(item), 1.4)
-  add(recentTeamOutcome(item.homezuijinbisai, item.home, 'home'), 1)
-  add(recentTeamOutcome(item.guestzuijinbisai, item.guest, 'away'), 1)
-
-  if (bookmakerDrawScore(item) >= 3) add('draw', 1.4)
-  const drawRisk = drawRiskSignal(item)
-  if (drawRisk.score >= 5) add('draw', 3.2)
-  else if (drawRisk.score >= 4) add('draw', 2)
-  else if (drawRisk.score >= 3) add('draw', 1)
-  applyPlatformRiskScores(item, scores)
-  return scores
-}
-
-function applyPlatformRiskScores(item: AnalysisMatch, scores: Record<DirectionOutcome, number>) {
-  const add = (outcome: DirectionOutcome | null, weight: number) => {
-    if (outcome) scores[outcome] += weight
-  }
-  const overheat = platformOverheatOutcome(item)
-  if (overheat) {
-    scores[overheat] -= 1
-    add('draw', 0.6)
-    add(oppositeOutcome(overheat), 0.5)
-  }
-
-  const handicapHot = handicapHotOutcome(item)
-  if (handicapHot) {
-    scores[handicapHot] -= 0.8
-    add(oppositeOutcome(handicapHot), 0.6)
-  }
-
-  const sportteryLoss = strongMarketLossRow(item, 'sporttery')
-  const rqLoss = strongMarketLossRow(item, 'sportteryRqspf')
-  if (sportteryLoss && rqLoss && sportteryLoss.outcome === rqLoss.outcome) {
-    scores[sportteryLoss.outcome] -= 1.2
-    add('draw', sportteryLoss.outcome === 'draw' ? 0 : 0.4)
-    add(oppositeOutcome(sportteryLoss.outcome), 0.7)
-  }
-
-  const professionalWarning = professionalConflictWarning(item)
-  const professionalConsensus = professionalConsensusOutcome(item)
-  if (professionalWarning && professionalConsensus) {
-    const base = basePredictionOutcome(item)
-    if (base) scores[base] -= 0.9
-    add(professionalConsensus, 1.1)
-  }
-
-  const handicapMovement = handicapGuideOutcome(item)
-  if (handicapMovement) add(handicapMovement, 0.6)
-}
-
-function platformSignalWarning(item: AnalysisMatch, outcome: DirectionOutcome): { value: string; tone?: StatRow['tone'] } {
-  if (platformOverheatOutcome(item) === outcome) return { value: '过热', tone: 'blue' }
-  return { value: '' }
-}
-
-function platformOverheatOutcome(item: AnalysisMatch): DirectionOutcome | null {
-  const base = basePredictionOutcome(item)
-  const kellyOutcome = primaryTextOutcome(item.kailiresult)
-  const ticaiOutcome = primaryTextOutcome(item.ticairesult)
-  const sportteryOutcome = marketComfortOutcome(item, 'sporttery')
-  const rqOutcome = marketComfortOutcome(item, 'sportteryRqspf')
-  const outcomes: DirectionOutcome[] = ['home', 'draw', 'away']
-  return outcomes.find((outcome) => [base, kellyOutcome, ticaiOutcome, sportteryOutcome, rqOutcome].filter((signal) => signal === outcome).length >= 4) ?? null
-}
-
-function handicapHotOutcome(item: AnalysisMatch): DirectionOutcome | null {
-  const homeHeat = parseOptionalNumber(item.yapantouzhu?.[0])
-  const guestHeat = parseOptionalNumber(item.yapantouzhu?.[1])
-  if (Number.isFinite(homeHeat) && homeHeat > 65) return 'home'
-  if (Number.isFinite(guestHeat) && guestHeat > 65) return 'away'
-  return null
-}
-
-function oppositeOutcome(outcome: DirectionOutcome | null): DirectionOutcome | null {
-  if (outcome === 'home') return 'away'
-  if (outcome === 'away') return 'home'
-  return null
-}
-
-function marketComfortOutcome(item: AnalysisMatch, key: string): DirectionOutcome | null {
-  return marketComfortRow(bookmakerMarkets(item).find((value) => value.key === key))?.outcome ?? null
-}
-
-function localComfortOutcome(item: AnalysisMatch): DirectionOutcome | null {
-  return marketComfortRow(localProfitMarket(item))?.outcome ?? null
-}
-
-function strongMarketComfortRow(item: AnalysisMatch, key: string): BookmakerOutcome | null {
-  return strongComfortRow(marketComfortRow(bookmakerMarkets(item).find((value) => value.key === key)))
-}
-
-function strongMarketLossRow(item: AnalysisMatch, key: string): BookmakerOutcome | null {
-  return strongLossRow(marketLossRow(bookmakerMarkets(item).find((value) => value.key === key)))
-}
-
-function strongLocalComfortRow(item: AnalysisMatch): BookmakerOutcome | null {
-  return strongComfortRow(marketComfortRow(localProfitMarket(item)))
-}
-
-function marketComfortRow(market: BookmakerMarket | null | undefined): BookmakerOutcome | null {
-  const rows = (market?.bookmakerByOutcome ?? []).filter((row) => row.available && Number.isFinite(row.bookmakerProfit))
-  return rows.sort((a, b) => b.bookmakerProfit - a.bookmakerProfit)[0] ?? null
-}
-
-function marketLossRow(market: BookmakerMarket | null | undefined): BookmakerOutcome | null {
-  const rows = (market?.bookmakerByOutcome ?? []).filter((row) => row.available && Number.isFinite(row.bookmakerProfit))
-  return rows.sort((a, b) => a.bookmakerProfit - b.bookmakerProfit)[0] ?? null
-}
-
-function strongComfortRow(row: BookmakerOutcome | null): BookmakerOutcome | null {
-  if (!row || row.bookmakerProfit <= 0) return null
-  return Number.isFinite(row.bookmakerRoi) && row.bookmakerRoi >= 8 ? row : null
-}
-
-function strongLossRow(row: BookmakerOutcome | null): BookmakerOutcome | null {
-  if (!row || row.bookmakerProfit >= 0) return null
-  return Number.isFinite(row.bookmakerRoi) && row.bookmakerRoi <= -8 ? row : null
-}
-
-function basePredictionOutcome(item: AnalysisMatch): DirectionOutcome | null {
-  return textOutcome(item.prediction)
-}
-
-function platformTagOutcomes(item: AnalysisMatch): DirectionOutcome[] {
-  const tags = Array.isArray(item.detail?.test23) && item.detail.test23.length ? item.detail.test23 : item.tags
-  if (!tags?.length) return []
-  return tags
-    .map((tag) => {
-      const text = String(tag || '')
-      if (text.includes('客胜')) return 'away'
-      if (text.includes('胜平局')) return item.prediction === '平局' ? 'draw' : 'home'
-      if (text.includes('闹0区')) return 'draw'
-      return null
-    })
-    .filter((value): value is DirectionOutcome => Boolean(value))
-}
-
-function professionalConsensusOutcome(item: AnalysisMatch): DirectionOutcome | null {
-  const kellyOutcomes = platformTextOutcomes(item.kailiresult)
-  const ticaiOutcomes = platformTextOutcomes(item.ticairesult)
-  return kellyOutcomes.find((outcome) => ticaiOutcomes.includes(outcome)) ?? null
-}
-
-function professionalConflictWarning(item: AnalysisMatch): { value: string; tone: StatRow['tone'] } | null {
-  const base = basePredictionOutcome(item)
-  const professionalConsensus = professionalConsensusOutcome(item)
-  if (!base || !professionalConsensus || professionalConsensus === base) return null
-  return {
-    value: `凯体反差：基础${outcomeLabelByKey(base, item)}，凯利/体彩共同指向${outcomeLabelByKey(professionalConsensus, item)}`,
-    tone: 'red',
-  }
-}
-
-function warningAdjustedPrediction(item: AnalysisMatch): GuidePrediction | null {
-  const professionalConsensus = professionalConsensusOutcome(item)
-  const base = basePredictionOutcome(item)
-  if (!professionalConsensus || !base || professionalConsensus === base) return null
-  const goal = warningAdjustedGoalResult(item)
-  return {
-    outcome: professionalConsensus,
-    goal,
-    score: warningAdjustedScore(professionalConsensus, goal.total),
-    secondaryScore: warningAdjustedScore(professionalConsensus, Math.max(1, goal.total + 1)),
-  }
-}
-
-function warningAdjustedGoalResult(item: AnalysisMatch): { label: string; total: number; tone: StatRow['tone'] } {
-  const line = parseOptionalNumber(item.qiushupankou2)
-  const total = Number.isFinite(line) ? Math.max(1, Math.ceil(line) - 1) : 2
-  return { label: `${total}球以内`, total, tone: 'red' }
-}
-
-function warningAdjustedScore(outcome: DirectionOutcome, total: number): string {
-  const normalizedTotal = Math.max(1, Math.round(total))
-  if (outcome === 'draw') return normalizedTotal <= 1 ? '0:0' : '1:1'
-  if (normalizedTotal <= 2) return outcome === 'home' ? '1:0' : '0:1'
-  return outcome === 'home' ? '2:1' : '1:2'
-}
-
-function platformTextOutcomes(values: unknown[] | undefined): DirectionOutcome[] {
-  if (!values?.length) return []
-  return values
-    .map((value) => textOutcome(value))
-    .filter((value): value is DirectionOutcome => Boolean(value))
-}
-
-function primaryTextOutcome(values: unknown[] | undefined): DirectionOutcome | null {
-  return platformTextOutcomes(values)[0] ?? null
-}
-
-function textOutcome(value: unknown): DirectionOutcome | null {
-  const text = String(value || '').trim()
-  if (!text || text === '-') return null
-  if (/平/.test(text)) return 'draw'
-  if (/客胜|主负|负/.test(text)) return 'away'
-  if (/主胜|胜/.test(text)) return 'home'
-  return null
-}
-
-function historyMatchOutcome(item: AnalysisMatch): DirectionOutcome | null {
-  if (!hasHistoryGoalSample(item)) return null
-  return matchOutcomeForCurrentTeams(item.liangduibisai, item.home, item.guest)
-}
-
-function recentTeamOutcome(record: unknown[] | undefined, team: string, side: 'home' | 'away'): DirectionOutcome | null {
-  const result = matchOutcomeForTeam(record, team)
-  if (!result) return null
-  if (result === 'draw') return 'draw'
-  if (side === 'home') return result === 'win' ? 'home' : 'away'
-  return result === 'win' ? 'away' : 'home'
-}
-
-function matchOutcomeForCurrentTeams(record: unknown[] | undefined, currentHome: string, currentGuest: string): DirectionOutcome | null {
-  if (!record?.length) return null
-  const homeTeam = normalizeTeamName(record[1])
-  const guestTeam = normalizeTeamName(record[2])
-  const scoreA = parseOptionalNumber(record[3])
-  const scoreB = parseOptionalNumber(record[4])
-  if (!Number.isFinite(scoreA) || !Number.isFinite(scoreB)) return null
-  const currentHomeName = normalizeTeamName(currentHome)
-  const currentGuestName = normalizeTeamName(currentGuest)
-  let homeScore = scoreA
-  let guestScore = scoreB
-
-  if (homeTeam.includes(currentGuestName) || guestTeam.includes(currentHomeName)) {
-    homeScore = scoreB
-    guestScore = scoreA
-  } else if (!(homeTeam.includes(currentHomeName) || guestTeam.includes(currentGuestName))) {
-    return null
-  }
-
-  if (homeScore > guestScore) return 'home'
-  if (homeScore < guestScore) return 'away'
-  return 'draw'
-}
-
-function matchOutcomeForTeam(record: unknown[] | undefined, team: string): 'win' | 'draw' | 'loss' | null {
-  if (!record?.length) return null
-  const homeTeam = normalizeTeamName(record[1])
-  const guestTeam = normalizeTeamName(record[2])
-  const scoreA = parseOptionalNumber(record[3])
-  const scoreB = parseOptionalNumber(record[4])
-  if (!Number.isFinite(scoreA) || !Number.isFinite(scoreB)) return null
-  const teamName = normalizeTeamName(team)
-  const isHomeTeam = homeTeam.includes(teamName)
-  const isGuestTeam = guestTeam.includes(teamName)
-  if (!isHomeTeam && !isGuestTeam) return null
-  const teamScore = isHomeTeam ? scoreA : scoreB
-  const opponentScore = isHomeTeam ? scoreB : scoreA
-  if (teamScore > opponentScore) return 'win'
-  if (teamScore < opponentScore) return 'loss'
-  return 'draw'
-}
-
-function normalizeTeamName(value: unknown): string {
-  return String(value || '').replace(/\s+/g, '').trim()
-}
-
-function handicapExpectationOutcome(item: AnalysisMatch): DirectionOutcome | null {
-  const [historyHandicap, recentHandicap] = splitPair(item.changguiyapan)
-  const expected = weightedAverage([
-    { value: parseOptionalNumber(historyHandicap), weight: 0.45 },
-    { value: parseOptionalNumber(recentHandicap), weight: 0.55 },
-  ])
-  const current = parseOptionalNumber(item.yapanpankou2)
-  if (Number.isFinite(expected) && Math.abs(expected) >= 0.25) {
-    if (Number.isFinite(current) && Math.abs(expected) - Math.abs(current) >= 0.75) return expected > 0 ? 'home' : 'away'
-    return expected > 0 ? 'home' : 'away'
-  }
-  return null
-}
-
-function handicapPressureSignal(item: AnalysisMatch): { outcome: DirectionOutcome | null; weight: number } {
-  const [historyHandicap, recentHandicap] = splitPair(item.changguiyapan)
-  const history = parseOptionalNumber(historyHandicap)
-  const recent = parseOptionalNumber(recentHandicap)
-  const currentLine = parseOptionalNumber(item.yapanpankou2)
-  if (![history, recent, currentLine].every(Number.isFinite)) return { outcome: null, weight: 0 }
-
-  const expectedLine = weightedAverage([
-    { value: history, weight: 0.45 },
-    { value: recent, weight: 0.55 },
-  ])
-  const currentDirection = handicapDirection(currentLine)
-  const expectedDirection = handicapDirection(expectedLine)
-  const currentAbs = Math.abs(currentLine)
-  const expectedAbs = Math.abs(expectedLine)
-  const expectedOutcome = handicapDirectionOutcome(expectedDirection)
-  const currentOpposite = currentDirection === 'home' ? 'away' : currentDirection === 'guest' ? 'home' : null
-
-  if (currentDirection !== 'level' && expectedDirection !== 'level' && currentDirection !== expectedDirection) {
-    return { outcome: expectedOutcome, weight: 1.4 }
-  }
-  if (currentDirection !== 'level' && currentAbs - expectedAbs >= 0.5) {
-    return { outcome: currentOpposite, weight: 1 }
-  }
-  if (expectedDirection !== 'level' && expectedAbs - currentAbs >= 0.5) {
-    return { outcome: expectedOutcome, weight: 1.2 }
-  }
-  if (Math.min(Math.abs(history - currentLine), Math.abs(recent - currentLine)) > 0.75) {
-    return { outcome: expectedOutcome, weight: 1.1 }
-  }
-  return { outcome: null, weight: 0 }
-}
-
-function handicapDirectionOutcome(direction: 'home' | 'guest' | 'level'): DirectionOutcome | null {
-  if (direction === 'home') return 'home'
-  if (direction === 'guest') return 'away'
-  return null
-}
-
-function handicapPressureSignalLabel(item: AnalysisMatch): string {
-  const [historyHandicap, recentHandicap] = splitPair(item.changguiyapan)
-  const history = parseOptionalNumber(historyHandicap)
-  const recent = parseOptionalNumber(recentHandicap)
-  const currentLine = parseOptionalNumber(item.yapanpankou2)
-  if (![history, recent, currentLine].every(Number.isFinite)) return ''
-
-  const expectedLine = weightedAverage([
-    { value: history, weight: 0.45 },
-    { value: recent, weight: 0.55 },
-  ])
-  const currentDirection = handicapDirection(currentLine)
-  const expectedDirection = handicapDirection(expectedLine)
-  const currentAbs = Math.abs(currentLine)
-  const expectedAbs = Math.abs(expectedLine)
-
-  if (currentDirection !== 'level' && expectedDirection !== 'level' && currentDirection !== expectedDirection) return '方向反转'
-  if (currentDirection !== 'level' && currentAbs - expectedAbs >= 0.5) return '盘口偏深，防夸大强势方'
-  if (expectedDirection !== 'level' && expectedAbs - currentAbs >= 0.5) return '盘口偏浅，防隐藏强势方'
-  if (Math.min(Math.abs(history - currentLine), Math.abs(recent - currentLine)) > 0.75) return '盘口异常偏离'
-  return ''
-}
-
-function expectedGoalOutcome(item: AnalysisMatch): DirectionOutcome | null {
-  const goals = expectedGoalPair(item)
-  if (!Number.isFinite(goals.home) || !Number.isFinite(goals.guest)) return null
-  if (goals.home - goals.guest >= 0.55) return 'home'
-  if (goals.guest - goals.home >= 0.55) return 'away'
-  return 'draw'
-}
-
-function handicapHeatOutcome(item: AnalysisMatch): DirectionOutcome | null {
-  const homeHeat = parseOptionalNumber(item.yapantouzhu?.[0])
-  const guestHeat = parseOptionalNumber(item.yapantouzhu?.[1])
-  if (!Number.isFinite(homeHeat) || !Number.isFinite(guestHeat)) return null
-  if (homeHeat - guestHeat >= 10) return 'home'
-  if (guestHeat - homeHeat >= 10) return 'away'
-  return null
-}
-
-function platformLiveGoalResult(item: AnalysisMatch): { label: string; total: number; tone: StatRow['tone'] } {
-  const bands = expectedGoalBands(item)
-  const mainTotal = bands.main.home + bands.main.guest
-  const openingLine = parseOptionalNumber(item.qiushupankou1)
-  const currentLine = parseOptionalNumber(item.qiushupankou2)
-  const line = Number.isFinite(currentLine) ? currentLine : openingLine
-  const [historyGoals, recentGoals] = splitPair(item.changguiqiushu)
-  const correctionTotal = weightedAverage([
-    { value: Number.isFinite(mainTotal) ? mainTotal : Number.NaN, weight: 0.35 },
-    { value: recentGoalSampleValue(item, recentGoals), weight: 0.25 },
-    { value: historyGoalSampleValue(item, historyGoals), weight: 0.15 },
-    { value: line, weight: 0.25 },
-  ]) + goalHeatAdjustment(item) + goalBalanceAdjustment(item)
-  const baseTotal = baseGoalPredictionValue(item)
-  const expectedTotal = Number.isFinite(baseTotal)
-    ? weightedAverage([
-      { value: baseTotal, weight: 0.3 },
-      { value: correctionTotal, weight: 0.7 },
-    ])
-    : correctionTotal
-  const balanceSignal = goalBalanceSignalForItem(item)
-  const total = Number.isFinite(expectedTotal)
-    ? normalizedPlatformGoalTotal(expectedTotal, balanceSignal)
-    : bookmakerGoalResult(item).total
-  const signal = baseGoalSignal(item)
-  if (signal === 'over' && Number.isFinite(line) && total >= Math.ceil(line)) return { label: `${total}球以上`, total, tone: 'green' }
-  if (signal === 'under' && Number.isFinite(line) && total <= Math.floor(line)) return { label: `${total}球以内`, total, tone: 'red' }
-  if (Number.isFinite(line) && total > line) return { label: `${total}球以上`, total, tone: 'green' }
-  if (Number.isFinite(line) && total < line) return { label: `${total}球以内`, total, tone: 'red' }
-  return { label: `${total}球左右`, total, tone: 'normal' }
-}
-
-function normalizedPlatformGoalTotal(expectedTotal: number, signal: ReturnType<typeof goalBalanceSignalForItem>): number {
-  if (!Number.isFinite(expectedTotal)) return 0
-  if (signal === 'underHidden' || signal === 'under') return Math.max(0, Math.floor(expectedTotal))
-  if (signal === 'overCorrected' || signal === 'over') return Math.max(0, Math.ceil(expectedTotal))
-  return Math.max(0, Math.round(expectedTotal))
-}
-
-function goalHeatAdjustment(item: AnalysisMatch): number {
-  const overHeat = parseOptionalNumber(item.qiushutouzhu?.[0])
-  const underHeat = parseOptionalNumber(item.qiushutouzhu?.[1])
-  if (!Number.isFinite(overHeat) || !Number.isFinite(underHeat)) return 0
-  if (overHeat > 65) return -0.35
-  if (underHeat > 65) return 0.35
-  const diff = overHeat - underHeat
-  if (Math.abs(diff) < 10) return 0
-  return roundValue(Math.max(-0.45, Math.min(0.45, diff / 60)), 2)
-}
-
-function goalBalanceAdjustment(item: AnalysisMatch): number {
-  const signal = goalBalanceSignalForItem(item)
-  if (signal === 'underHidden') return -0.85
-  if (signal === 'under') return -0.6
-  if (signal === 'overCorrected') return 0.85
-  if (signal === 'over') return 0.6
-  return 0
+  return item.platform?.platform ?? emptyGuidePrediction
 }
 
 function goalBalanceSignalForItem(item: AnalysisMatch): 'underHidden' | 'under' | 'overCorrected' | 'over' | null {
-  const [historyGoals, recentGoals] = splitPair(item.changguiqiushu)
-  const history = parseOptionalNumber(historyGoals)
-  const recent = parseOptionalNumber(recentGoals)
-  const combined = combinedGoalAverageValue(history, recent)
-  const openingLine = parseOptionalNumber(item.qiushupankou1)
-  return goalBalanceSignal(history, recent, combined, openingLine)
-}
-
-function goalBalanceSignal(history: number, recent: number, combined: number, openingLine: number): 'underHidden' | 'under' | 'overCorrected' | 'over' | null {
-  const baseline = 2.5
-  const highThreshold = 2.85
-  const lowThreshold = 2.15
-  const balanceValue = weightedAverage([
-    { value: history, weight: 0.2 },
-    { value: recent, weight: 0.35 },
-    { value: combined, weight: 0.3 },
-    { value: openingLine, weight: 0.15 },
-  ])
-  if (!Number.isFinite(balanceValue)) return null
-
-  const values = [history, recent, combined, openingLine].filter(Number.isFinite)
-  const highCount = values.filter((value) => value >= highThreshold).length
-  const lowCount = values.filter((value) => value <= lowThreshold).length
-  if (balanceValue >= highThreshold || highCount >= 2) {
-    return Number.isFinite(openingLine) && openingLine <= baseline ? 'underHidden' : 'under'
-  }
-  if (balanceValue <= lowThreshold || lowCount >= 2) {
-    return Number.isFinite(openingLine) && openingLine >= baseline ? 'overCorrected' : 'over'
-  }
-  return null
-}
-
-function baseGoalPredictionValue(item: AnalysisMatch): number {
-  const line = parseOptionalNumber(item.qiushupankou2)
-  const signal = baseGoalSignal(item)
-  const text = goalSignalText(item)
-  if (signal === 'under') return Number.isFinite(line) ? Math.max(0, line - 0.75) : 2
-  if (signal === 'over') {
-    if (!Number.isFinite(line)) return 3
-    if (/裂球/.test(text)) return Math.max(3, line + 1)
-    return line + (line <= 2.25 ? 0.5 : 0.75)
-  }
-  return Number.NaN
-}
-
-function baseGoalSignal(item: AnalysisMatch): 'over' | 'under' | null {
-  const text = goalSignalText(item)
-  if (/小球|闹0区/.test(text)) return 'under'
-  if (/大球|裂球/.test(text)) return 'over'
-  return null
-}
-
-function goalSignalText(item: AnalysisMatch): string {
-  return `${item.qiuprediction || ''} ${(item.detail?.test23 || item.tags || []).join(' ')}`
-}
-
-function outcomeFromScores(scores: Record<DirectionOutcome, number>): DirectionOutcome {
-  return (Object.entries(scores) as Array<[DirectionOutcome, number]>)
-    .sort((a, b) => b[1] - a[1])[0]?.[0] ?? 'draw'
+  return item.platform?.goalBalanceSignal || null
 }
 
 function outcomeTone(outcome: DirectionOutcome): StatRow['tone'] {
@@ -4508,157 +3038,25 @@ function goalStatToneClass(tone: GoalStatTableRow['homeTone']): string {
   return 'text-slate-950'
 }
 
+// 期望进球全部由后端 platform.goals 提供（null 表示样本不足）。
+function platformPair(pair: PlatformGoalPair | undefined): GoalScore {
+  return { home: pair?.home ?? Number.NaN, guest: pair?.guest ?? Number.NaN }
+}
+
 function expectedGoalPair(item: AnalysisMatch): GoalScore {
-  const homeRecentAvailable = hasTeamRecentGoalSample(item.homezuijinbisai)
-  const guestRecentAvailable = hasTeamRecentGoalSample(item.guestzuijinbisai)
-  const homeAttackAverage = homeRecentAvailable ? fallbackAverage(item.liangduiqiushu?.[0], item.qiushuAll?.[0]) : Number.NaN
-  const guestAttackAverage = guestRecentAvailable ? fallbackAverage(item.liangduiqiushu?.[1], item.qiushuAll?.[2]) : Number.NaN
-  const homeAgainstAverage = homeRecentAvailable ? fallbackAverage(item.liangduiqiushu?.[2], item.qiushuAll?.[4]) : Number.NaN
-  const guestAgainstAverage = guestRecentAvailable ? fallbackAverage(item.liangduiqiushu?.[3], item.qiushuAll?.[5]) : Number.NaN
-  const homeBase = expectedTeamGoalBase(
-    homeAttackAverage,
-    item.qiushuAll?.[0],
-    item.qiushuAll?.[1],
-    guestAgainstAverage,
-    item.qiushuAll?.[5],
-  )
-  const guestBase = expectedTeamGoalBase(
-    guestAttackAverage,
-    item.qiushuAll?.[2],
-    item.qiushuAll?.[3],
-    homeAgainstAverage,
-    item.qiushuAll?.[4],
-  )
-  if (!Number.isFinite(homeBase) && !Number.isFinite(guestBase)) return { home: Number.NaN, guest: Number.NaN }
-
-  const safeHomeBase = Number.isFinite(homeBase) ? homeBase : 0
-  const safeGuestBase = Number.isFinite(guestBase) ? guestBase : 0
-  const baseTotal = safeHomeBase + safeGuestBase
-  const [, recentTotalGoalsValue] = splitPair(item.changguiqiushu)
-  const totalGoalAnchor = weightedAverage([
-    { value: baseTotal, weight: 0.25 },
-    { value: recentGoalSampleValue(item, recentTotalGoalsValue), weight: 0.4 },
-    { value: parseOptionalNumber(item.qiushupankou2), weight: 0.35 },
-  ])
-  const finalTotal = Number.isFinite(totalGoalAnchor) ? totalGoalAnchor : baseTotal
-  const homeShare = baseTotal > 0 ? safeHomeBase / baseTotal : 0.5
-  const rawHome = Math.max(0, finalTotal * homeShare)
-  const rawGuest = Math.max(0, finalTotal * (1 - homeShare))
-
-  return {
-    home: applyZeroGoalRisk(rawHome, homeAttackAverage, guestAgainstAverage, safeHomeBase, finalTotal, item.yapanpankou2, 'home'),
-    guest: applyZeroGoalRisk(rawGuest, guestAttackAverage, homeAgainstAverage, safeGuestBase, finalTotal, item.yapanpankou2, 'guest'),
-  }
+  return platformPair(item.platform?.goals.main)
 }
 
 function expectedGoalBands(item: AnalysisMatch): { under: GoalScore; main: GoalScore; over: GoalScore } {
-  const main = expectedGoalPair(item)
-  const line = parseOptionalNumber(item.qiushupankou2)
-  const openingLine = parseOptionalNumber(item.qiushupankou1)
-  const goalLine = Number.isFinite(line) ? line : openingLine
-  const handicap = parseOptionalNumber(item.yapanpankou2)
-  const openingHandicap = parseOptionalNumber(item.yapanpankou1)
-  const handicapLine = Number.isFinite(handicap) ? handicap : openingHandicap
-  const mainTotal = main.home + main.guest
-  const safeMainTotal = Number.isFinite(mainTotal) ? mainTotal : Number.NaN
-  const underTotal = Number.isFinite(goalLine) ? Math.max(0, Math.ceil(goalLine) - 1) : safeMainTotal
-  const overTotal = Number.isFinite(goalLine) ? Math.max(0, Math.floor(goalLine + 2)) : safeMainTotal + 2
-
   return {
-    under: allocateExpectedGoalTotal(underTotal, main, handicapLine, true),
-    main,
-    over: allocateExpectedGoalTotal(overTotal, main, handicapLine, true),
+    under: platformPair(item.platform?.goals.under),
+    main: platformPair(item.platform?.goals.main),
+    over: platformPair(item.platform?.goals.over),
   }
 }
 
-function allocateExpectedGoalTotal(total: number, base: GoalScore, handicapValue?: number, forceInteger = false): GoalScore {
-  if (!Number.isFinite(total)) return { home: Number.NaN, guest: Number.NaN }
-  if (forceInteger) return allocateIntegerGoalTotal(Math.max(0, Math.round(total)), base, handicapValue)
-
-  const baseTotal = base.home + base.guest
-  const homeShare = Number.isFinite(baseTotal) && baseTotal > 0 ? base.home / baseTotal : 0.5
-  return {
-    home: Math.max(0, total * homeShare),
-    guest: Math.max(0, total * (1 - homeShare)),
-  }
-}
-
-function allocateIntegerGoalTotal(total: number, base: GoalScore, handicapValue?: number): GoalScore {
-  const normalizedTotal = Math.max(0, Math.round(total))
-  if (normalizedTotal <= 0) return { home: 0, guest: 0 }
-
-  const baseTotal = base.home + base.guest
-  const homeShare = Number.isFinite(baseTotal) && baseTotal > 0 ? base.home / baseTotal : 0.5
-  let home = Math.max(0, Math.min(normalizedTotal, Math.round(normalizedTotal * homeShare)))
-  let guest = normalizedTotal - home
-
-  const handicap = Number.isFinite(handicapValue) ? Number(handicapValue) : Number.NaN
-  if (!Number.isFinite(handicap) || Math.abs(handicap) < 0.5) return { home, guest }
-
-  const favorite = handicap > 0 ? 'home' : 'guest'
-  const minGap = Math.min(normalizedTotal, Math.ceil(Math.abs(handicap)))
-  const currentGap = favorite === 'home' ? home - guest : guest - home
-  if (currentGap >= minGap) return { home, guest }
-
-  const favoriteGoals = Math.min(normalizedTotal, Math.ceil((normalizedTotal + minGap) / 2))
-  const underdogGoals = normalizedTotal - favoriteGoals
-  if (favorite === 'home') {
-    home = favoriteGoals
-    guest = underdogGoals
-  } else {
-    home = underdogGoals
-    guest = favoriteGoals
-  }
-  return { home, guest }
-}
-
-function expectedTeamGoalBase(attackAverageValue: unknown, attackTotalValue: unknown, maxGoalValue: unknown, opponentAgainstAverageValue: unknown, opponentAgainstTotalValue: unknown): number {
-  const attackAverage = fallbackAverage(attackAverageValue, attackTotalValue)
-  const opponentAgainstAverage = fallbackAverage(opponentAgainstAverageValue, opponentAgainstTotalValue)
-  const maxGoal = parseOptionalNumber(maxGoalValue)
-  if (!Number.isFinite(attackAverage) && !Number.isFinite(opponentAgainstAverage) && !Number.isFinite(maxGoal)) return Number.NaN
-
-  const attackBase = Number.isFinite(attackAverage) ? attackAverage : opponentAgainstAverage
-  const againstBase = Number.isFinite(opponentAgainstAverage) ? opponentAgainstAverage : attackBase
-  const peakBase = Number.isFinite(maxGoal) ? Math.min(maxGoal, attackBase + 1.5) : attackBase
-  return roundValue(Math.max(0, attackBase * 0.5 + againstBase * 0.35 + peakBase * 0.15), 2)
-}
-
-function applyZeroGoalRisk(expectedGoal: number, attackAverage: number, opponentAgainstAverage: number, teamBase: number, totalGoalAnchor: number, handicapValue: unknown, side: 'home' | 'guest'): number {
-  const risk = zeroGoalRiskScore(attackAverage, opponentAgainstAverage, teamBase, totalGoalAnchor, handicapValue, side)
-  if (risk >= 0.65 && expectedGoal < 0.9) return 0.49
-  if (risk >= 0.5 && expectedGoal < 1.15) return expectedGoal * 0.7
-  return expectedGoal
-}
-
-function zeroGoalRiskScore(attackAverage: number, opponentAgainstAverage: number, teamBase: number, totalGoalAnchor: number, handicapValue: unknown, side: 'home' | 'guest'): number {
-  let risk = 0
-  if (Number.isFinite(attackAverage)) {
-    if (attackAverage <= 0.6) risk += 0.35
-    else if (attackAverage <= 1) risk += 0.18
-  }
-  if (Number.isFinite(opponentAgainstAverage)) {
-    if (opponentAgainstAverage <= 0.8) risk += 0.3
-    else if (opponentAgainstAverage <= 1.1) risk += 0.15
-  }
-  if (Number.isFinite(teamBase) && teamBase <= 0.75) risk += 0.2
-  if (Number.isFinite(totalGoalAnchor) && totalGoalAnchor <= 2.25) risk += 0.15
-
-  const handicap = parseOptionalNumber(handicapValue)
-  if (Number.isFinite(handicap)) {
-    const unsupportedByHandicap = side === 'home' ? handicap <= -0.25 : handicap >= 0.25
-    if (unsupportedByHandicap) risk += 0.15
-  }
-  return risk
-}
-
-function zeroGoalAdviceText(item: AnalysisMatch, expectedGoals: { home: number; guest: number }): string {
-  const teams = [
-    { name: item.home, value: expectedGoals.home },
-    { name: item.guest, value: expectedGoals.guest },
-  ].filter((team) => Number.isFinite(team.value) && Math.round(team.value) === 0)
-  if (!teams.length) return ''
-  return `0球风险：${teams.map((team) => team.name).join('、')}触发低进攻/低失球/盘口压低修正；`
+function zeroGoalAdviceText(item: AnalysisMatch): string {
+  return item.platform?.zeroGoalAdvice ?? ''
 }
 
 function weightedAverage(items: Array<{ value: number; weight: number }>): number {
@@ -4668,12 +3066,6 @@ function weightedAverage(items: Array<{ value: number; weight: number }>): numbe
   return validItems.reduce((sum, item) => sum + item.value * item.weight, 0) / totalWeight
 }
 
-function fallbackAverage(averageValue: unknown, totalValue: unknown): number {
-  const average = parseOptionalNumber(averageValue)
-  if (Number.isFinite(average)) return average
-  const total = parseOptionalNumber(totalValue)
-  return Number.isFinite(total) ? total / 5 : Number.NaN
-}
 
 function hasHistoryGoalSample(item: AnalysisMatch): boolean {
   const signal = String(item.sanhuxinli?.[4] || '').trim()
@@ -4726,7 +3118,7 @@ function expectedHandicapRows(item: AnalysisMatch): StatRow[] {
     { label: '主队历史主场进球数', value: valueText(item.yapantouzhu?.[10]) },
     { label: '客队历史客场进球数', value: valueText(item.yapantouzhu?.[11]) },
     { label: '压力方向', value: valueText(item.yapantouzhu?.[12]) },
-    ...handicapPressureAlertRows(historyHandicap, recentHandicap, item.yapanpankou2, item.home, item.guest),
+    ...((item.platform?.handicapAlertRows ?? []) as StatRow[]),
   ]
 }
 
@@ -4746,169 +3138,10 @@ function expectedGoalRows(item: AnalysisMatch): StatRow[] {
     { label: '最近5场平均进球数', value: valueText(item.qiushutouzhu?.[2]) },
     { label: '最近5场平均丢球数', value: valueText(item.qiushutouzhu?.[3]) },
     { label: '压力方向', value: valueText(item.qiushutouzhu?.[6]) },
-    ...goalBalanceAlertRows(historyGoals, recentGoals, combinedGoals, item.qiushupankou1),
+    ...((item.platform?.goalBalanceAlertRows ?? []) as StatRow[]),
   ]
 }
 
-function goalBalanceAlertRows(historyValue: unknown, recentValue: unknown, combinedValue: unknown, openingLineValue: unknown): StatRow[] {
-  const baseline = 2.5
-  const highThreshold = 2.85
-  const lowThreshold = 2.15
-  const history = parseOptionalNumber(historyValue)
-  const recent = parseOptionalNumber(recentValue)
-  const combined = parseOptionalNumber(combinedValue)
-  const openingLine = parseOptionalNumber(openingLineValue)
-  const balanceValue = weightedAverage([
-    { value: history, weight: 0.2 },
-    { value: recent, weight: 0.35 },
-    { value: combined, weight: 0.3 },
-    { value: openingLine, weight: 0.15 },
-  ])
-
-  if (!Number.isFinite(balanceValue)) {
-    return [{
-      label: '2.5均衡警示',
-      value: '历史、近期、综合均值或初盘不足，暂按盘口变化观察大小球。',
-      tone: 'normal',
-    }]
-  }
-
-  const values = [history, recent, combined, openingLine].filter(Number.isFinite)
-  const highCount = values.filter((value) => value >= highThreshold).length
-  const lowCount = values.filter((value) => value <= lowThreshold).length
-  const rows: StatRow[] = [{
-    label: '2.5均衡值',
-    value: `测算${trimFixed(balanceValue, 2)}，中轴${trimFixed(baseline, 1)}`,
-    tone: 'normal',
-  }]
-  const missingSamples = [
-    Number.isFinite(history) ? '' : '历史样本',
-    Number.isFinite(recent) ? '' : '近期样本',
-  ].filter(Boolean)
-  if (missingSamples.length) {
-    rows.push({
-      label: '样本修正',
-      value: `${missingSamples.join('、')}不足，已从均衡计算中剔除，不按0球处理。`,
-      tone: 'normal',
-    })
-  }
-
-  if (balanceValue >= highThreshold || highCount >= 2) {
-    rows.push({
-      label: '回归小球警示',
-      value: `历史/近期/综合/初盘整体高于${trimFixed(baseline, 1)}，连续大球不可持续，优先防回落到小球。`,
-      tone: 'red',
-    })
-    if (Number.isFinite(openingLine) && openingLine <= baseline) {
-      rows.push({
-        label: '盘口隐藏提醒',
-        value: `均值偏大但初盘未抬高到${trimFixed(baseline, 1)}以上，说明盘口没有追大，回归小球信号更强。`,
-        tone: 'blue',
-      })
-    }
-    return rows
-  }
-
-  if (balanceValue <= lowThreshold || lowCount >= 2) {
-    rows.push({
-      label: '回归大球警示',
-      value: `历史/近期/综合/初盘整体低于${trimFixed(baseline, 1)}，连续小球不可持续，优先防反弹到大球。`,
-      tone: 'green',
-    })
-    if (Number.isFinite(openingLine) && openingLine >= baseline) {
-      rows.push({
-        label: '盘口修正提醒',
-        value: `均值偏小但初盘仍在${trimFixed(baseline, 1)}附近或以上，盘口可能已提前修正，防大球反弹。`,
-        tone: 'blue',
-      })
-    }
-    return rows
-  }
-
-  rows.push({
-    label: '均衡判断',
-    value: `当前没有明显超出阈值，大小球先按${trimFixed(baseline, 1)}上下平衡观察。`,
-    tone: 'normal',
-  })
-  return rows
-}
-
-function handicapPressureAlertRows(historyValue: unknown, recentValue: unknown, currentLineValue: unknown, home: string, guest: string): StatRow[] {
-  const history = parseOptionalNumber(historyValue)
-  const recent = parseOptionalNumber(recentValue)
-  const currentLine = parseOptionalNumber(currentLineValue)
-  if (![history, recent, currentLine].every(Number.isFinite)) {
-    return [{
-      label: '注意盘口',
-      value: '期望让球或即时盘暂缺，先按主客方向观察。',
-      tone: 'normal',
-    }]
-  }
-
-  const expectedLine = weightedAverage([
-    { value: history, weight: 0.45 },
-    { value: recent, weight: 0.55 },
-  ])
-  const currentDirection = handicapDirection(currentLine)
-  const expectedDirection = handicapDirection(expectedLine)
-  const currentAbs = Math.abs(currentLine)
-  const expectedAbs = Math.abs(expectedLine)
-  const rows: StatRow[] = []
-
-  rows.push({
-    label: '盘口方向',
-    value: handicapDirectionText(currentLine, home, guest),
-    tone: 'normal',
-  })
-
-  if (currentDirection !== 'level' && expectedDirection !== 'level' && currentDirection !== expectedDirection) {
-    rows.push({
-      label: '方向反转提醒',
-      value: `期望更偏${expectedDirection === 'home' ? home : guest}，但即时盘是${handicapDirectionText(currentLine, home, guest)}，需要防盘口方向反做。`,
-      tone: 'red',
-    })
-  } else if (currentDirection !== 'level' && currentAbs - expectedAbs >= 0.5) {
-    rows.push({
-      label: '重点提醒',
-      value: `${handicapDirectionText(currentLine, home, guest)}，比历史/近期期望${trimFixed(expectedAbs, 2)}更深，盘口过于明显，可能夸大强势方。`,
-      tone: 'blue',
-    })
-  } else if (expectedDirection !== 'level' && expectedAbs - currentAbs >= 0.5) {
-    rows.push({
-      label: '重点提醒',
-      value: `历史/近期期望约${trimFixed(expectedAbs, 2)}球，但即时盘只有${handicapDirectionText(currentLine, home, guest)}，盘口偏浅，可能故意隐藏强势方。`,
-      tone: 'blue',
-    })
-  } else {
-    rows.push({
-      label: '注意盘口',
-      value: '期望让球与即时盘没有明显偏离，继续结合盈亏和临场升降观察。',
-      tone: 'normal',
-    })
-  }
-
-  if (Math.min(Math.abs(history - currentLine), Math.abs(recent - currentLine)) > 0.75) {
-    rows.push({
-      label: '异常提示',
-      value: '期望让球与即时盘偏离超过0.75，注意盘口异常。',
-      tone: 'green',
-    })
-  }
-
-  return rows
-}
-
-function handicapDirection(value: number): 'home' | 'guest' | 'level' {
-  if (!Number.isFinite(value) || Math.abs(value) < 0.01) return 'level'
-  return value > 0 ? 'home' : 'guest'
-}
-
-function handicapDirectionText(value: number, home: string, guest: string): string {
-  if (!Number.isFinite(value) || Math.abs(value) < 0.01) return '平手盘'
-  const absolute = trimFixed(Math.abs(value), 2)
-  if (value > 0) return `${home}让${absolute}球`
-  return `${guest}让${absolute}球（${home}受让${absolute}球）`
-}
 
 function labeledRows(labels: string[], values: unknown[] | undefined): StatRow[] {
   return labels.map((label, index) => ({ label, value: valueText(values?.[index]) }))

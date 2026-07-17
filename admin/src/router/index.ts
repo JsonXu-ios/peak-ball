@@ -83,6 +83,12 @@ const routes: RouteRecordRaw[] = [
         component: () => import('@/views/statistics/MatchStatistics.vue'),
         meta: { title: '统计分析', icon: 'mdi-chart-box-outline' },
       },
+      {
+        path: 'statistics/recommendations',
+        name: 'SignalRecommendations',
+        component: () => import('@/views/statistics/SignalRecommendations.vue'),
+        meta: { title: '高价值信号推荐', icon: 'mdi-target' },
+      },
     ],
   },
   {

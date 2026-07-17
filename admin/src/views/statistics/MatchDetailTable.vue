@@ -2,8 +2,12 @@
 interface MatchDetail {
   match_id: string
   date: string
+  match_time?: string
+  league?: string
   home: string
   guest: string
+  home_logo?: string
+  guest_logo?: string
   home_score: number
   guest_score: number
   state: string
@@ -22,6 +26,16 @@ withDefaults(
   }>(),
   { showValue: false },
 )
+
+/** 库里存的是 /footballimg/<id> 相对路径（vite 已代理到前台API），http(s) 原样返回 */
+function logoSrc(path?: string): string {
+  if (!path) return ''
+  return path
+}
+
+function timeText(row: MatchDetail): string {
+  return row.match_time || row.date
+}
 </script>
 
 <template>
@@ -30,6 +44,7 @@ withDefaults(
       <thead>
         <tr>
           <th>时间</th>
+          <th>联赛</th>
           <th>主队</th>
           <th class="text-center">比分</th>
           <th>客队</th>
@@ -42,10 +57,25 @@ withDefaults(
       </thead>
       <tbody>
         <tr v-for="m in matches" :key="m.match_id">
-          <td class="text-no-wrap">{{ m.date }}</td>
-          <td class="font-weight-medium">{{ m.home }}</td>
+          <td class="text-no-wrap">{{ timeText(m) }}</td>
+          <td class="text-no-wrap league-cell">{{ m.league || '-' }}</td>
+          <td class="font-weight-medium">
+            <span class="team-cell">
+              <span class="team-logo">
+                <img v-if="logoSrc(m.home_logo)" :src="logoSrc(m.home_logo)" alt="" loading="lazy" @error="($event.target as HTMLImageElement).style.display = 'none'" />
+              </span>
+              {{ m.home }}
+            </span>
+          </td>
           <td class="text-center text-no-wrap">{{ m.home_score }} - {{ m.guest_score }}</td>
-          <td class="font-weight-medium">{{ m.guest }}</td>
+          <td class="font-weight-medium">
+            <span class="team-cell">
+              <span class="team-logo">
+                <img v-if="logoSrc(m.guest_logo)" :src="logoSrc(m.guest_logo)" alt="" loading="lazy" @error="($event.target as HTMLImageElement).style.display = 'none'" />
+              </span>
+              {{ m.guest }}
+            </span>
+          </td>
           <td class="text-medium-emphasis">{{ m.state }}</td>
           <td v-if="showValue" class="text-right">{{ Number(m.value ?? 0).toFixed(2) }}</td>
           <td>{{ m.pick || '-' }}</td>
@@ -82,5 +112,31 @@ withDefaults(
 .detail-table th.text-right,
 .detail-table td.text-right {
   text-align: right;
+}
+.team-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.team-logo {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: rgba(var(--v-border-color), 0.12);
+  overflow: hidden;
+}
+.team-logo img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+.league-cell {
+  max-width: 130px;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 </style>

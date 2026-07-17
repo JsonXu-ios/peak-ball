@@ -7,27 +7,32 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"go_admin/database"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
+	gormlogger "gorm.io/gorm/logger"
 )
 
-// GetMatchStatistics calculates the base accuracy report from every settled match.
-// It deliberately reads the crawler tables directly: this report is not limited to
-// sporttery matches and can be used as the stable foundation for later filters.
-func GetMatchStatistics(c *gin.Context) {
-	start, end, err := statisticsDateRange(c.Query("start_date"), c.Query("end_date"))
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "日期格式应为 YYYY-MM-DD"})
-		return
-	}
+// statisticsDB returns a session with SQL logging disabled. The statistics
+// queries carry `IN (...~2000 ids...)` clauses; logging them floods stdout
+// (and freezes the IDE debug console) for no benefit.
+func statisticsDB() *gorm.DB {
+	return database.DB.Session(&gorm.Session{Logger: gormlogger.Discard})
+}
 
+// statisticsRecomputeMu serializes the heavy full-table recomputes so stacked
+// refresh clicks cannot pile up concurrent multi-hundred-MB computations.
+var statisticsRecomputeMu sync.Mutex
+
+// computeMatchStatistics builds the full report for the given date range.
+func computeMatchStatistics(start, end string) (gin.H, error) {
 	var rawMatches []map[string]interface{}
-	if err := database.DB.Table("moneys").Find(&rawMatches).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
+	if err := statisticsDB().Table("moneys").Find(&rawMatches).Error; err != nil {
+		return nil, err
 	}
 	matches := make([]statisticsMatch, 0, len(rawMatches))
 	ids := make([]string, 0, len(rawMatches))
@@ -44,16 +49,86 @@ func GetMatchStatistics(c *gin.Context) {
 	pankouByMatch := loadStatisticsRows("pankou_moneys", ids)
 	oddsByMatch := loadStatisticsRows("odds_moneys", ids)
 	report := buildMatchStatistics(matches, historyByMatch, pankouByMatch, oddsByMatch)
+	if signals, ok := report["signals"].([]gin.H); ok {
+		pickSignals, pickProfile := buildPickSignals(matches, loadUserPicks(ids), historyByMatch, pankouByMatch, oddsByMatch)
+		signals = append(signals, buildWarningSignals(matches, historyByMatch, pankouByMatch, oddsByMatch))
+		signals = append(signals, buildDeviationSignals(matches, historyByMatch, pankouByMatch))
+		signals = append(signals, buildChaseSignals(matches, historyByMatch, pankouByMatch))
+		report["signals"] = append(signals, pickSignals...)
+		report["pick_profile"] = pickProfile
+	}
 	report["start_date"] = start
 	report["end_date"] = end
 	report["generated_at"] = time.Now().Format(time.RFC3339)
-	c.JSON(http.StatusOK, report)
+	report["needs_recompute"] = false
+	return report, nil
+}
+
+// GetMatchStatistics serves the base accuracy report. The default (no date
+// range) view is MANUALLY computed: refresh=1 recomputes and persists to
+// stat_snapshots; plain loads read the stored snapshot. Explicit date ranges
+// still compute live (they are ad-hoc queries and are not cached).
+func GetMatchStatistics(c *gin.Context) {
+	start, end, err := statisticsDateRange(c.Query("start_date"), c.Query("end_date"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "日期格式应为 YYYY-MM-DD"})
+		return
+	}
+
+	// Ad-hoc date range: compute live, never touches the snapshot.
+	if start != "" || end != "" {
+		if !statisticsRecomputeMu.TryLock() {
+			c.JSON(http.StatusConflict, gin.H{"error": "统计计算正在进行中，请稍候再试"})
+			return
+		}
+		report, err := computeMatchStatistics(start, end)
+		statisticsRecomputeMu.Unlock()
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, report)
+		return
+	}
+
+	if c.Query("refresh") == "1" {
+		if !statisticsRecomputeMu.TryLock() {
+			c.JSON(http.StatusConflict, gin.H{"error": "重算正在进行中，请稍候再试"})
+			return
+		}
+		defer statisticsRecomputeMu.Unlock()
+		report, err := computeMatchStatistics("", "")
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		payload, err := json.Marshal(report)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		if err := saveStatSnapshot(snapshotKindMatchStatistics, payload, time.Now()); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		c.Data(http.StatusOK, "application/json; charset=utf-8", payload)
+		return
+	}
+
+	if payload, _, ok := loadStatSnapshot(snapshotKindMatchStatistics); ok {
+		c.Data(http.StatusOK, "application/json; charset=utf-8", payload)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"needs_recompute": true, "settled_total": 0, "signals": []gin.H{}})
 }
 
 type statisticsMatch struct {
 	ID, Date, Home, Guest string
 	HomeScore, GuestScore int
 	State                 string
+	League                string
+	MatchTime             string
+	HomeLogo, GuestLogo   string
 	Settled               bool
 }
 
@@ -81,8 +156,12 @@ var statisticsHeatTiers = []int{90, 85, 80, 75, 70, 65, 60}
 type statisticsDetail struct {
 	MatchID    string  `json:"match_id"`
 	Date       string  `json:"date"`
+	MatchTime  string  `json:"match_time"`
+	League     string  `json:"league"`
 	Home       string  `json:"home"`
 	Guest      string  `json:"guest"`
+	HomeLogo   string  `json:"home_logo"`
+	GuestLogo  string  `json:"guest_logo"`
 	HomeScore  int     `json:"home_score"`
 	GuestScore int     `json:"guest_score"`
 	State      string  `json:"state"`
@@ -149,11 +228,9 @@ func buildMatchStatistics(matches []statisticsMatch, histories, pankous, odds ma
 // matched, how many it got right, and the full drill-down list.
 func buildSignalStatistics(matches []statisticsMatch, histories, pankous, odds map[string]map[string]interface{}) gin.H {
 	asianHeat := map[int]*statisticsSignal{}
-	asianHeatAlt := map[int]*statisticsSignal{}
 	goalsHeat := map[int]*statisticsSignal{}
 	for _, tier := range statisticsHeatTiers {
 		asianHeat[tier] = &statisticsSignal{}
-		asianHeatAlt[tier] = &statisticsSignal{}
 		goalsHeat[tier] = &statisticsSignal{}
 	}
 	proSignal := &statisticsSignal{}
@@ -171,7 +248,7 @@ func buildSignalStatistics(matches []statisticsMatch, histories, pankous, odds m
 		history := histories[match.ID]
 		pankou := pankous[match.ID]
 		oddsRow := odds[match.ID]
-		ahLine, hasAH := statisticsPankouLine(pankou, "bet365_asia", "asia_data")
+		ahFirstLine, ahLine, hasAH := statisticsPankouLinePair(pankou, "bet365_asia", "asia_data")
 		ouLine, hasOU := statisticsPankouLine(pankou, "bet365_dxq", "dxq_data")
 		against, homeRecent, guestRecent := statisticsHistory(history)
 		historyDiff, historyGoals, hasHistory := statisticsHeadToHead(match, against)
@@ -181,15 +258,12 @@ func buildSignalStatistics(matches []statisticsMatch, histories, pankous, odds m
 		recentGoals, hasRecentGoals := statisticsRecentGoals(homeRecent, guestRecent)
 		probabilities := statisticsProbabilities(oddsRow)
 
-		// 1a / 1c. Asian betting heat, bucketed into a single (non-overlapping) tier.
-		// Two lenses are recorded from the same inputs so their distributions can be
-		// compared: the original nudge-off-50 formula and the wider prob-lean lens.
+		// 1a. Asian betting heat, bucketed into a single (non-overlapping) tier.
+		// Identical to the frontend pressurePair, including the line-movement term.
 		if hasAH && len(probabilities) == 3 {
 			if correct, valid := statisticsAsianCorrect(match, ahLine); valid {
 				statisticsFileAsianHeat(asianHeat, match, correct,
-					statisticsAsianHeat(probabilities[0], probabilities[2], ahLine))
-				statisticsFileAsianHeat(asianHeatAlt, match, correct,
-					statisticsAsianHeatAlt(probabilities[0], probabilities[2], ahLine))
+					statisticsAsianHeat(probabilities[0], probabilities[2], ahFirstLine, ahLine))
 			}
 		}
 		// 1b. Over/under betting heat, same bucketing.
@@ -290,8 +364,7 @@ func buildSignalStatistics(matches []statisticsMatch, histories, pankous, odds m
 	return gin.H{
 		"settled_total": len(matches),
 		"signals": []gin.H{
-			statisticsHeatPayload("asian_heat", "1a. 亚盘投注热度分档（改良份额法）", "热度=平衡点 + (主队胜负份额-50)×1.4 - 让球线×8；份额系数由0.45提到1.4，使强弱分明的盘口扩散到高档。命中=热度方向赢盘。", asianHeat),
-			statisticsHeatPayload("asian_heat_alt", "1c. 亚盘投注热度分档（备选概率差法）", "另一视角：热度=50 + (主胜率-客胜率)×0.95 - 让球线×7；直接用胜负概率差，分布更宽。命中=热度方向赢盘。", asianHeatAlt),
+			statisticsHeatPayload("asian_heat", "1a. 亚盘投注热度分档（与前端一致）", "热度=平衡点 + (主队胜负份额-50)×1.4 - 即时盘×8 - 盘口移动×1.5，与前端 pressurePair 完全一致；盘口移动项是扩散到高档的主因。命中=热度方向赢盘。", asianHeat),
 			statisticsHeatPayload("goals_heat", "1b. 大小球投注热度分档", "按大小球投注热度(大/小压力较大值)分档，档位不重合、从高到低；命中=大/小方向正确。", goalsHeat),
 			proSignal.payload("pro_signal", "2. 专业信号（凯利×体彩同向）", "凯利与体彩参考同时给出且方向一致时纳入；实际赛果落在其中即命中。"),
 			tradeComfort.payload("trade_comfort", "3. 交易盈亏同向（庄家舒服）", "仅体彩比赛；胜平负交易盈亏与让球交易盈亏最舒服方向一致且均为庄家盈利；命中=该方向即实际赛果。"),
@@ -309,7 +382,8 @@ func buildSignalStatistics(matches []statisticsMatch, histories, pankous, odds m
 
 func statisticsBaseDetail(match statisticsMatch) statisticsDetail {
 	return statisticsDetail{
-		MatchID: match.ID, Date: match.Date, Home: match.Home, Guest: match.Guest,
+		MatchID: match.ID, Date: match.Date, MatchTime: match.MatchTime, League: match.League,
+		Home: match.Home, Guest: match.Guest, HomeLogo: match.HomeLogo, GuestLogo: match.GuestLogo,
 		HomeScore: match.HomeScore, GuestScore: match.GuestScore, State: match.State,
 	}
 }
@@ -476,7 +550,7 @@ func loadStatisticsRows(table string, ids []string) map[string]map[string]interf
 		return result
 	}
 	var rows []map[string]interface{}
-	if database.DB.Table(table).Where("match_id IN ?", ids).Find(&rows).Error != nil {
+	if statisticsDB().Table(table).Where("match_id IN ?", ids).Find(&rows).Error != nil {
 		return result
 	}
 	for _, row := range rows {
@@ -485,6 +559,18 @@ func loadStatisticsRows(table string, ids []string) map[string]map[string]interf
 		}
 	}
 	return result
+}
+
+// statisticsDateTime formats a raw match_time as "2006-01-02 15:04".
+func statisticsDateTime(value interface{}) string {
+	if typed, ok := value.(time.Time); ok {
+		return typed.Format("2006-01-02 15:04")
+	}
+	text := statisticsText(value)
+	if len(text) >= 16 {
+		return strings.ReplaceAll(text[:16], "T", " ")
+	}
+	return text
 }
 
 func parseStatisticsMatch(row map[string]interface{}) statisticsMatch {
@@ -497,7 +583,20 @@ func parseStatisticsMatch(row map[string]interface{}) statisticsMatch {
 	if strings.TrimSpace(state) == "" {
 		state = "完赛"
 	}
-	return statisticsMatch{ID: statisticsText(statisticsValue(row, "match_id", "matchId")), Date: statisticsDate(statisticsValue(row, "date", "match_time", "matchTime")), Home: statisticsText(statisticsValue(row, "home")), Guest: statisticsText(statisticsValue(row, "guest")), HomeScore: int(statisticsNumber(statisticsValue(row, "home_score", "homeScore"))), GuestScore: int(statisticsNumber(statisticsValue(row, "guest_score", "guestScore"))), State: state, Settled: strings.Contains(display, "完") || strings.Contains(status, "完") || strings.EqualFold(status, "finished") || statisticsNumber(statisticsValue(row, "status", "match_state", "matchState")) >= 4}
+	return statisticsMatch{
+		ID:         statisticsText(statisticsValue(row, "match_id", "matchId")),
+		Date:       statisticsDate(statisticsValue(row, "date", "match_time", "matchTime")),
+		Home:       statisticsText(statisticsValue(row, "home")),
+		Guest:      statisticsText(statisticsValue(row, "guest")),
+		HomeScore:  int(statisticsNumber(statisticsValue(row, "home_score", "homeScore"))),
+		GuestScore: int(statisticsNumber(statisticsValue(row, "guest_score", "guestScore"))),
+		State:      state,
+		League:     statisticsText(statisticsValue(row, "league", "league_name", "leagueName")),
+		MatchTime:  statisticsDateTime(statisticsValue(row, "match_time", "matchTime")),
+		HomeLogo:   statisticsText(statisticsValue(row, "home_logo", "homeLogo")),
+		GuestLogo:  statisticsText(statisticsValue(row, "guest_logo", "guestLogo")),
+		Settled:    strings.Contains(display, "完") || strings.Contains(status, "完") || strings.EqualFold(status, "finished") || statisticsNumber(statisticsValue(row, "status", "match_state", "matchState")) >= 4,
+	}
 }
 
 func statisticsDateRange(start, end string) (string, string, error) {
@@ -678,6 +777,48 @@ func statisticsPankouLine(row map[string]interface{}, preferred, rowsKey string)
 	return 0, false
 }
 
+// statisticsPankouLinePair resolves both the opening line (firstPankou/初盘) and
+// the current line (pankou/即时盘) from the same company row, using the same
+// company-selection priority as statisticsPankouLine. It lets the Asian heat
+// include the frontend's line-movement term. When firstPankou is missing it
+// falls back to the current line (movement = 0).
+func statisticsPankouLinePair(row map[string]interface{}, preferred, rowsKey string) (float64, float64, bool) {
+	read := func(item map[string]interface{}) (float64, float64, bool) {
+		current, ok := statisticsLine(statisticsText(statisticsValue(item, "pankou", "firstPankou", "first_pankou")))
+		if !ok {
+			return 0, 0, false
+		}
+		first, ok := statisticsLine(statisticsText(statisticsValue(item, "firstPankou", "first_pankou")))
+		if !ok {
+			first = current
+		}
+		return first, current, true
+	}
+	if item, ok := statisticsJSON(statisticsValue(row, preferred)).(map[string]interface{}); ok {
+		if first, current, ok := read(item); ok {
+			return first, current, true
+		}
+	}
+	items := statisticsPankouRows(row, rowsKey)
+	for _, value := range items {
+		item, ok := value.(map[string]interface{})
+		if !ok || int(statisticsNumber(statisticsValue(item, "companyId", "company_id"))) != 8 {
+			continue
+		}
+		if first, current, ok := read(item); ok {
+			return first, current, true
+		}
+	}
+	for _, value := range items {
+		if item, ok := value.(map[string]interface{}); ok {
+			if first, current, ok := read(item); ok {
+				return first, current, true
+			}
+		}
+	}
+	return 0, 0, false
+}
+
 // statisticsPankouTerms maps the Chinese handicap wording to its numeric line.
 // Both 二/两 spellings are included because the crawler stores 二球 for O/U while
 // Asian lines use 两球; combined quarter lines (含「/」) fall back to averaging the
@@ -799,32 +940,24 @@ func statisticsProbabilities(row map[string]interface{}) []float64 {
 	total := 1/avg[0] + 1/avg[1] + 1/avg[2]
 	return []float64{100 / avg[0] / total, 100 / avg[1] / total, 100 / avg[2] / total}
 }
-func statisticsAsianHeat(home, away, line float64) float64 {
+// statisticsAsianHeat mirrors the frontend pressurePair exactly:
+// balance + share-strength - handicap cost - line-movement cost. The 1.4 share
+// coefficient (up from the original 0.45) and the line-movement term are both
+// needed to spread the heat into the high tiers — the movement term is in fact
+// the dominant driver, since a line that has moved marks a hot side.
+func statisticsAsianHeat(home, away, firstLine, currentLine float64) float64 {
 	base := 50.0
 	if home+away > 0 {
 		base = home / (home + away) * 100
 	}
 	balance := 50.0
-	if line > 0 {
+	if currentLine > 0 {
 		balance = 55
-	} else if line < 0 {
+	} else if currentLine < 0 {
 		balance = 45
 	}
-	// The share-based strength (base-50) is compressed by the /(home+away)
-	// normalisation, so the original *.45 kept heat pinned near 50 and it never
-	// reached the high tiers. 1.4 restores a usable spread while keeping the same
-	// balance + share-strength + line structure.
-	return statisticsClamp(balance+(base-50)*1.4-line*8, 0, 100)
-}
-
-// statisticsAsianHeatAlt is an alternative, more aggressive heat lens for the
-// Asian market. Instead of nudging off 50, it reads the raw win-vs-lose
-// probability lean (which spreads far more widely than the original formula)
-// and tempers it by the current handicap: giving a deep line (line>0) makes the
-// favourite's cover less certain, receiving one (line<0) makes it more certain.
-// The returned value is the home-cover confidence in [0,100].
-func statisticsAsianHeatAlt(home, away, line float64) float64 {
-	return statisticsClamp(50+(home-away)*0.95-line*7, 0, 100)
+	movement := (currentLine - firstLine) / 0.25 * 1.5
+	return statisticsClamp(balance+(base-50)*1.4-currentLine*8-movement, 0, 100)
 }
 
 func statisticsKellySportteryChoices(row map[string]interface{}) map[string]bool {
@@ -903,7 +1036,16 @@ func statisticsSportteryOdds(value interface{}) []float64 {
 	return odds
 }
 func statisticsOddsRows(row map[string]interface{}) []map[string]interface{} {
-	items, _ := statisticsJSON(statisticsValue(row, "data")).([]interface{})
+	value := statisticsJSON(statisticsValue(row, "data"))
+	items, ok := value.([]interface{})
+	if !ok {
+		// Most rows store the odds as {"odds":[...]} rather than a bare array,
+		// same as the frontend euroOddsRows fallback. Unwrap the "odds" key so the
+		// average-odds / Kelly paths cover those matches instead of dropping them.
+		if obj, isObj := value.(map[string]interface{}); isObj {
+			items, _ = statisticsJSON(obj["odds"]).([]interface{})
+		}
+	}
 	result := make([]map[string]interface{}, 0, len(items))
 	for _, value := range items {
 		if item, ok := value.(map[string]interface{}); ok {

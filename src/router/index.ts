@@ -14,6 +14,11 @@ const router = createRouter({
       component: () => import('../views/match/MatchListHome.vue')
     },
     {
+      path: '/picks',
+      name: 'pick-entry',
+      component: () => import('../views/picks/PickEntryView.vue')
+    },
+    {
       path: '/dashboard',
       name: 'dashboard',
       component: () => import('../views/dashboard/DashboardView.vue')

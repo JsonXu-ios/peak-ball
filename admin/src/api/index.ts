@@ -137,5 +137,10 @@ export const getDashboardStats = () =>
   api.get('/admin/dashboard/stats')
 
 // ---- Match Statistics ----
-export const getMatchStatistics = (params?: { start_date?: string; end_date?: string }) =>
-  api.get('/admin/statistics/matches', { params })
+// 重算是全量结算，比普通请求慢，单独放宽超时时间。
+export const getMatchStatistics = (params?: { start_date?: string; end_date?: string; refresh?: number }) =>
+  api.get('/admin/statistics/matches', { params, timeout: 300000 })
+
+// ---- Signal Recommendations（高价值信号推荐）----
+export const getSignalRecommendations = (params?: { days?: number; refresh?: number }) =>
+  api.get('/admin/statistics/recommendations', { params, timeout: 300000 })

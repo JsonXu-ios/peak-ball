@@ -51,5 +51,6 @@ func AutoMigrate() error {
 		&models.OperationLog{},
 		&models.CrawlerTask{},
 		&models.CrawlerLog{},
+		&models.StatSnapshot{},
 	)
 }

@@ -2,21 +2,14 @@
   "version": "0.2.0",
   "configurations": [
     {
-      "name": "1. 启动前台 H5",
-      "type": "node-terminal",
-      "request": "launch",
-      "command": "npm run build && npm run preview -- --host 0.0.0.0 --port 5173 --strictPort",
-      "cwd": "${workspaceFolder}"
-    },
-    {
-      "name": "1.1 启动前台 H5（dev）",
+      "name": "1. 启动前台 H5（dev 热更新）",
       "type": "node-terminal",
       "request": "launch",
       "command": "npm run dev",
       "cwd": "${workspaceFolder}"
     },
     {
-      "name": "2. 启动管理后台",
+      "name": "2. 启动管理后台（dev 热更新）",
       "type": "node-terminal",
       "request": "launch",
       "command": "npm run dev",
@@ -57,8 +50,8 @@
     {
       "name": "5. 启动全部",
       "configurations": [
-        "1.1 启动前台 H5（dev）",
-        "2. 启动管理后台",
+        "1. 启动前台 H5（dev 热更新）",
+        "2. 启动管理后台（dev 热更新）",
         "3. 启动前台 API",
         "4. 启动管理 API"
       ],

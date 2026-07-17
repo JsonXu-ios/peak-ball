@@ -184,6 +184,8 @@ type analysisMatchResponse struct {
 
 	Detail        analysisDetailResponse        `json:"detail"`
 	RoiSimulation *matchRoiSimulationResponse   `json:"roiSimulation,omitempty"`
+	Platform      *platformDecision             `json:"platform,omitempty"`
+	MyAngle       *myAngleBlock                 `json:"myAngle,omitempty"`
 	TeamProfiles  *analysisTeamProfilesResponse `json:"teamProfiles,omitempty"`
 	GoddessWoman  *goddessWomanResponse         `json:"goddessWoman,omitempty"`
 
@@ -279,6 +281,8 @@ func GetAnalysisMatches(c *gin.Context) {
 	for _, match := range matches {
 		items = append(items, buildAnalysisWithWeights(match, false))
 	}
+	// 我的镜像：把库主历史选择在同类盘型下的红黑表现附到每场比赛。
+	attachMyAngle(items)
 
 	c.JSON(http.StatusOK, items)
 }
@@ -341,6 +345,9 @@ func analysisRuleSnapshotCandidates() []string {
 func buildAnalysisWithWeights(match models.Money, fetchSporttery bool) analysisMatchResponse {
 	response := buildAnalysis(match, fetchSporttery)
 	attachAnalysisWeights(&response)
+	// The unified decision block replaces every recommendation/warning the H5
+	// frontend used to compute locally; it must run after the ROI markets exist.
+	response.Platform = buildPlatformDecision(&response)
 	return response
 }
 
