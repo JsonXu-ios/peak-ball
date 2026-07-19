@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import matchApi from '@/api/match'
-import type { Match, MatchHistory, MatchOddsEuro, MatchOddsPankou } from '@/types/match'
+import type { Match, MatchHistory, MatchInsight, MatchOddsEuro, MatchOddsPankou } from '@/types/match'
 
 function getLocalDateString(date = new Date()): string {
   const year = date.getFullYear()
@@ -17,6 +17,7 @@ export const useMatchStore = defineStore('match', () => {
   const currentHistory = ref<MatchHistory | null>(null)
   const currentOddsEuro = ref<MatchOddsEuro | null>(null)
   const currentOddsPankou = ref<MatchOddsPankou | null>(null)
+  const currentInsight = ref<MatchInsight | null>(null)
   const loading = ref(false)
   const error = ref<string | null>(null)
   const selectedDate = ref<string>(getLocalDateString())
@@ -81,7 +82,17 @@ export const useMatchStore = defineStore('match', () => {
     }
   }
 
-  /** 获取比赛全部数据（详情 + 历史 + 赔率） */
+  /** 获取详情页分析结论（后端计算，前端只展示） */
+  async function fetchInsight(id: string) {
+    try {
+      const res = await matchApi.getMatchInsight(id)
+      currentInsight.value = res.data
+    } catch (e: any) {
+      console.error('获取分析结论失败', e)
+    }
+  }
+
+  /** 获取比赛全部数据（详情 + 历史 + 赔率 + 分析结论） */
   async function fetchMatchAll(id: string) {
     loading.value = true
     error.value = null
@@ -91,6 +102,7 @@ export const useMatchStore = defineStore('match', () => {
         fetchHistory(id),
         fetchOddsEuro(id),
         fetchOddsPankou(id),
+        fetchInsight(id),
       ])
     } catch (e: any) {
       error.value = e.message ?? '获取数据失败'
@@ -105,6 +117,7 @@ export const useMatchStore = defineStore('match', () => {
     currentHistory.value = null
     currentOddsEuro.value = null
     currentOddsPankou.value = null
+    currentInsight.value = null
   }
 
   return {
@@ -113,6 +126,7 @@ export const useMatchStore = defineStore('match', () => {
     currentHistory,
     currentOddsEuro,
     currentOddsPankou,
+    currentInsight,
     loading,
     error,
     selectedDate,
@@ -121,6 +135,7 @@ export const useMatchStore = defineStore('match', () => {
     fetchHistory,
     fetchOddsEuro,
     fetchOddsPankou,
+    fetchInsight,
     fetchMatchAll,
     resetCurrent,
   }

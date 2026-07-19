@@ -1,5 +1,5 @@
 import apiClient from './request'
-import type { Match, MatchHistory, MatchOddsEuro, MatchOddsPankou } from '@/types/match'
+import type { Match, MatchHistory, MatchInsight, MatchOddsEuro, MatchOddsPankou } from '@/types/match'
 
 export default {
   /** 获取比赛列表，可按日期筛选 */
@@ -26,5 +26,10 @@ export default {
   /** 获取亚盘/大小球数据 */
   getMatchOddsPankou(id: string) {
     return apiClient.get<MatchOddsPankou>(`/match/${id}/odds/pankou`)
+  },
+
+  /** 获取详情页分析结论（概率/信心/近况/交锋，全部由后端计算） */
+  getMatchInsight(id: string) {
+    return apiClient.get<MatchInsight>(`/match/${id}/insight`)
   },
 }

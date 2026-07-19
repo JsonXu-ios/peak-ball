@@ -110,6 +110,8 @@ type bookmakerMarketResponse struct {
 	PsychologyErrorLabel string                     `json:"psychologyErrorLabel,omitempty"`
 	BettingRatio         []bookmakerOutcomeResponse `json:"bettingRatio,omitempty"`
 	BookmakerByOutcome   []bookmakerOutcomeResponse `json:"bookmakerByOutcome"`
+	Simulated            bool                       `json:"simulated,omitempty"`
+	SimulationNote       string                     `json:"simulationNote,omitempty"`
 }
 
 type matchRoiSimulationResponse struct {
@@ -127,7 +129,7 @@ func attachAnalysisWeights(response *analysisMatchResponse) {
 	response.RoiSimulation = &matchRoiSimulationResponse{
 		TotalStake:         bookmakerTotalStake,
 		RetailDistribution: directionValuesFromArray(retailDistribution),
-		Markets:            buildBookmakerMarkets(response.bookmakerOdds, retailDistribution, retailAvailable, response.sportteryTrade),
+		Markets:            buildBookmakerMarkets(response, retailDistribution, retailAvailable),
 	}
 }
 
@@ -148,29 +150,70 @@ func sanhuDistribution(response analysisMatchResponse) ([3]float64, bool) {
 	return percentValues(values)
 }
 
-func buildBookmakerMarkets(sources []bookmakerOddsSource, retailDistribution [3]float64, retailAvailable bool, trade sportteryTradeData) []bookmakerMarketResponse {
+func buildBookmakerMarkets(response *analysisMatchResponse, retailDistribution [3]float64, retailAvailable bool) []bookmakerMarketResponse {
+	sources := response.bookmakerOdds
+	trade := response.sportteryTrade
 	items := make([]bookmakerMarketResponse, 0, len(sources)+1)
 	for _, source := range sources {
 		marketDistribution := retailDistribution
 		marketRetailAvailable := retailAvailable
+		marketSimulated := false
 		if source.Key == "sporttery" {
 			if distribution, ok := sportterySpfDistribution(trade); ok {
 				marketDistribution = distribution
 				marketRetailAvailable = true
+			}
+			// 非竞彩比赛没有官方指数：用平均欧赔模拟竞彩指数，让盈亏测算不缺位。
+			if !oddsAvailable(source.Odds) {
+				if simulatedOdds, ok := simulatedSportteryOdds(response); ok {
+					source.Odds = simulatedOdds
+					source.Name = "竞彩模拟"
+					marketSimulated = true
+				}
 			}
 		}
 
 		market := buildBookmakerMarket(source, marketDistribution, marketRetailAvailable)
 		if source.Key == "sporttery" {
 			decorateSportterySpfMarket(&market, trade)
+			if marketSimulated {
+				market.Simulated = true
+				market.SimulationNote = "模拟数据：指数由平均欧赔按竞彩返还率折算，投注分布来自加权散户心理（亚盘/大小球/历史/近况/均值修正+羊群放大），非竞彩官方数据"
+				// 投注比例和心理误差只来自竞彩官方，模拟盘清空避免误读。
+				market.BettingRatio = nil
+				market.PsychologyError = nil
+				market.PsychologyErrorLabel = ""
+			}
+			// 官方冷热指数缺失时（非竞彩比赛），回退到本地模拟冷热指数。
+			if hotCold, ok := simulatedHotColdIndexes(response); ok {
+				if applySimulatedHotCold(&market, hotCold) && market.SimulationNote == "" {
+					market.SimulationNote = "冷热指数为本地模拟（欧赔降幅+亚盘热度推算），非竞彩官方数据"
+				}
+			}
 		}
 		items = append(items, market)
 
 		if source.Key != "sporttery" {
 			continue
 		}
+
+		// 竞彩比赛官方盘之外再并排输出一份模拟盘（独立 key，不参与警示/舒服项计算），
+		// 用于对比模拟算法与真实竞彩数据的差距。
+		if !marketSimulated {
+			if simMarket, ok := buildSimulatedSpfCompareMarket(response, &market); ok {
+				items = append(items, simMarket)
+			}
+		}
+
 		if rqspfMarket, ok := buildSportteryRqspfMarket(trade); ok {
 			items = append(items, rqspfMarket)
+			if simRqspf, ok := buildSimulatedRqspfMarket(response); ok {
+				decorateSimulatedRqspfCompare(&simRqspf, &rqspfMarket, trade)
+				items = append(items, simRqspf)
+			}
+		} else if simulatedRqspf, ok := buildSimulatedRqspfMarket(response); ok {
+			// 非竞彩比赛：按亚盘规律模拟竞彩让球盘（让1/2/3球）并结算盈亏。
+			items = append(items, simulatedRqspf)
 		}
 	}
 	return items

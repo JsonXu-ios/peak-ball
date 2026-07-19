@@ -1,9 +1,10 @@
 import apiClient from './request'
-import type { AnalysisMatch } from '@/types/analysis'
+import type { AccuracyStatsSummary, AnalysisMatch } from '@/types/analysis'
 
 export interface AnalysisQueryParams {
   date?: string
   scope?: 'sporttery' | 'all'
+  league?: string
 }
 
 export interface AnalysisRuleSnapshot {
@@ -39,5 +40,10 @@ export default {
 
   getAnalysisDetail(matchId: string, params?: AnalysisQueryParams) {
     return apiClient.get<AnalysisMatch>(`/analysis/match/${matchId}`, { params: params || {} })
+  },
+
+  /** 命中率统计页数据：全部由后端计算 */
+  getAccuracyStats(params?: AnalysisQueryParams) {
+    return apiClient.get<AccuracyStatsSummary>('/analysis/accuracy-stats', { params: params || {} })
   },
 }

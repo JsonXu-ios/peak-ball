@@ -167,7 +167,7 @@
             <div class="grid grid-cols-2 gap-x-4 gap-y-1 font-bold text-slate-600">
               <span>历史期望让球：{{ pairPart(item.changguiyapan, 0) }}</span>
               <span>近期状态让球：{{ pairPart(item.changguiyapan, 1) }}</span>
-              <span>综合均值：{{ pairAverage(item.changguiyapan) }}</span>
+              <span>综合均值：{{ averageText(item.combinedHandicapAverage) }}</span>
               <span>亚盘 初/即：{{ lineText(item.yapanpankou1) }}/{{ lineText(item.yapanpankou2) }}</span>
               <span>投注主队比例：{{ heatText(item.yapantouzhu?.[0]) }}</span>
               <span>投注客队比例：{{ heatText(item.yapantouzhu?.[1]) }}</span>
@@ -186,7 +186,7 @@
             <div class="grid grid-cols-2 gap-x-4 gap-y-1 font-bold text-slate-600">
               <span>历史平均球数：{{ pairPart(item.changguiqiushu, 0) }}</span>
               <span>近期平均球数：{{ pairPart(item.changguiqiushu, 1) }}</span>
-              <span>综合均值：{{ pairAverage(item.changguiqiushu) }}</span>
+              <span>综合均值：{{ averageText(item.combinedGoalAverage) }}</span>
               <span>大小球 初/即：{{ lineText(item.qiushupankou1) }}/{{ lineText(item.qiushupankou2) }}</span>
               <span>投注大球比例：{{ heatText(item.qiushutouzhu?.[0]) }}</span>
               <span>投注小球比例：{{ heatText(item.qiushutouzhu?.[1]) }}</span>
@@ -576,10 +576,10 @@ function pairPart(value: string, index: number): string {
   return parts[index]?.trim() || '-'
 }
 
-function pairAverage(value: string): string {
-  const parts = String(value || '').split(':').map((part) => Number.parseFloat(part))
-  if (parts.length < 2 || parts.some((part) => Number.isNaN(part))) return '-'
-  return ((parts[0] + parts[1]) / 2).toFixed(2)
+// 综合均值由后端计算（null = 样本不足），这里只格式化。
+function averageText(value: number | null | undefined): string {
+  if (value === null || value === undefined || !Number.isFinite(value)) return '-'
+  return value.toFixed(2)
 }
 
 function outcomeLabel(outcome: 'home' | 'draw' | 'away', item: AnalysisMatch): string {
@@ -638,7 +638,7 @@ function recentMini(value: unknown[] | undefined): string {
 }
 
 function tradeMarkets(item: PickEntryMatch): BookmakerMarket[] {
-  return (item.roiSimulation?.markets ?? []).filter((market) => market.key === 'sporttery' || market.key === 'sportteryRqspf')
+  return (item.roiSimulation?.markets ?? []).filter((market) => ['sporttery', 'sportterySim', 'sportteryRqspf', 'sportteryRqspfSim'].includes(market.key))
 }
 
 function rqspfGoal(item: AnalysisMatch): string {

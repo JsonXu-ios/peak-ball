@@ -269,147 +269,29 @@ const activeTab = ref('Analysis')
 const matchId = computed(() => route.params.id as string)
 const match = computed(() => matchStore.currentMatch)
 const history = computed(() => matchStore.currentHistory)
-const oddsEuro = computed(() => matchStore.currentOddsEuro)
+const insight = computed(() => matchStore.currentInsight)
 const loading = computed(() => matchStore.loading)
 
-function parseOddsValue(value: string | undefined): number {
-  if (!value) return 0
-  return parseFloat(value) || 0
-}
-
-const averageOdds = computed(() => {
-  if (oddsEuro.value?.avgOdds?.odds?.length) {
-    return oddsEuro.value.avgOdds
-  }
-
-  const odds = oddsEuro.value?.data ?? []
-  const sums = [0, 0, 0]
-  const counts = [0, 0, 0]
-
-  for (const odd of odds) {
-    if (!odd.odds?.length) continue
-
-    for (let index = 0; index < 3; index += 1) {
-      const value = parseOddsValue(odd.odds[index])
-      if (value <= 0) continue
-
-      sums[index] += value
-      counts[index] += 1
-    }
-  }
-
-  if (counts.some((count) => count === 0)) {
-    return null
-  }
-
-  return {
-    companyId: 'average',
-    companyName: '平均欧赔',
-    odds: sums.map((sum, index) => (sum / counts[index]).toFixed(2)),
-    firstOdds: [],
-    returnRatio: '',
-    firstReturnRatio: '',
-    ratio: [],
-    firstRatio: [],
-    oddsTrend: [],
-    ratioTrend: [],
-    firstKelly: null,
-    kelly: null,
-  }
-})
-
-/** 从欧赔算出胜平负概率 */
-const homeWinPct = computed(() => {
-  const avg = averageOdds.value
-  if (!avg?.odds?.length) return 33
-  const h = parseOddsValue(avg.odds[0])
-  const d = parseOddsValue(avg.odds[1])
-  const a = parseOddsValue(avg.odds[2])
-  if (!h || !d || !a) return 33
-  const total = 1 / h + 1 / d + 1 / a
-  return Math.round((1 / h / total) * 100)
-})
-
-const drawPct = computed(() => {
-  const avg = averageOdds.value
-  if (!avg?.odds?.length) return 34
-  const h = parseOddsValue(avg.odds[0])
-  const d = parseOddsValue(avg.odds[1])
-  const a = parseOddsValue(avg.odds[2])
-  if (!h || !d || !a) return 34
-  const total = 1 / h + 1 / d + 1 / a
-  return Math.round((1 / d / total) * 100)
-})
-
-const awayWinPct = computed(() => 100 - homeWinPct.value - drawPct.value)
-
-const strongestProbability = computed(() => Math.max(homeWinPct.value, drawPct.value, awayWinPct.value))
-
-const predictedPick = computed(() => {
-  if (homeWinPct.value >= drawPct.value && homeWinPct.value >= awayWinPct.value) {
-    return match.value?.home ?? '主队方向'
-  }
-  if (awayWinPct.value >= homeWinPct.value && awayWinPct.value >= drawPct.value) {
-    return match.value?.guest ?? '客队方向'
-  }
-  return '平局方向'
-})
-
-const confidenceLabel = computed(() => {
-  if (strongestProbability.value >= 50) return '高信心'
-  if (strongestProbability.value >= 42) return '中信心'
-  return '谨慎观察'
-})
+// 全部分析结论由后端 /match/:id/insight 计算，前端只展示。
+const homeWinPct = computed(() => insight.value?.homeWinPct ?? 33)
+const drawPct = computed(() => insight.value?.drawPct ?? 34)
+const awayWinPct = computed(() => insight.value?.awayWinPct ?? 33)
+const confidenceLabel = computed(() => insight.value?.confidenceLabel ?? '谨慎观察')
 
 const confidenceClass = computed(() => {
-  if (strongestProbability.value >= 50) return 'bg-emerald-500/15 text-emerald-300'
-  if (strongestProbability.value >= 42) return 'bg-primary/15 text-primary'
+  const tone = insight.value?.confidenceTone
+  if (tone === 'high') return 'bg-emerald-500/15 text-emerald-300'
+  if (tone === 'mid') return 'bg-primary/15 text-primary'
   return 'bg-amber-500/15 text-amber-300'
 })
 
-const oddsSignal = computed(() => `${predictedPick.value} ${strongestProbability.value}%`)
+const oddsSignal = computed(() => insight.value?.oddsSignal ?? '-')
+const formSignal = computed(() => insight.value?.formSignal ?? '样本不足')
+const h2hSignal = computed(() => insight.value?.h2hSignal ?? '样本不足')
+const conclusionText = computed(() => insight.value?.conclusionText ?? '数据加载中...')
 
-/** 近期战绩提取 W/D/L */
-function extractForm(list: any[] | null | undefined, teamName: string | undefined): string[] {
-  if (!list?.length) return []
-  const normalizedTeamName = teamName?.trim()
-  return list.slice(0, 5).map((m: any) => {
-    const homeGoal = m.goal?.[0] ?? 0
-    const awayGoal = m.goal?.[1] ?? 0
-
-    if (normalizedTeamName && m.guest === normalizedTeamName) {
-      if (awayGoal > homeGoal) return 'W'
-      if (awayGoal < homeGoal) return 'L'
-      return 'D'
-    }
-
-    if (homeGoal > awayGoal) return 'W'
-    if (homeGoal < awayGoal) return 'L'
-    return 'D'
-  })
-}
-
-const homeRecentForm = computed(() => extractForm(history.value?.recentHomeList, match.value?.home))
-const guestRecentForm = computed(() => extractForm(history.value?.recentGuestList, match.value?.guest))
-
-function scoreForm(form: string[]): number {
-  return form.reduce((score, result) => {
-    if (result === 'W') return score + 3
-    if (result === 'D') return score + 1
-    return score
-  }, 0)
-}
-
-const homeFormScore = computed(() => scoreForm(homeRecentForm.value))
-const guestFormScore = computed(() => scoreForm(guestRecentForm.value))
-
-const formSignal = computed(() => {
-  if (!homeRecentForm.value.length && !guestRecentForm.value.length) return '样本不足'
-  const diff = homeFormScore.value - guestFormScore.value
-  if (diff >= 3) return `${match.value?.home ?? '主队'}更稳`
-  if (diff <= -3) return `${match.value?.guest ?? '客队'}更稳`
-  return '接近均衡'
-})
+const homeRecentForm = computed(() => insight.value?.homeRecentForm ?? [])
+const guestRecentForm = computed(() => insight.value?.guestRecentForm ?? [])
 
 function formColor(r: string): string {
   if (r === 'W') return 'bg-emerald-500'
@@ -417,36 +299,10 @@ function formColor(r: string): string {
   return 'bg-slate-500'
 }
 
-/** H2H 百分比 */
-const h2hHomePct = computed(() => {
-  const s = history.value?.againstSummary
-  if (!s?.all) return 50
-  return Math.round((s.win / s.all) * 100)
-})
-const h2hAwayPct = computed(() => {
-  const s = history.value?.againstSummary
-  if (!s?.all) return 50
-  return Math.round((s.lose / s.all) * 100)
-})
-const h2hGoalHomePct = computed(() => {
-  const s = history.value?.againstSummary
-  const total = (s?.winGoal ?? 0) + (s?.loseGoal ?? 0)
-  if (!total) return 50
-  return Math.round(((s?.winGoal ?? 0) / total) * 100)
-})
-const h2hGoalAwayPct = computed(() => 100 - h2hGoalHomePct.value)
-
-const h2hSignal = computed(() => {
-  const summary = history.value?.againstSummary
-  if (!summary?.all) return '样本不足'
-  if (summary.win > summary.lose) return `${match.value?.home ?? '主队'}占优`
-  if (summary.lose > summary.win) return `${match.value?.guest ?? '客队'}占优`
-  return '交锋均衡'
-})
-
-const conclusionText = computed(() => {
-  return `综合平均欧赔、近况和交锋记录，当前倾向 ${predictedPick.value}。赔率隐含概率最高为 ${strongestProbability.value}%，近期状态为${formSignal.value}，历史交锋为${h2hSignal.value}。`
-})
+const h2hHomePct = computed(() => insight.value?.h2hHomePct ?? 50)
+const h2hAwayPct = computed(() => insight.value?.h2hAwayPct ?? 50)
+const h2hGoalHomePct = computed(() => insight.value?.h2hGoalHomePct ?? 50)
+const h2hGoalAwayPct = computed(() => insight.value?.h2hGoalAwayPct ?? 50)
 
 function logoUrl(logo: string): string {
   return resolveAssetUrl(logo)

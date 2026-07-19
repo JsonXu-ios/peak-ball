@@ -182,3 +182,24 @@ export interface MatchOddsPankou {
   asiaCount: number
   dxqCount: number
 }
+
+/** 详情页分析结论：go_server /match/:id/insight 返回，前端只展示 */
+export interface MatchInsight {
+  homeWinPct: number
+  drawPct: number
+  awayWinPct: number
+  strongestPct: number
+  predictedPick: string
+  confidenceLabel: string
+  confidenceTone: 'high' | 'mid' | 'low'
+  oddsSignal: string
+  formSignal: string
+  h2hSignal: string
+  conclusionText: string
+  homeRecentForm: string[]
+  guestRecentForm: string[]
+  h2hHomePct: number
+  h2hAwayPct: number
+  h2hGoalHomePct: number
+  h2hGoalAwayPct: number
+}

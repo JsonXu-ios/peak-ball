@@ -46,6 +46,8 @@ func main() {
 		api.GET("/match/:id/odds/pankou", handlers.GetMatchOddsPankou)
 		api.GET("/analysis/matches", handlers.GetAnalysisMatches)
 		api.GET("/analysis/rule-snapshot", handlers.GetAnalysisRuleSnapshot)
+		api.GET("/analysis/accuracy-stats", handlers.GetAnalysisAccuracyStats)
+		api.GET("/match/:id/insight", handlers.GetMatchInsight)
 		api.POST("/analysis/rule-snapshot/generate", handlers.GenerateAnalysisRuleSnapshot)
 		api.GET("/analysis/match/:id", handlers.GetAnalysisDetail)
 

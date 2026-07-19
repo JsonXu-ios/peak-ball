@@ -61,6 +61,9 @@ export interface BookmakerMarket {
   psychologyErrorLabel?: string
   bettingRatio?: BookmakerOutcome[]
   bookmakerByOutcome: BookmakerOutcome[]
+  /** 非竞彩比赛的本地模拟盘（指数/让球数/冷热指数由后端推算，非官方数据） */
+  simulated?: boolean
+  simulationNote?: string
 }
 
 export interface MatchRoiSimulation {
@@ -232,6 +235,85 @@ export interface PlatformDecision {
   localMarket?: BookmakerMarket
 }
 
+// ---- 命中率统计与规则匹配（全部由 go_server 计算，前端只渲染） ----
+
+export type AccuracyTone = 'red' | 'green' | 'blue' | 'normal'
+
+export interface AccuracyStatsRow {
+  label: string
+  sample: number
+  bookmakerCorrect: number
+  platformCorrect: number
+  bothCorrect: number
+}
+
+export interface EvilCultAccuracyRow {
+  label: string
+  sample: number
+  underCorrect: number
+  overCorrect: number
+  firstCorrect: number
+  mainCorrect: number
+  reverseCorrect: number
+}
+
+export interface AccuracyOverallStats {
+  sample: number
+  bookmakerCorrect: number
+  platformCorrect: number
+}
+
+export interface AccuracyCommonRule {
+  value: string
+  sample: number
+  bothCorrect: number
+  rate: number
+}
+
+export interface AccuracyCommonRow {
+  label: string
+  sample: number
+  rules: AccuracyCommonRule[]
+}
+
+export interface AccuracyFitSummary {
+  label: string
+  tone: AccuracyTone
+  score: number
+  ruleCount: number
+  rate: number
+  sample: number
+}
+
+export interface AccuracyMatchRow {
+  matchId: string
+  date: string
+  matchTitle: string
+  league: string
+  time: string
+  outcomeFit: AccuracyFitSummary
+  goalFit: AccuracyFitSummary
+  scoreFit: AccuracyFitSummary
+  conclusion: string
+  tone: AccuracyTone
+  evidence: string
+  resultSummary: string
+  resultTone: AccuracyTone
+}
+
+export interface AccuracyStatsSummary {
+  startDate: string
+  endDate: string
+  total: number
+  overall: AccuracyOverallStats
+  rows: AccuracyStatsRow[]
+  evilCultRows: EvilCultAccuracyRow[]
+  commonRows: AccuracyCommonRow[]
+  generatedCommonRows: AccuracyCommonRow[]
+  matchRows: AccuracyMatchRow[]
+  settledFitRows: AccuracyMatchRow[]
+}
+
 export interface MyAngleMarket {
   bucket: string
   sample: number
@@ -317,9 +399,16 @@ export interface AnalysisMatch {
   oddsCompanyCount: number
   asiaCount: number
   dxqCount: number
+  /** 综合均值与命中标记：后端算好（null = 样本不足），前端只展示 */
+  historyGoalAverage: number | null
+  recentGoalAverage: number | null
+  combinedGoalAverage: number | null
+  combinedHandicapAverage: number | null
+  predictionHit: boolean | null
   detail: AnalysisDetail
   platform?: PlatformDecision
   myAngle?: MyAngleBlock
+  accuracyFit?: AccuracyMatchRow
 }
 
 /** 补录页返回：完赛已隐藏比分；未开赛保持原状态（赛前记录 source=live） */

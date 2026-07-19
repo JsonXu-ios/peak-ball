@@ -298,7 +298,7 @@
           <AnalysisSection v-if="viewMode === 'minimal'" title="赔率与凯利" icon="query_stats">
             <div class="grid grid-cols-2 gap-2 text-sm">
               <Metric label="平均欧赔" :value="joinText(item.detail.test8)" />
-              <Metric label="散户心理" :value="joinText(item.sanhuxinli?.slice(0, 3))" />
+              <Metric label="散户心理" :value="sanhuCompareText(item)" />
               <Metric label="凯利预测" :value="joinText(item.kailiresult)" />
               <Metric label="体彩预测" :value="joinText(item.ticairesult)" />
             </div>
@@ -392,7 +392,7 @@
               <Metric label="测算基数" :value="moneyCompactText(localStakeBase(item))" />
               <Metric label="本地欧赔" :value="localOddsTriplet(item)" />
               <Metric label="散户心理" :value="localRetailTriplet(item)" />
-              <Metric label="官方来源" :value="marketNames(item)" />
+              <Metric label="盈亏来源" :value="marketNames(item)" />
             </div>
 
             <div v-if="hasLocalProfitMarket(item)" class="mt-3 overflow-hidden rounded-md border border-emerald-200 bg-white text-xs">
@@ -423,10 +423,10 @@
                   </tbody>
                 </table>
               </div>
-              <p class="border-t border-slate-100 px-3 py-2 text-[11px] text-slate-500">注：本地测算仅使用平均欧赔与散户心理，不使用竞彩投注数据</p>
+              <p class="border-t border-slate-100 px-3 py-2 text-[11px] text-slate-500">注：本地测算仅使用平均欧赔与加权散户心理（隐含概率经亚盘/大小球/历史/近况/均值权重偏移，再做羊群放大），不使用竞彩投注数据</p>
             </div>
 
-            <div v-if="sportteryMarket(item)" class="mt-3 overflow-hidden rounded-md border border-slate-200 bg-white text-xs">
+            <div v-if="sportteryRatioMarket(item)" class="mt-3 overflow-hidden rounded-md border border-slate-200 bg-white text-xs">
               <div class="border-l-2 border-red-500 bg-slate-50 px-3 py-2 font-black text-slate-900">竞彩投注比例</div>
               <div class="overflow-x-auto">
                 <table class="min-w-[640px] w-full text-center">
@@ -458,8 +458,11 @@
             </div>
 
             <div v-for="market in bookmakerMarkets(item)" :key="`${item.matchId}-${market.key}-market`" class="mt-3 overflow-hidden rounded-md border border-slate-200 bg-white text-xs">
-              <div class="flex items-center justify-between gap-2 border-l-2 border-red-500 bg-slate-50 px-3 py-2">
-                <p class="font-black text-slate-900">{{ market.name }}交易盈亏</p>
+              <div class="flex items-center justify-between gap-2 border-l-2 bg-slate-50 px-3 py-2" :class="market.simulated ? 'border-amber-500' : 'border-red-500'">
+                <p class="font-black text-slate-900">
+                  {{ market.name }}交易盈亏
+                  <span v-if="market.simulated" class="ml-1 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-black text-amber-700">模拟</span>
+                </p>
                 <p class="text-slate-500">总投注额 {{ moneyCompactText(item.roiSimulation?.totalStake || 0) }}</p>
               </div>
               <div class="overflow-x-auto">
@@ -490,6 +493,9 @@
                   </tbody>
                 </table>
               </div>
+              <p v-if="market.simulationNote" class="border-t border-amber-100 bg-amber-50 px-3 py-2 text-[11px] font-bold text-amber-700">
+                注：{{ market.simulationNote }}
+              </p>
               <p class="border-t px-3 py-2 text-[11px] font-black" :class="marketProfitAlertClass(market)">
                 {{ marketProfitAlertText(market) }}
               </p>
@@ -499,7 +505,7 @@
           <AnalysisSection v-if="viewMode === 'full'" title="赔率与凯利" icon="query_stats">
             <div class="grid grid-cols-2 gap-2 text-sm">
               <Metric label="平均欧赔" :value="joinText(item.detail.test8)" />
-              <Metric label="散户心理" :value="joinText(item.sanhuxinli?.slice(0, 3))" />
+              <Metric label="散户心理" :value="sanhuCompareText(item)" />
               <Metric label="凯利预测" :value="joinText(item.kailiresult)" />
               <Metric label="体彩预测" :value="joinText(item.ticairesult)" />
             </div>
@@ -731,9 +737,17 @@
 import { computed, defineComponent, h, onBeforeUnmount, onMounted, type PropType, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import analysisApi from '@/api/analysis'
-import type { AnalysisRuleSnapshot } from '@/api/analysis'
 import { resolveAssetUrl } from '@/api/request'
-import type { AnalysisMatch, BookmakerMarket, BookmakerOutcome, DirectionValues, PlatformEvilCultPrediction, PlatformGoalPair } from '@/types/analysis'
+import type {
+  AccuracyMatchRow,
+  AccuracyStatsSummary,
+  AnalysisMatch,
+  BookmakerMarket,
+  BookmakerOutcome,
+  DirectionValues,
+  PlatformEvilCultPrediction,
+  PlatformGoalPair,
+} from '@/types/analysis'
 
 interface StatRow {
   label: string
@@ -793,81 +807,6 @@ interface GuidePrediction {
 type GoalScore = { home: number; guest: number }
 type DirectionOutcome = 'home' | 'draw' | 'away'
 
-interface AccuracyStatsRow {
-  label: string
-  sample: number
-  bookmakerCorrect: number
-  platformCorrect: number
-  bothCorrect: number
-}
-
-interface EvilCultAccuracyRow {
-  label: string
-  sample: number
-  underCorrect: number
-  overCorrect: number
-  firstCorrect: number
-  mainCorrect: number
-  reverseCorrect: number
-}
-
-interface AccuracyOverallStats {
-  sample: number
-  bookmakerCorrect: number
-  platformCorrect: number
-}
-
-interface AccuracyCommonRule {
-  value: string
-  sample: number
-  bothCorrect: number
-  rate: number
-}
-
-interface AccuracyCommonRow {
-  label: string
-  sample: number
-  rules: AccuracyCommonRule[]
-}
-
-interface AccuracyFitSummary {
-  label: string
-  tone: StatRow['tone']
-  score: number
-  ruleCount: number
-  rate: number
-  sample: number
-}
-
-interface AccuracyMatchRow {
-  matchId: string
-  date: string
-  matchTitle: string
-  league: string
-  time: string
-  outcomeFit: AccuracyFitSummary
-  goalFit: AccuracyFitSummary
-  scoreFit: AccuracyFitSummary
-  conclusion: string
-  tone: StatRow['tone']
-  evidence: string
-  resultSummary: string
-  resultTone: StatRow['tone']
-}
-
-interface AccuracyStatsSummary {
-  startDate: string
-  endDate: string
-  total: number
-  overall: AccuracyOverallStats
-  rows: AccuracyStatsRow[]
-  evilCultRows: EvilCultAccuracyRow[]
-  commonRows: AccuracyCommonRow[]
-  generatedCommonRows: AccuracyCommonRow[]
-  matchRows: AccuracyMatchRow[]
-  settledFitRows: AccuracyMatchRow[]
-}
-
 interface PlanContext {
   item: AnalysisMatch
   matchTitle: string
@@ -898,7 +837,7 @@ const Metric = defineComponent({
   setup(props) {
     return () => h('div', { class: 'border-l-2 border-slate-200 pl-2 min-w-0' }, [
       h('p', { class: 'text-[11px] text-slate-500 font-bold' }, props.label),
-      h('p', { class: 'font-bold break-words leading-snug' }, props.value || '-'),
+      h('p', { class: 'font-bold break-words leading-snug whitespace-pre-line' }, props.value || '-'),
     ])
   },
 })
@@ -1055,8 +994,7 @@ const accuracyHistoryStartDate = '2026-05-28'
 const guideSectionTitle = computed(() => '庄家 / 平台预测')
 const accuracyStatsLoading = ref(false)
 const accuracyStatsError = ref('')
-const accuracyStats = ref<AccuracyStatsSummary>(emptyAccuracyStats(selectedDate.value))
-const accuracyCommonRows = ref<AccuracyCommonRow[]>(emptyAccuracyCommonRows())
+const accuracyStats = ref<AccuracyStatsSummary>(emptyAccuracyStats(todayString))
 const analysisViewModes: Array<{ value: AnalysisViewMode; label: string }> = [
   { value: 'simple', label: '简化版' },
   { value: 'minimal', label: '邪修版' },
@@ -1108,10 +1046,6 @@ const matchScopeLabel = computed(() => matchScope.value === 'all' ? '全部比�
 const availableLeagues = computed(() => Array.from(new Set(allMatches.value.map((item) => item.league).filter(Boolean))).sort((left, right) => left.localeCompare(right, 'zh-CN')))
 
 const accuracyStatsRangeText = computed(() => `${accuracyStats.value.startDate} 至 ${accuracyStats.value.endDate}`)
-const accuracyMatchRowsById = computed(() => {
-  const rows = accuracyCommonRows.value.length ? accuracyCommonRows.value : accuracyStats.value.commonRows
-  return new Map(buildAccuracyMatchRows(list.value, rows, 'all').map((row) => [row.matchId, row]))
-})
 const evilCultAudit = computed(() => {
   const item = evilCultAuditItem.value
   if (!item?.platform) return null
@@ -1126,14 +1060,11 @@ const evilCultAudit = computed(() => {
 
 const highConfidenceCount = computed(() => list.value.filter((item) => item.confidence === '高信心').length)
 
+// 命中与否由后端 predictionHit 标记，前端只做展示统计。
 const accuracyLabel = computed(() => {
-  const settled = list.value.filter((item) => item.prediction && item.displayState === '完场')
+  const settled = list.value.filter((item) => typeof item.predictionHit === 'boolean' && item.displayState === '完场')
   if (!settled.length) return 0
-  const correct = settled.filter((item) => {
-    if (item.homeScore > item.guestScore) return item.prediction === '主胜'
-    if (item.homeScore < item.guestScore) return item.prediction === '客胜'
-    return item.prediction === '平局'
-  }).length
+  const correct = settled.filter((item) => item.predictionHit).length
   return Math.round((correct / settled.length) * 100)
 })
 
@@ -1146,12 +1077,8 @@ async function loadData() {
   loading.value = true
   try {
     syncDateQuery()
-    const [matchesResponse, snapshotResponse] = await Promise.all([
-      analysisApi.getAnalysisMatches(analysisQueryParams()),
-      analysisApi.getAnalysisRuleSnapshot().catch(() => ({ data: null as AnalysisRuleSnapshot | null })),
-    ])
+    const matchesResponse = await analysisApi.getAnalysisMatches(analysisQueryParams())
     setCurrentMatches(matchesResponse.data ?? [])
-    accuracyCommonRows.value = snapshotCommonRows(snapshotResponse.data) || emptyAccuracyCommonRows()
     restoreDialogFromState()
     restoreScrollFromState()
     persistAnalysisPageState()
@@ -1160,22 +1087,19 @@ async function loadData() {
   }
 }
 
+// 命中率统计全部由后端 /analysis/accuracy-stats 计算，前端只负责请求与渲染。
 async function loadAccuracyStats() {
   accuracyStatsLoading.value = true
   accuracyStatsError.value = ''
-  const dates = accuracyFixedRuleDateRange()
-  accuracyStats.value = emptyAccuracyStats(selectedDate.value)
+  accuracyStats.value = emptyAccuracyStats(todayString)
   try {
-    const [responses, currentResponse, snapshotResponse] = await Promise.all([
-      Promise.all(dates.map((date) => analysisApi.getAnalysisMatches(analysisQueryParams(date)))),
+    const league = selectedLeague.value === 'all' ? undefined : selectedLeague.value
+    const [statsResponse, currentResponse] = await Promise.all([
+      analysisApi.getAccuracyStats({ ...analysisQueryParams(), league }),
       analysisApi.getAnalysisMatches(analysisQueryParams()),
-      analysisApi.getAnalysisRuleSnapshot().catch(() => ({ data: null as AnalysisRuleSnapshot | null })),
     ])
-    const matches = filterMatchesByLeague(responses.flatMap((response) => response.data ?? [])).filter(isSettledMatch)
-    const currentMatches = currentResponse.data ?? []
-    setCurrentMatches(currentMatches)
-    accuracyStats.value = buildAccuracyStats(matches, dates[0] || selectedDate.value, dates[dates.length - 1] || selectedDate.value, list.value, snapshotResponse.data)
-    accuracyCommonRows.value = accuracyStats.value.commonRows
+    setCurrentMatches(currentResponse.data ?? [])
+    accuracyStats.value = statsResponse.data
   } catch {
     accuracyStatsError.value = '历史统计加载失败，请稍后重试。'
   } finally {
@@ -1184,407 +1108,24 @@ async function loadAccuracyStats() {
 }
 
 function emptyAccuracyStats(endDate: string): AccuracyStatsSummary {
-  const dates = accuracyFixedRuleDateRange(endDate)
+  const emptyRow = (label: string) => ({ label, sample: 0, bookmakerCorrect: 0, platformCorrect: 0, bothCorrect: 0 })
   return {
-    startDate: dates[0] || endDate,
-    endDate: dates[dates.length - 1] || endDate,
+    startDate: accuracyHistoryStartDate,
+    endDate,
     total: 0,
-    overall: emptyAccuracyOverallStats(),
-    rows: [
-      emptyAccuracyRow('胜平负'),
-      emptyAccuracyRow('大小球'),
-      emptyAccuracyRow('比分'),
-    ],
-    evilCultRows: emptyEvilCultAccuracyRows(),
-    commonRows: emptyAccuracyCommonRows(),
+    overall: { sample: 0, bookmakerCorrect: 0, platformCorrect: 0 },
+    rows: [emptyRow('胜平负'), emptyRow('大小球'), emptyRow('比分')],
+    evilCultRows: [],
+    commonRows: [],
     generatedCommonRows: [],
     matchRows: [],
     settledFitRows: [],
   }
 }
 
-function emptyAccuracyCommonRows(): AccuracyCommonRow[] {
-  return [
-    emptyAccuracyCommonRow('胜平负双中'),
-    emptyAccuracyCommonRow('大小球双中'),
-    emptyAccuracyCommonRow('比分命中'),
-  ]
-}
-
-function emptyAccuracyOverallStats(): AccuracyOverallStats {
-  return {
-    sample: 0,
-    bookmakerCorrect: 0,
-    platformCorrect: 0,
-  }
-}
-
-function emptyAccuracyRow(label: string): AccuracyStatsRow {
-  return {
-    label,
-    sample: 0,
-    bookmakerCorrect: 0,
-    platformCorrect: 0,
-    bothCorrect: 0,
-  }
-}
-
-function emptyEvilCultAccuracyRows(): EvilCultAccuracyRow[] {
-  return ['综合', '大小球', '球数', '比分', '胜平负'].map((label) => emptyEvilCultAccuracyRow(label))
-}
-
-function emptyEvilCultAccuracyRow(label: string): EvilCultAccuracyRow {
-  return {
-    label,
-    sample: 0,
-    underCorrect: 0,
-    overCorrect: 0,
-    firstCorrect: 0,
-    mainCorrect: 0,
-    reverseCorrect: 0,
-  }
-}
-
-function emptyAccuracyCommonRow(label: string): AccuracyCommonRow {
-  return { label, sample: 0, rules: [] }
-}
-
-function buildAccuracyStats(matches: AnalysisMatch[], startDate: string, endDate: string, currentMatches: AnalysisMatch[] = [], snapshot?: AnalysisRuleSnapshot | null): AccuracyStatsSummary {
-  const rows = [
-    buildAccuracyRow('胜平负', matches, (item, bookmaker, platform) => {
-      const actual = actualMatchOutcome(item)
-      return {
-        bookmaker: actual !== null && bookmaker.outcome === actual,
-        platform: actual !== null && platform.outcome === actual,
-      }
-    }),
-    buildAccuracyRow('大小球', matches, (item, bookmaker, platform) => ({
-      bookmaker: goalPredictionCorrect(item, bookmaker.goal),
-      platform: goalPredictionCorrect(item, platform.goal),
-    })),
-    buildAccuracyRow('比分', matches, (item, bookmaker, platform) => ({
-      bookmaker: scorePredictionCorrect(item, bookmaker.score),
-      platform: scorePredictionCorrect(item, platform.score),
-    }), true),
-  ]
-
-  const generatedCommonRows = buildAccuracyCommonRows(matches)
-  const commonRows = snapshotCommonRows(snapshot) || generatedCommonRows
-  return {
-    startDate,
-    endDate,
-    total: matches.length,
-    overall: buildAccuracyOverallStats(rows),
-    rows,
-    evilCultRows: buildEvilCultAccuracyRows(matches),
-    commonRows,
-    generatedCommonRows,
-    matchRows: buildAccuracyMatchRows(currentMatches, commonRows, 'upcoming'),
-    settledFitRows: buildAccuracyMatchRows(currentMatches, commonRows, 'settledFit'),
-  }
-}
-
-function buildAccuracyOverallStats(rows: AccuracyStatsRow[]): AccuracyOverallStats {
-  return rows.reduce<AccuracyOverallStats>((overall, row) => {
-    overall.sample += row.sample
-    overall.bookmakerCorrect += row.bookmakerCorrect
-    overall.platformCorrect += row.platformCorrect
-    return overall
-  }, emptyAccuracyOverallStats())
-}
-
-function buildEvilCultAccuracyRows(matches: AnalysisMatch[]): EvilCultAccuracyRow[] {
-  const rows = {
-    overall: emptyEvilCultAccuracyRow('综合'),
-    goal: emptyEvilCultAccuracyRow('大小球'),
-    total: emptyEvilCultAccuracyRow('球数'),
-    score: emptyEvilCultAccuracyRow('比分'),
-    outcome: emptyEvilCultAccuracyRow('胜平负'),
-  }
-
-  matches.forEach((item) => {
-    const prediction = evilCultPrediction(item)
-    const actualOutcome = actualMatchOutcome(item)
-    const actualTotal = actualGoalTotal(item)
-    const checks = [
-      {
-        row: rows.goal,
-        under: evilCultGoalCorrect(item, 'under', prediction.underGoalLine),
-        over: evilCultGoalCorrect(item, 'over', prediction.overGoalLine),
-      },
-      {
-        row: rows.total,
-        under: actualTotal === prediction.underTotalValue,
-        over: actualTotal === prediction.overTotalValue,
-      },
-      {
-        row: rows.score,
-        under: scorePredictionCorrect(item, prediction.underScore),
-        over: scorePredictionCorrect(item, prediction.overScore),
-      },
-      {
-        row: rows.outcome,
-        under: actualOutcome !== null && actualOutcome === prediction.underOutcome,
-        over: actualOutcome !== null && actualOutcome === prediction.overOutcome,
-      },
-    ]
-
-    checks.forEach(({ row, under, over }) => {
-      const first = prediction.firstDirection === 'under' ? under : over
-      const main = prediction.goalDirection === 'under' ? under : over
-      const reverse = prediction.goalDirection === 'under' ? over : under
-      addEvilCultAccuracy(row, under, over, first, main, reverse)
-      addEvilCultAccuracy(rows.overall, under, over, first, main, reverse)
-    })
-  })
-
-  return [rows.overall, rows.goal, rows.total, rows.score, rows.outcome]
-}
-
-function addEvilCultAccuracy(row: EvilCultAccuracyRow, under: boolean, over: boolean, first: boolean, main: boolean, reverse: boolean) {
-  row.sample += 1
-  if (under) row.underCorrect += 1
-  if (over) row.overCorrect += 1
-  if (first) row.firstCorrect += 1
-  if (main) row.mainCorrect += 1
-  if (reverse) row.reverseCorrect += 1
-}
-
-function evilCultGoalCorrect(item: AnalysisMatch, direction: 'over' | 'under', line: number): boolean {
-  const total = actualGoalTotal(item)
-  if (!Number.isFinite(total) || !Number.isFinite(line)) return false
-  if (direction === 'over') return total > line
-  return total < line
-}
-
-function buildAccuracyRow(
-  label: string,
-  matches: AnalysisMatch[],
-  judge: (item: AnalysisMatch, bookmaker: GuidePrediction, platform: GuidePrediction) => { bookmaker: boolean; platform: boolean },
-  eitherAsBoth = false,
-): AccuracyStatsRow {
-  return matches.reduce<AccuracyStatsRow>((row, item) => {
-    const bookmaker = bookmakerGuidePrediction(item)
-    const platform = platformLivePrediction(item)
-    const result = judge(item, bookmaker, platform)
-    row.sample += 1
-    if (result.bookmaker) row.bookmakerCorrect += 1
-    if (result.platform) row.platformCorrect += 1
-    if (eitherAsBoth ? (result.bookmaker || result.platform) : (result.bookmaker && result.platform)) row.bothCorrect += 1
-    return row
-  }, emptyAccuracyRow(label))
-}
-
-function buildAccuracyCommonRows(matches: AnalysisMatch[]): AccuracyCommonRow[] {
-  return [
-    buildAccuracyCommonRow('胜平负双中', matches, (item, bookmaker, platform) => {
-      const actual = actualMatchOutcome(item)
-      return actual !== null && bookmaker.outcome === actual && platform.outcome === actual
-    }, resultCommonElements),
-    buildAccuracyCommonRow('大小球双中', matches, (item, bookmaker, platform) => (
-      goalPredictionCorrect(item, bookmaker.goal) && goalPredictionCorrect(item, platform.goal)
-    ), goalCommonElements),
-    buildAccuracyCommonRow('比分命中', matches, (item, bookmaker, platform) => (
-      scorePredictionCorrect(item, bookmaker.score) || scorePredictionCorrect(item, platform.score)
-    ), scoreCommonElements),
-  ]
-}
-
-function snapshotCommonRows(snapshot?: AnalysisRuleSnapshot | null): AccuracyCommonRow[] | null {
-  const rows = snapshot?.commonRows
-  if (!Array.isArray(rows) || !rows.length) return null
-  const normalized = rows.map((row) => ({
-    label: String(row.label || ''),
-    sample: Number.isFinite(row.sample) ? Number(row.sample) : 0,
-    rules: Array.isArray(row.rules)
-      ? row.rules.map((rule) => ({
-        value: String(rule.value || ''),
-        sample: Number.isFinite(rule.sample) ? Number(rule.sample) : 0,
-        bothCorrect: Number.isFinite(rule.bothCorrect) ? Number(rule.bothCorrect) : 0,
-        rate: Number.isFinite(rule.rate) ? Number(rule.rate) : 0,
-      })).filter((rule) => rule.value && rule.sample > 0)
-      : [],
-  })).filter((row) => row.label)
-  return normalized.some((row) => row.rules.length) ? normalized : null
-}
-
-function buildAccuracyCommonRow(
-  label: string,
-  matches: AnalysisMatch[],
-  predicate: (item: AnalysisMatch, bookmaker: GuidePrediction, platform: GuidePrediction) => boolean,
-  extractor: (item: AnalysisMatch, bookmaker: GuidePrediction, platform: GuidePrediction) => string[],
-): AccuracyCommonRow {
-  const samples = matches.map((item) => ({ item, bookmaker: bookmakerGuidePrediction(item), platform: platformLivePrediction(item) }))
-  const ruleMap = new Map<string, AccuracyCommonRule>()
-  let bothSample = 0
-
-  samples.forEach(({ item, bookmaker, platform }) => {
-    const bothCorrect = predicate(item, bookmaker, platform)
-    if (bothCorrect) bothSample += 1
-    uniqueStrings(extractor(item, bookmaker, platform)).forEach((value) => {
-      const current = ruleMap.get(value) ?? { value, sample: 0, bothCorrect: 0, rate: 0 }
-      current.sample += 1
-      if (bothCorrect) current.bothCorrect += 1
-      current.rate = current.sample ? current.bothCorrect / current.sample : 0
-      ruleMap.set(value, current)
-    })
-  })
-
-  const isScoreRow = label.includes('比分')
-  const minSample = isScoreRow ? Math.max(4, Math.ceil(matches.length * 0.04)) : Math.max(2, Math.ceil(matches.length * 0.08))
-  const minRate = isScoreRow ? 0.28 : 0.45
-  return {
-    label,
-    sample: bothSample,
-    rules: Array.from(ruleMap.values())
-      .filter((rule) => rule.sample >= minSample && rule.bothCorrect > 0 && rule.rate >= minRate)
-      .sort((a, b) => b.rate - a.rate || b.bothCorrect - a.bothCorrect || b.sample - a.sample || a.value.localeCompare(b.value))
-      .slice(0, 8),
-  }
-}
-
-function uniqueStrings(values: string[]): string[] {
-  return Array.from(new Set(values.filter((value) => Boolean(value && value !== '-'))))
-}
-
-function buildAccuracyMatchRows(matches: AnalysisMatch[], commonRows: AccuracyCommonRow[], mode: 'upcoming' | 'settledFit' | 'all'): AccuracyMatchRow[] {
-  const targetMatches = mode === 'upcoming'
-    ? matches.filter((item) => !isSettledMatch(item))
-    : mode === 'settledFit'
-      ? matches.filter(isSettledMatch)
-      : matches
-  const rows = targetMatches.map((item) => buildAccuracyMatchRow(item, commonRows, isSettledMatch(item) ? 'settled' : 'upcoming'))
-
-  if (mode === 'settledFit') {
-    return rows
-      .filter(isSettledFitRow)
-      .sort((a, b) => `${b.date} ${b.time}`.localeCompare(`${a.date} ${a.time}`))
-      .slice(0, 30)
-  }
-
-  return rows
-}
-
-function buildAccuracyMatchRow(item: AnalysisMatch, commonRows: AccuracyCommonRow[], mode: 'upcoming' | 'settled'): AccuracyMatchRow {
-  const [outcomeRules, goalRules, scoreRules] = orderedAccuracyCommonRows(commonRows)
-  const bookmaker = bookmakerGuidePrediction(item)
-  const platform = platformLivePrediction(item)
-  const matchedOutcomeRules = matchAccuracyRules(outcomeRules, resultCommonElements(item, bookmaker, platform))
-  const matchedGoalRules = matchAccuracyRules(goalRules, goalCommonElements(item, bookmaker, platform))
-  const matchedScoreRules = matchAccuracyRules(scoreRules, scoreCommonElements(item, bookmaker, platform))
-  const outcomeFit = accuracyFitSummary(matchedOutcomeRules)
-  const goalFit = accuracyFitSummary(matchedGoalRules)
-  const scoreFit = accuracyFitSummary(matchedScoreRules)
-  const totalScore = outcomeFit.score * 0.45 + goalFit.score * 0.35 + scoreFit.score * 0.2
-  const conclusion = accuracyConclusion(totalScore)
-  const resultSummary = mode === 'upcoming'
-    ? predictedDoubleHitSummary(outcomeFit, goalFit, scoreFit)
-    : settledAccuracySummary(item, bookmaker, platform)
-  const evidence = [
-    ...matchedOutcomeRules.slice(0, 2),
-    ...matchedGoalRules.slice(0, 2),
-    ...matchedScoreRules.slice(0, 1),
-  ].map(accuracyRuleText).join('；')
-
-  return {
-    matchId: item.matchId,
-    date: matchDateText(item.date),
-    matchTitle: `${item.home} vs ${item.guest}`,
-    league: item.league || '-',
-    time: formatTime(item.matchTime),
-    outcomeFit,
-    goalFit,
-    scoreFit,
-    conclusion: conclusion.label,
-    tone: conclusion.tone,
-    evidence: evidence || '暂无明显高命中规则匹配，按原预测谨慎处理。',
-    resultSummary: resultSummary.label,
-    resultTone: resultSummary.tone,
-  }
-}
-
-function orderedAccuracyCommonRows(rows: AccuracyCommonRow[]): AccuracyCommonRow[] {
-  const fallback = emptyAccuracyCommonRows()
-  return [
-    rows.find((row) => row.label.includes('胜平负')) || rows[0] || fallback[0],
-    rows.find((row) => row.label.includes('大小球')) || rows[1] || fallback[1],
-    rows.find((row) => row.label.includes('比分')) || rows[2] || fallback[2],
-  ]
-}
-
+// "匹配历史规律"由后端随列表返回（item.accuracyFit），前端只读取。
 function accuracyMatchRow(item: AnalysisMatch): AccuracyMatchRow | null {
-  return accuracyMatchRowsById.value.get(item.matchId) ?? null
-}
-
-function isSettledFitRow(row: AccuracyMatchRow): boolean {
-  const hasRuleMatch = row.tone === 'green' || isPredictableDoubleFit(row.outcomeFit) || isPredictableDoubleFit(row.goalFit) || isPredictableDoubleFit(row.scoreFit)
-  return hasRuleMatch && row.resultTone === 'green'
-}
-
-function predictedDoubleHitSummary(outcomeFit: AccuracyFitSummary, goalFit: AccuracyFitSummary, scoreFit: AccuracyFitSummary): { label: string; tone: StatRow['tone'] } {
-  const doubleValues = [
-    isPredictableDoubleFit(outcomeFit) ? '胜平负' : '',
-    isPredictableDoubleFit(goalFit) ? '大小球' : '',
-  ].filter(Boolean)
-  const scoreHit = isPredictableDoubleFit(scoreFit)
-  if (!doubleValues.length && !scoreHit) return { label: '暂无命中预测', tone: 'normal' }
-  const strongCount = [outcomeFit, goalFit, scoreFit].filter((fit) => fit.score >= 78).length
-  const values = [
-    doubleValues.length ? `预测双中 ${doubleValues.join('/')}` : '',
-    scoreHit ? '预测比分命中' : '',
-  ].filter(Boolean)
-  return { label: values.join(' + '), tone: strongCount ? 'green' : 'blue' }
-}
-
-function isPredictableDoubleFit(fit: AccuracyFitSummary): boolean {
-  return fit.ruleCount >= 2 && fit.rate >= 0.62 && fit.score >= 70
-}
-
-function settledAccuracySummary(item: AnalysisMatch, bookmaker: GuidePrediction, platform: GuidePrediction): { label: string; tone: StatRow['tone'] } {
-  if (!isSettledMatch(item)) return { label: '待赛', tone: 'normal' }
-  const actual = actualMatchOutcome(item)
-  const values = [
-    actual !== null && bookmaker.outcome === actual && platform.outcome === actual ? '胜平负' : '',
-    goalPredictionCorrect(item, bookmaker.goal) && goalPredictionCorrect(item, platform.goal) ? '大小球' : '',
-    scorePredictionCorrect(item, bookmaker.score) || scorePredictionCorrect(item, platform.score) ? '比分命中' : '',
-  ].filter(Boolean)
-  if (!values.length) return { label: '未命中', tone: 'red' }
-  return { label: values.join('/'), tone: 'green' }
-}
-
-function matchAccuracyRules(row: AccuracyCommonRow | undefined, elements: string[]): AccuracyCommonRule[] {
-  const elementSet = new Set(uniqueStrings(elements))
-  return (row?.rules ?? [])
-    .filter((rule) => elementSet.has(rule.value))
-    .sort((a, b) => b.rate - a.rate || b.bothCorrect - a.bothCorrect || b.sample - a.sample)
-}
-
-function accuracyFitSummary(rules: AccuracyCommonRule[]): AccuracyFitSummary {
-  if (!rules.length) return { label: '无匹配', tone: 'normal', score: 0, ruleCount: 0, rate: 0, sample: 0 }
-  const sample = rules.reduce((sum, rule) => sum + rule.sample, 0)
-  const correct = rules.reduce((sum, rule) => sum + rule.bothCorrect, 0)
-  const rate = sample ? correct / sample : 0
-  const score = Math.min(100, Math.round(rate * 100 + Math.min(18, rules.length * 4)))
-  const label = `${rules.length}条 ${Math.round(rate * 100)}%`
-  return { label, tone: accuracyScoreTone(score), score, ruleCount: rules.length, rate, sample }
-}
-
-function accuracyScoreTone(score: number): StatRow['tone'] {
-  if (score >= 78) return 'green'
-  if (score >= 58) return 'blue'
-  if (score > 0) return 'red'
-  return 'normal'
-}
-
-function accuracyConclusion(score: number): { label: string; tone: StatRow['tone'] } {
-  if (score >= 78) return { label: '符合历史规律', tone: 'green' }
-  if (score >= 58) return { label: '部分符合', tone: 'blue' }
-  if (score > 0) return { label: '匹配偏弱', tone: 'red' }
-  return { label: '无历史支撑', tone: 'normal' }
-}
-
-function accuracyRuleText(rule: AccuracyCommonRule): string {
-  return `${rule.value} ${rule.bothCorrect}/${rule.sample} ${Math.round(rule.rate * 100)}%`
+  return item.accuracyFit ?? null
 }
 
 function accuracyFitClass(tone: StatRow['tone']): string {
@@ -1599,10 +1140,6 @@ function accuracyFitTextClass(tone: StatRow['tone']): string {
   if (tone === 'blue') return 'text-sky-700'
   if (tone === 'red') return 'text-red-700'
   return 'text-slate-500'
-}
-
-function handicapPressureSignalLabel(item: AnalysisMatch): string {
-  return item.platform?.handicapPressureLabel ?? ''
 }
 
 interface MyAngleRow {
@@ -1634,60 +1171,6 @@ function myAngleRows(item: AnalysisMatch): MyAngleRow[] {
     build('胜平负', angle.spf),
     build('让球', angle.rqspf),
     build('大小球', angle.dxq),
-  ]
-}
-
-function resultCommonElements(item: AnalysisMatch, bookmaker: GuidePrediction, platform: GuidePrediction): string[] {
-  const sportteryComfort = (item.platform?.sportteryComfort || null) as DirectionOutcome | null
-  const rqComfort = (item.platform?.rqspfComfort || null) as DirectionOutcome | null
-  const professionalConsensus = (item.platform?.professionalConsensus || null) as DirectionOutcome | null
-  const drawRisk = item.platform?.drawRisk ?? { score: 0, reasons: [] }
-  return [
-    `庄家${outcomeShortLabel(bookmaker.outcome)}`,
-    `平台${outcomeShortLabel(platform.outcome)}`,
-    bookmaker.outcome === platform.outcome ? `庄平同向${outcomeShortLabel(bookmaker.outcome)}` : '庄平分歧',
-    professionalConsensus ? `凯体同向${outcomeShortLabel(professionalConsensus)}` : '',
-    `凯利${joinText(item.kailiresult)}`,
-    `体彩${joinText(item.ticairesult)}`,
-    `亚盘${handicapBucket(item.yapanpankou2)}`,
-    `让球热度${heatBucket(item.yapantouzhu?.[0], item.yapantouzhu?.[1], '主热', '客热')}`,
-    sportteryComfort ? `竞彩舒服${outcomeShortLabel(sportteryComfort)}` : '',
-    rqComfort ? `让球舒服${outcomeShortLabel(rqComfort)}` : '',
-    platform.warning ? '平台过热' : '',
-    handicapPressureSignalLabel(item) ? `让球${handicapPressureSignalLabel(item)}` : '',
-    drawRisk.score >= 4 ? '平局风险高' : '',
-    drawRisk.score >= 5 ? '平局风险强' : '',
-  ]
-}
-
-function goalCommonElements(item: AnalysisMatch, bookmaker: GuidePrediction, platform: GuidePrediction): string[] {
-  const signal = goalBalanceSignalForItem(item)
-  return [
-    `庄家${goalDirectionLabel(bookmaker.goal)}`,
-    `平台${goalDirectionLabel(platform.goal)}`,
-    goalDirectionLabel(bookmaker.goal) === goalDirectionLabel(platform.goal) ? `庄平同向${goalDirectionLabel(bookmaker.goal)}` : '庄平球数分歧',
-    `盘口${goalLineBucket(item.qiushupankou2)}`,
-    `大小热度${heatBucket(item.qiushutouzhu?.[0], item.qiushutouzhu?.[1], '大热', '小热')}`,
-    signal ? `回归${goalBalanceSignalLabel(signal)}` : '',
-  ]
-}
-
-function scoreCommonElements(item: AnalysisMatch, bookmaker: GuidePrediction, platform: GuidePrediction): string[] {
-  const bookmakerShape = scoreShapeLabel(bookmaker.score)
-  const platformShape = scoreShapeLabel(platform.score)
-  return [
-    `庄家${bookmaker.score}`,
-    `平台${platform.score}`,
-    bookmaker.score === platform.score ? `庄平同比分${bookmaker.score}` : '庄平比分分歧',
-    bookmakerShape ? `庄家形态${bookmakerShape}` : '',
-    platformShape ? `平台形态${platformShape}` : '',
-    bookmakerShape && platformShape && bookmakerShape === platformShape ? `庄平同形态${bookmakerShape}` : '',
-    `庄家赛果${outcomeShortLabel(bookmaker.outcome)}`,
-    `平台赛果${outcomeShortLabel(platform.outcome)}`,
-    `庄家球数${goalDirectionLabel(bookmaker.goal)}`,
-    `平台球数${goalDirectionLabel(platform.goal)}`,
-    `亚盘${handicapBucket(item.yapanpankou2)}`,
-    `大小盘口${goalLineBucket(item.qiushupankou2)}`,
   ]
 }
 
@@ -1738,132 +1221,9 @@ function shiftDate(days: number) {
   setDate(localDateString(date))
 }
 
-function accuracyFixedRuleDateRange(fallbackEndDate = todayString): string[] {
-  return accuracyHistoryDateRange(validDateString(todayString) || fallbackEndDate)
-}
-
-function accuracyHistoryDateRange(endDateValue: string): string[] {
-  const endDate = parseLocalDate(endDateValue) || new Date()
-  const startDate = parseLocalDate(accuracyHistoryStartDate) || endDate
-  const safeStart = startDate.getTime() <= endDate.getTime() ? startDate : endDate
-  const days = Math.max(1, Math.floor((endDate.getTime() - safeStart.getTime()) / 86400000) + 1)
-  return recentDateRange(localDateString(endDate), days)
-}
-
-function recentDateRange(endDateValue: string, days: number): string[] {
-  const endDate = parseLocalDate(endDateValue) || new Date()
-  return Array.from({ length: days }, (_, index) => {
-    const date = new Date(endDate)
-    date.setDate(endDate.getDate() - (days - 1 - index))
-    return localDateString(date)
-  })
-}
-
-function isSettledMatch(item: AnalysisMatch): boolean {
-  const stateText = String(item.displayState || '')
-  return stateText.includes('完') || item.status >= 4
-}
-
-function actualMatchOutcome(item: AnalysisMatch): DirectionOutcome | null {
-  if (!Number.isFinite(item.homeScore) || !Number.isFinite(item.guestScore)) return null
-  if (item.homeScore > item.guestScore) return 'home'
-  if (item.homeScore < item.guestScore) return 'away'
-  return 'draw'
-}
-
-function goalPredictionCorrect(item: AnalysisMatch, goal: GuidePrediction['goal']): boolean {
-  const total = actualGoalTotal(item)
-  if (!Number.isFinite(total) || !Number.isFinite(goal.total)) return false
-  const label = String(goal.label || '')
-  if (label.includes('以内')) return total <= goal.total
-  if (label.includes('以上')) return total >= goal.total
-  const range = label.match(/(\d+)\s*-\s*(\d+)球/)
-  if (range) {
-    const low = Number.parseInt(range[1], 10)
-    const high = Number.parseInt(range[2], 10)
-    return total >= low && total <= high
-  }
-  return total === Math.round(goal.total)
-}
-
-function scorePredictionCorrect(item: AnalysisMatch, score: string): boolean {
-  const parsed = parseScoreText(score)
-  if (!parsed) return false
-  return parsed.home === item.homeScore && parsed.guest === item.guestScore
-}
-
-function actualGoalTotal(item: AnalysisMatch): number {
-  return Number(item.homeScore || 0) + Number(item.guestScore || 0)
-}
-
-function matchDateText(value: string): string {
-  const normalized = validDateString(String(value || '').slice(0, 10))
-  return normalized || '-'
-}
-
-function parseScoreText(score: string): { home: number; guest: number } | null {
-  const match = String(score || '').match(/^(\d+):(\d+)$/)
-  if (!match) return null
-  return {
-    home: Number.parseInt(match[1], 10),
-    guest: Number.parseInt(match[2], 10),
-  }
-}
-
 function accuracyRateText(correct: number, sample: number): string {
   if (!sample) return '-'
   return `${correct}/${sample} ${Math.round((correct / sample) * 100)}%`
-}
-
-function outcomeShortLabel(outcome: DirectionOutcome | null): string {
-  if (outcome === 'home') return '主胜'
-  if (outcome === 'away') return '客胜'
-  if (outcome === 'draw') return '平局'
-  return '-'
-}
-
-function handicapBucket(value: unknown): string {
-  const line = parseOptionalNumber(value)
-  if (!Number.isFinite(line) || Math.abs(line) < 0.25) return '平浅'
-  const side = line > 0 ? '主让' : '客让'
-  const abs = Math.abs(line)
-  if (abs >= 1) return `${side}深`
-  if (abs >= 0.5) return `${side}中`
-  return `${side}浅`
-}
-
-function goalLineBucket(value: unknown): string {
-  const line = parseOptionalNumber(value)
-  if (!Number.isFinite(line)) return '-'
-  if (line <= 2.25) return '低盘'
-  if (line >= 2.75) return '高盘'
-  return '中盘'
-}
-
-function heatBucket(leftValue: unknown, rightValue: unknown, leftHot: string, rightHot: string): string {
-  const left = parseOptionalNumber(leftValue)
-  const right = parseOptionalNumber(rightValue)
-  if (!Number.isFinite(left) || !Number.isFinite(right)) return '-'
-  if (left > 65) return leftHot
-  if (right > 65) return rightHot
-  if (left - right >= 10) return leftHot
-  if (right - left >= 10) return rightHot
-  return '均衡'
-}
-
-function goalDirectionLabel(goal: GuidePrediction['goal']): string {
-  const label = String(goal.label || '')
-  if (label.includes('以上')) return '大球'
-  if (label.includes('以内')) return '小球'
-  return '盘口球'
-}
-
-function goalBalanceSignalLabel(signal: ReturnType<typeof goalBalanceSignalForItem>): string {
-  if (signal === 'underHidden') return '小球隐藏'
-  if (signal === 'under') return '小球'
-  if (signal === 'overCorrected') return '大球修正'
-  if (signal === 'over') return '大球'
-  return '-'
 }
 
 function syncDateQuery() {
@@ -2162,10 +1522,9 @@ function buildPlanContext(item: AnalysisMatch): PlanContext {
   const gap = top.value - second.value
   const confidenceTone = gap >= 14 ? '主线相对清楚' : gap >= 7 ? '有方向但不能放太满' : '三项差距不大，容错要靠分散'
   const [historyHandicap, recentHandicap] = splitPair(item.changguiyapan)
-  const [historyGoals, recentGoals] = splitPair(item.changguiqiushu)
-  const historyGoalValue = historyGoalSampleValue(item, historyGoals)
-  const recentGoalValue = recentGoalSampleValue(item, recentGoals)
-  const combinedGoalValue = combinedGoalAverageValue(historyGoalValue, recentGoalValue)
+  const historyGoalValue = item.historyGoalAverage
+  const recentGoalValue = item.recentGoalAverage
+  const combinedGoalValue = item.combinedGoalAverage
   const goalAdviceLine = buildGoalAdviceLine(item)
   const rows = localProfitRows(item)
   const pressureRow = rows.slice().sort((a, b) => a.bookmakerProfit - b.bookmakerProfit)[0]
@@ -2517,12 +1876,21 @@ function joinText(value: unknown[] | undefined, separator = ' / ') {
   return value.map((item) => Array.isArray(item) ? item.join(',') : String(item)).join(separator)
 }
 
+// 散户心理两行展示：第一行隐含概率基底（庄家定价），第二行加权后的模拟资金分布。
+function sanhuCompareText(item: AnalysisMatch): string {
+  const implied = `${Math.round(item.winProbability)}% / ${Math.round(item.drawProbability)}% / ${Math.round(item.loseProbability)}%`
+  const weighted = joinText(item.sanhuxinli?.slice(0, 3))
+  return `隐含 ${implied}\n加权 ${weighted}`
+}
+
 function scoreTriplet(scores: DirectionValues): string {
   return `主${scoreText(scores.home)} 平${scoreText(scores.draw)} 客${scoreText(scores.away)}`
 }
 
+const tradeMarketKeys = ['sporttery', 'sportterySim', 'sportteryRqspf', 'sportteryRqspfSim']
+
 function bookmakerMarkets(item: AnalysisMatch): BookmakerMarket[] {
-  return (item.roiSimulation?.markets ?? []).filter((market) => market.key === 'sporttery' || market.key === 'sportteryRqspf')
+  return (item.roiSimulation?.markets ?? []).filter((market) => tradeMarketKeys.includes(market.key))
 }
 
 function showBookmakerSection(item: AnalysisMatch): boolean {
@@ -2569,6 +1937,12 @@ function parseOptionalNumber(value: unknown): number {
 
 function sportteryMarket(item: AnalysisMatch): BookmakerMarket | undefined {
   return bookmakerMarkets(item).find((market) => market.key === 'sporttery')
+}
+
+// 竞彩投注比例表只展示官方数据，模拟盘不渲染。
+function sportteryRatioMarket(item: AnalysisMatch): BookmakerMarket | undefined {
+  const market = sportteryMarket(item)
+  return market && !market.simulated ? market : undefined
 }
 
 function sportteryRows(item: AnalysisMatch): BookmakerOutcome[] {
@@ -2945,10 +2319,6 @@ function platformLivePrediction(item: AnalysisMatch): GuidePrediction {
   return item.platform?.platform ?? emptyGuidePrediction
 }
 
-function goalBalanceSignalForItem(item: AnalysisMatch): 'underHidden' | 'under' | 'overCorrected' | 'over' | null {
-  return item.platform?.goalBalanceSignal || null
-}
-
 function outcomeTone(outcome: DirectionOutcome): StatRow['tone'] {
   if (outcome === 'home') return 'red'
   if (outcome === 'away') return 'green'
@@ -2965,18 +2335,6 @@ function scoreOutcome(score: string): DirectionOutcome {
   if (home > guest) return 'home'
   if (home < guest) return 'away'
   return 'draw'
-}
-
-function scoreShapeLabel(score: string): string {
-  const [home, guest] = score.split(':').map((value) => Number.parseInt(value, 10))
-  if (!Number.isFinite(home) || !Number.isFinite(guest)) return ''
-  const total = home + guest
-  const totalLabel = total <= 1 ? '低比分' : total === 2 ? '2球' : total === 3 ? '3球' : '大比分'
-  if (home === guest) return `平局${totalLabel}`
-  const outcome = home > guest ? '主胜' : '客胜'
-  const margin = Math.abs(home - guest)
-  const marginLabel = margin === 1 ? '小胜' : margin === 2 ? '中胜' : '大胜'
-  return `${outcome}${marginLabel}${totalLabel}`
 }
 
 function historyStatRows(item: AnalysisMatch): StatRow[] {
@@ -3059,44 +2417,9 @@ function zeroGoalAdviceText(item: AnalysisMatch): string {
   return item.platform?.zeroGoalAdvice ?? ''
 }
 
-function weightedAverage(items: Array<{ value: number; weight: number }>): number {
-  const validItems = items.filter((item) => Number.isFinite(item.value) && item.weight > 0)
-  const totalWeight = validItems.reduce((sum, item) => sum + item.weight, 0)
-  if (totalWeight <= 0) return Number.NaN
-  return validItems.reduce((sum, item) => sum + item.value * item.weight, 0) / totalWeight
-}
-
-
-function hasHistoryGoalSample(item: AnalysisMatch): boolean {
-  const signal = String(item.sanhuxinli?.[4] || '').trim()
-  return Boolean(signal && signal !== '样本不足')
-}
-
-function hasTeamRecentGoalSample(value: unknown[] | undefined): boolean {
-  return Array.isArray(value) && value.length >= 5
-}
-
-function hasRecentGoalSample(item: AnalysisMatch): boolean {
-  return hasTeamRecentGoalSample(item.homezuijinbisai) || hasTeamRecentGoalSample(item.guestzuijinbisai)
-}
-
-function historyGoalSampleValue(item: AnalysisMatch, value: unknown): number {
-  return hasHistoryGoalSample(item) ? parseOptionalNumber(value) : Number.NaN
-}
-
-function recentGoalSampleValue(item: AnalysisMatch, value: unknown): number {
-  return hasRecentGoalSample(item) ? parseOptionalNumber(value) : Number.NaN
-}
-
-function combinedGoalAverageValue(historyValue: number, recentValue: number): number {
-  return weightedAverage([
-    { value: historyValue, weight: 0.45 },
-    { value: recentValue, weight: 0.55 },
-  ])
-}
-
-function goalMetricText(value: number): string {
-  if (!Number.isFinite(value)) return '-'
+// 球数/让球均值全部由后端计算（historyGoalAverage / recentGoalAverage / combinedGoalAverage / combinedHandicapAverage），null 表示样本不足。
+function goalMetricText(value: number | null | undefined): string {
+  if (value === null || value === undefined || !Number.isFinite(value)) return '-'
   return trimFixed(value, 2)
 }
 
@@ -3110,7 +2433,7 @@ function expectedHandicapRows(item: AnalysisMatch): StatRow[] {
   return [
     { label: '历史期望让球', value: valueText(historyHandicap) },
     { label: '近期状态让球', value: valueText(recentHandicap) },
-    { label: '综合均值', value: pairAverage(item.changguiyapan) },
+    { label: '综合均值', value: goalMetricText(item.combinedHandicapAverage) },
     { label: '亚盘初盘', value: valueText(item.yapanpankou1) },
     { label: '亚盘即时盘', value: valueText(item.yapanpankou2) },
     { label: '投注主队比例', value: percentText(item.yapantouzhu?.[0]) },
@@ -3123,14 +2446,10 @@ function expectedHandicapRows(item: AnalysisMatch): StatRow[] {
 }
 
 function expectedGoalRows(item: AnalysisMatch): StatRow[] {
-  const [historyGoals, recentGoals] = splitPair(item.changguiqiushu)
-  const historyGoalValue = historyGoalSampleValue(item, historyGoals)
-  const recentGoalValue = recentGoalSampleValue(item, recentGoals)
-  const combinedGoals = combinedGoalAverageValue(historyGoalValue, recentGoalValue)
   return [
-    { label: '历史平均球数', value: goalMetricText(historyGoalValue) },
-    { label: '近期平均球数', value: goalMetricText(recentGoalValue) },
-    { label: '综合均值', value: goalMetricText(combinedGoals) },
+    { label: '历史平均球数', value: goalMetricText(item.historyGoalAverage) },
+    { label: '近期平均球数', value: goalMetricText(item.recentGoalAverage) },
+    { label: '综合均值', value: goalMetricText(item.combinedGoalAverage) },
     { label: '大小球初盘', value: valueText(item.qiushupankou1) },
     { label: '大小球即时盘', value: valueText(item.qiushupankou2) },
     { label: '投注大球比例', value: percentText(item.qiushutouzhu?.[0]) },
@@ -3150,12 +2469,6 @@ function labeledRows(labels: string[], values: unknown[] | undefined): StatRow[]
 function splitPair(value: string): [string, string] {
   const parts = String(value || '').split(':').map((item) => item.trim())
   return [parts[0] || '', parts[1] || '']
-}
-
-function pairAverage(value: string): string {
-  const parts = splitPair(value).map((item) => Number.parseFloat(item))
-  if (parts.length < 2 || parts.some((item) => Number.isNaN(item))) return '-'
-  return ((parts[0] + parts[1]) / 2).toFixed(2)
 }
 
 function percentText(value: unknown): string {

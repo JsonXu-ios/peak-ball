@@ -588,7 +588,13 @@ func pfLocalProfitMarket(response *analysisMatchResponse) *bookmakerMarketRespon
 	if response.RoiSimulation != nil && response.RoiSimulation.TotalStake > 0 {
 		totalStake = response.RoiSimulation.TotalStake
 	}
-	market := bookmakerMarketResponse{Key: "localAverageOdds", Name: "本地测算"}
+	market := bookmakerMarketResponse{
+		Key:                "localAverageOdds",
+		Name:               "本地测算",
+		Odds:               directionValues{Home: pfRound(odds.Home, 2), Draw: pfRound(odds.Draw, 2), Away: pfRound(odds.Away, 2)},
+		OddsAvailable:      true,
+		RetailDistribution: directionValues{Home: shares[0], Draw: shares[1], Away: shares[2]},
+	}
 	for index, outcome := range bookmakerOutcomeKeys {
 		betStake := pfRound(totalStake*shares[index]/100, 2)
 		payout := pfRound(betStake*oddsValues[index], 2)
@@ -1916,16 +1922,17 @@ func pfProfitAlignmentWarningRows(response *analysisMatchResponse) []platformWar
 	rq := pfStrongMarketComfortRow(response, "sportteryRqspf")
 	sportteryLoss := pfStrongMarketLossRow(response, "sporttery")
 	rqLoss := pfStrongMarketLossRow(response, "sportteryRqspf")
+	simulatedTag := pfSimulatedMarketsTag(response)
 	warnings := []platformWarningRow{}
 
 	if sporttery != nil && rq != nil && sporttery.Outcome == rq.Outcome {
 		warnings = append(warnings, platformWarningRow{
-			Value: "警示：交易盈亏同向：胜平负" + pfOutcomeShortLabel(sporttery.Outcome) + pfSignedMoneyText(sporttery.BookmakerProfit, sporttery.Available) + "、让球" + pfOutcomeShortLabel(rq.Outcome) + pfSignedMoneyText(rq.BookmakerProfit, rq.Available) + "，均为庄家舒服项",
+			Value: "警示：交易盈亏同向：胜平负" + pfOutcomeShortLabel(sporttery.Outcome) + pfSignedMoneyText(sporttery.BookmakerProfit, sporttery.Available) + "、让球" + pfOutcomeShortLabel(rq.Outcome) + pfSignedMoneyText(rq.BookmakerProfit, rq.Available) + "，均为庄家舒服项" + simulatedTag,
 			Tone:  "red",
 		})
 	}
 	if sportteryLoss != nil && rqLoss != nil && sportteryLoss.Outcome == "away" && rqLoss.Outcome == "away" {
-		warnings = append(warnings, platformWarningRow{Value: "警示：庄家同向亏损：胜平负负、让球负均为最大亏损项", Tone: "green"})
+		warnings = append(warnings, platformWarningRow{Value: "警示：庄家同向亏损：胜平负负、让球负均为最大亏损项" + simulatedTag, Tone: "green"})
 	}
 	if local != nil {
 		aligned := []string{}
@@ -1937,12 +1944,27 @@ func pfProfitAlignmentWarningRows(response *analysisMatchResponse) []platformWar
 		}
 		if len(aligned) > 0 {
 			warnings = append(warnings, platformWarningRow{
-				Value: "警示：庄家舒服项同向：本地测算、" + strings.Join(aligned, "、") + "均指向" + pfOutcomeShortLabel(local.Outcome) + "（庄家盈利方向）",
+				Value: "警示：庄家舒服项同向：本地测算、" + strings.Join(aligned, "、") + "均指向" + pfOutcomeShortLabel(local.Outcome) + "（庄家盈利方向）" + simulatedTag,
 				Tone:  "red",
 			})
 		}
 	}
 	return warnings
+}
+
+// pfSimulatedMarketsTag 当竞彩/让球盈亏来自本地模拟时，为警示追加标注。
+func pfSimulatedMarketsTag(response *analysisMatchResponse) string {
+	simulated := []string{}
+	if market := pfMarketByKey(response, "sporttery"); market != nil && market.Simulated {
+		simulated = append(simulated, "胜平负")
+	}
+	if market := pfMarketByKey(response, "sportteryRqspf"); market != nil && market.Simulated {
+		simulated = append(simulated, "让球")
+	}
+	if len(simulated) == 0 {
+		return ""
+	}
+	return "（" + strings.Join(simulated, "、") + "为模拟盘）"
 }
 
 func pfPlatformIntegratedWarningRows(response *analysisMatchResponse) []platformWarningRow {

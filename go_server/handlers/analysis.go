@@ -182,15 +182,25 @@ type analysisMatchResponse struct {
 	DxqCount         int       `json:"dxqCount"`
 	SportteryOdds    []float64 `json:"sportteryOdds"`
 
+	// 综合均值与命中标记：由后端算好，前端只展示。
+	HistoryGoalAverage      *float64 `json:"historyGoalAverage"`
+	RecentGoalAverage       *float64 `json:"recentGoalAverage"`
+	CombinedGoalAverage     *float64 `json:"combinedGoalAverage"`
+	CombinedHandicapAverage *float64 `json:"combinedHandicapAverage"`
+	PredictionHit           *bool    `json:"predictionHit"`
+
 	Detail        analysisDetailResponse        `json:"detail"`
 	RoiSimulation *matchRoiSimulationResponse   `json:"roiSimulation,omitempty"`
 	Platform      *platformDecision             `json:"platform,omitempty"`
 	MyAngle       *myAngleBlock                 `json:"myAngle,omitempty"`
 	TeamProfiles  *analysisTeamProfilesResponse `json:"teamProfiles,omitempty"`
 	GoddessWoman  *goddessWomanResponse         `json:"goddessWoman,omitempty"`
+	AccuracyFit   *accuracyMatchRow             `json:"accuracyFit,omitempty"`
 
-	bookmakerOdds  []bookmakerOddsSource
-	sportteryTrade sportteryTradeData
+	bookmakerOdds    []bookmakerOddsSource
+	sportteryTrade   sportteryTradeData
+	averageOdds      []float64
+	averageFirstOdds []float64
 }
 
 type analysisDetailResponse struct {
@@ -283,6 +293,8 @@ func GetAnalysisMatches(c *gin.Context) {
 	}
 	// 我的镜像：把库主历史选择在同类盘型下的红黑表现附到每场比赛。
 	attachMyAngle(items)
+	// 匹配历史规律：按 snapshot 规则池给每场算好 fit 结果，前端只展示。
+	attachAccuracyFits(items)
 
 	c.JSON(http.StatusOK, items)
 }
@@ -307,7 +319,9 @@ func GetAnalysisDetail(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, buildAnalysisWithWeights(match, true))
+	items := []analysisMatchResponse{buildAnalysisWithWeights(match, true)}
+	attachAccuracyFits(items)
+	c.JSON(http.StatusOK, items[0])
 }
 
 func readAnalysisRuleSnapshot() ([]byte, error) {
@@ -451,7 +465,38 @@ func buildAnalysis(match models.Money, fetchSporttery bool) analysisMatchRespons
 		ticairesult = []string{predictionShort(prediction)}
 	}
 
-	sanhuxinli := []string{probabilityLabels[0], probabilityLabels[1], probabilityLabels[2], fmt.Sprintf("%s~%s", firstNonEmptyString(match.HomeRank, "-"), firstNonEmptyString(match.GuestRank, "-")), historySignal(againstSummary, match.Home, match.Guest)}
+	// 综合均值：口径与原前端一致——历史/近期样本不足时剔除，不按 0 处理。
+	historySampleAvailable := againstSummary.All > 0
+	recentSampleAvailable := len(homeLast) >= 5 || len(guestLast) >= 5
+	var historyGoalAverage, recentGoalAverage *float64
+	if historySampleAvailable {
+		historyGoalAverage = roundedFloatPointer(historyTotalGoals)
+	}
+	if recentSampleAvailable {
+		recentGoalAverage = roundedFloatPointer(recentTotalGoals)
+	}
+	combinedGoalAverage := weightedAveragePointer([]pfWeighted{
+		{floatOrNaN(historyGoalAverage), 0.45},
+		{floatOrNaN(recentGoalAverage), 0.55},
+	})
+	combinedHandicapAverage := roundedFloatPointer((historyGoalDiff + recentGoalDiff) / 2)
+
+	// 加权散户心理：隐含概率为基底，用亚盘/大小球/历史/近况/均值做纯本地权重偏移，不使用竞彩数据。
+	retailDistribution := simulatedRetailDistribution(retailWeightInputs{
+		probabilities:    [3]float64{probabilities[0], probabilities[1], probabilities[2]},
+		handicapLine:     yapanPankou2,
+		openingLine:      yapanPankou1,
+		goalLine:         qiushuPankou2,
+		historyWinPct:    historyWinPct,
+		historyLosePct:   historyLosePct,
+		historyAvailable: historySampleAvailable,
+		recentGoalDiff:   recentGoalDiff,
+		recentAvailable:  recentSampleAvailable,
+		combinedHandicap: combinedHandicapAverage,
+		combinedGoals:    combinedGoalAverage,
+	})
+
+	sanhuxinli := []string{formatPercent(retailDistribution[0]), formatPercent(retailDistribution[1]), formatPercent(retailDistribution[2]), fmt.Sprintf("%s~%s", firstNonEmptyString(match.HomeRank, "-"), firstNonEmptyString(match.GuestRank, "-")), historySignal(againstSummary, match.Home, match.Guest)}
 	tags := analysisTags(match.League, prediction, probabilities, againstSummary, yapanPankou1, yapanPankou2, recentTotalGoals, qiushuPankou2)
 	goddessWoman := buildGoddessWoman(match, probabilities, againstSummary, againstList, homeRecent, guestRecent)
 
@@ -483,6 +528,12 @@ func buildAnalysis(match models.Money, fetchSporttery bool) analysisMatchRespons
 	}
 
 	teamProfiles := resolveTeamProfiles(match, firstNonEmptyString(match.League, match.LeagueName), fetchSporttery)
+
+	var predictionHit *bool
+	if strings.Contains(match.DisplayState, "完") || match.Status >= 4 {
+		hit := prediction == []string{"主胜", "平局", "客胜"}[actualOutcomeIndex(match.HomeScore, match.GuestScore)]
+		predictionHit = &hit
+	}
 
 	return analysisMatchResponse{
 		MatchID:          match.MatchId,
@@ -537,12 +588,80 @@ func buildAnalysis(match models.Money, fetchSporttery bool) analysisMatchRespons
 		AsiaCount:        maxInt(pankou.AsiaCount, len(asianRows)),
 		DxqCount:         maxInt(pankou.DxqCount, len(dxqRows)),
 		SportteryOdds:    sportteryOdd,
+
+		HistoryGoalAverage:      historyGoalAverage,
+		RecentGoalAverage:       recentGoalAverage,
+		CombinedGoalAverage:     combinedGoalAverage,
+		CombinedHandicapAverage: combinedHandicapAverage,
+		PredictionHit:           predictionHit,
+
 		Detail:           detail,
 		bookmakerOdds:    bookmakerOdds,
 		sportteryTrade:   sportteryTrade,
+		averageOdds:      avgOdd,
+		averageFirstOdds: resolveAverageFirstOdds(odds, oddsRows),
 		TeamProfiles:     teamProfiles,
 		GoddessWoman:     &goddessWoman,
 	}
+}
+
+// resolveAverageFirstOdds 取平均欧赔的初盘：优先源站平均行，缺失时用各公司初盘均值兜底。
+func resolveAverageFirstOdds(odds models.OddsMoney, rows []analysisEuroOdd) []float64 {
+	avg := jsonValue[analysisEuroOdd](odds.AvgOdds)
+	if len(avg.FirstOdds) >= 3 {
+		values := []float64{parseFloat(avg.FirstOdds[0]), parseFloat(avg.FirstOdds[1]), parseFloat(avg.FirstOdds[2])}
+		if values[0] > 0 && values[1] > 0 && values[2] > 0 {
+			return values
+		}
+	}
+
+	sums := []float64{0, 0, 0}
+	counts := []float64{0, 0, 0}
+	for _, row := range rows {
+		if len(row.FirstOdds) < 3 || isAverageOddRow(row) {
+			continue
+		}
+		for i := 0; i < 3; i++ {
+			value := parseFloat(row.FirstOdds[i])
+			if value <= 0 {
+				continue
+			}
+			sums[i] += value
+			counts[i]++
+		}
+	}
+	for _, count := range counts {
+		if count == 0 {
+			return nil
+		}
+	}
+	return []float64{sums[0] / counts[0], sums[1] / counts[1], sums[2] / counts[2]}
+}
+
+func floatOrNaN(value *float64) float64 {
+	if value == nil {
+		return math.NaN()
+	}
+	return *value
+}
+
+// weightedAveragePointer 对有限值做加权平均，全部缺失时返回 nil。
+func weightedAveragePointer(items []pfWeighted) *float64 {
+	value := pfWeightedAverage(items)
+	if !pfFinite(value) {
+		return nil
+	}
+	return roundedFloatPointer(value)
+}
+
+func actualOutcomeIndex(homeScore int, guestScore int) int {
+	if homeScore > guestScore {
+		return 0
+	}
+	if homeScore < guestScore {
+		return 2
+	}
+	return 1
 }
 
 func resolveTeamProfiles(match models.Money, league string, fetchOnline bool) *analysisTeamProfilesResponse {
