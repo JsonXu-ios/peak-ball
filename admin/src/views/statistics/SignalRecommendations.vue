@@ -19,6 +19,8 @@ interface FiredSignal {
   title: string
   mode: 'follow' | 'inverse'
   pick: string
+  /** 后端提炼的最终答案，每条信号一个明确结论 */
+  answer?: string
   extra?: string
   accuracy: number
   sample: number
@@ -253,6 +255,15 @@ onMounted(() => fetchReport(false))
                     {{ signal.mode === 'follow' ? '跟' : '反向' }} · 历史{{ signal.accuracy.toFixed(0) }}% / {{ signal.sample }}场
                   </v-chip>
                   <span class="text-caption text-disabled">{{ signal.title }}<template v-if="signal.extra"> · {{ signal.extra }}</template></span>
+                  <v-chip
+                    v-if="signal.answer"
+                    :color="modeColor(signal.mode)"
+                    size="small"
+                    variant="flat"
+                    class="rec-answer ml-auto shrink-0 font-weight-bold"
+                  >
+                    答案：{{ signal.answer }}
+                  </v-chip>
                 </div>
               </div>
             </div>
@@ -299,6 +310,9 @@ onMounted(() => fetchReport(false))
 }
 .rec-pick {
   font-size: 0.95rem;
+}
+.rec-answer {
+  font-size: 0.9rem;
 }
 .team-logo {
   display: inline-flex;

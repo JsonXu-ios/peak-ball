@@ -427,7 +427,7 @@ func recommendCatalogue() []recommendCondition {
 			}
 			return recommendFire{
 				fires: true, settle: "cover", direction: implied, line: ctx.asianLine, oddsValue: oddsValue,
-				pick:  label + "：买" + side + "赢盘(" + fmt.Sprintf("%.2f", ctx.asianLine) + ")",
+				pick: label + "：买" + side + "赢盘(" + fmt.Sprintf("%.2f", ctx.asianLine) + ")",
 			}
 		},
 	})
@@ -693,6 +693,66 @@ func recomputeRecommendSnapshot() (*recommendSnapshot, error) {
 	}, nil
 }
 
+// recommendOutcomesLabel joins the given outcomes (with team names) by "/".
+func recommendOutcomesLabel(match statisticsMatch, include func(string) bool) string {
+	labels := make([]string, 0, 3)
+	for _, key := range []string{"home", "draw", "away"} {
+		if include(key) {
+			labels = append(labels, recommendOutcomeLabelFor(key, match))
+		}
+	}
+	return strings.Join(labels, "/")
+}
+
+// recommendAnswer distills a fired signal into the final actionable answer.
+// 反向信号给出补集（明确可买的内容），不出现"防/避开"这类模糊表述。
+func recommendAnswer(fire recommendFire, ctx recommendCtx, mode string) string {
+	if mode == "inverse" {
+		switch fire.settle {
+		case "outcome":
+			// 信号方向历史≤30% → 买其余两项（双选）。
+			return recommendOutcomesLabel(ctx.match, func(key string) bool { return key != fire.direction })
+		case "choices":
+			// 凯体交集≤30% → 买交集之外的方向。
+			answer := recommendOutcomesLabel(ctx.match, func(key string) bool { return !ctx.kellyChoices[key] })
+			if answer == "" {
+				return "反向参考"
+			}
+			return answer
+		case "cover":
+			side := ctx.match.Guest
+			if fire.direction == "away" {
+				side = ctx.match.Home
+			}
+			return fmt.Sprintf("买%s赢盘(%.2f)", side, fire.line)
+		case "over":
+			if fire.direction == "over" {
+				return fmt.Sprintf("买小%.2f", fire.line)
+			}
+			return fmt.Sprintf("买大%.2f", fire.line)
+		}
+		return "反向参考"
+	}
+	switch fire.settle {
+	case "outcome":
+		return recommendOutcomeLabelFor(fire.direction, ctx.match)
+	case "choices":
+		return recommendOutcomesLabel(ctx.match, func(key string) bool { return ctx.kellyChoices[key] })
+	case "cover":
+		side := ctx.match.Guest
+		if fire.direction == "home" {
+			side = ctx.match.Home
+		}
+		return fmt.Sprintf("买%s赢盘(%.2f)", side, fire.line)
+	case "over":
+		if fire.direction == "over" {
+			return fmt.Sprintf("买大%.2f", fire.line)
+		}
+		return fmt.Sprintf("买小%.2f", fire.line)
+	}
+	return fire.pick
+}
+
 // recommendInversePick turns a ≤30% condition's pick into its reverse advice.
 func recommendInversePick(condition recommendCondition, fire recommendFire, ctx recommendCtx) string {
 	switch fire.settle {
@@ -840,7 +900,7 @@ func GetSignalRecommendations(c *gin.Context) {
 			}
 			markets[condition.Market] = append(markets[condition.Market], gin.H{
 				"key": key, "title": condition.Title, "mode": mode,
-				"pick": pick, "extra": fire.extra,
+				"pick": pick, "answer": recommendAnswer(fire, ctx, mode), "extra": fire.extra,
 				"accuracy": accuracy, "sample": stat.Sample,
 			})
 			fired++

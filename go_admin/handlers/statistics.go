@@ -65,6 +65,7 @@ func computeMatchStatistics(start, end string) (gin.H, error) {
 		signals = append(signals, buildDeviationSignals(matches, historyByMatch, pankouByMatch))
 		signals = append(signals, buildChaseSignals(matches, historyByMatch, pankouByMatch))
 		signals = append(signals, buildDirectOverSignals(matches, historyByMatch, pankouByMatch))
+		signals = append(signals, buildEvilCultSignals())
 		report["signals"] = append(signals, pickSignals...)
 		report["pick_profile"] = pickProfile
 	}
@@ -741,6 +742,7 @@ func statisticsRecentGoals(homeRows, guestRows []statisticsHistoryMatch) (float6
 	}
 	return statisticsSliceMean(totals), true
 }
+
 // statisticsPankouRows returns the per-company rows for a market, tolerating both
 // storage shapes the crawler produced: a bare JSON array of companies (newer rows),
 // or the combined object {"asia":[...],"dxq":[...]} that older rows packed into
@@ -848,11 +850,11 @@ var statisticsPankouTerms = map[string]float64{
 	"球半": 1.5, "一球半": 1.5,
 	"两球": 2, "二球": 2,
 	"两球半": 2.5, "二球半": 2.5,
-	"三球": 3,
+	"三球":  3,
 	"三球半": 3.5, "三半": 3.5,
-	"四球": 4,
+	"四球":  4,
 	"四球半": 4.5,
-	"五球": 5,
+	"五球":  5,
 	"平/半": 0.25, "平手/半球": 0.25,
 	"半/一": 0.75, "半球/一球": 0.75,
 	"一/球半": 1.25, "一球/球半": 1.25, "一球/一球半": 1.25,
@@ -957,6 +959,7 @@ func statisticsProbabilities(row map[string]interface{}) []float64 {
 	total := 1/avg[0] + 1/avg[1] + 1/avg[2]
 	return []float64{100 / avg[0] / total, 100 / avg[1] / total, 100 / avg[2] / total}
 }
+
 // statisticsAsianHeat mirrors the frontend pressurePair exactly:
 // balance + share-strength - handicap cost - line-movement cost. The 1.4 share
 // coefficient (up from the original 0.45) and the line-movement term are both
