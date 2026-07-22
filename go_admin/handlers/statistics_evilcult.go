@@ -31,11 +31,77 @@ type evilCultBridgeRow struct {
 	ReverseCorrect int    `json:"reverseCorrect"`
 }
 
-const evilCultDimensionTitle = "19. 邪修一推/二推/反向推（口径=H5 platform.evilCult，由 go_server 结算）"
+// evilCultBridgeMatch 是 go_server 输出的邪修【球数】口径逐场行。
+type evilCultBridgeMatch struct {
+	MatchID        string `json:"matchId"`
+	Date           string `json:"date"`
+	MatchTime      string `json:"matchTime"`
+	League         string `json:"league"`
+	Home           string `json:"home"`
+	Guest          string `json:"guest"`
+	HomeLogo       string `json:"homeLogo"`
+	GuestLogo      string `json:"guestLogo"`
+	HomeScore      int    `json:"homeScore"`
+	GuestScore     int    `json:"guestScore"`
+	ActualTotal    int    `json:"actualTotal"`
+	UnderValue     int    `json:"underValue"`
+	OverValue      int    `json:"overValue"`
+	FirstDirection string `json:"firstDirection"`
+	MainDirection  string `json:"mainDirection"`
+	UnderHit       bool   `json:"underHit"`
+	OverHit        bool   `json:"overHit"`
+	FirstHit       bool   `json:"firstHit"`
+	MainHit        bool   `json:"mainHit"`
+	ReverseHit     bool   `json:"reverseHit"`
+}
 
-const evilCultDimensionDefinition = "桥接 go_server /analysis/accuracy-stats 的邪修正确率：每场完赛按大小球线、精确球数、比分、胜平负四类各结算一次，综合=四类合计。" +
+// evilCultStrategyPickHit 返回某策略在该场的预测球数与是否命中。
+func evilCultStrategyPickHit(name string, m evilCultBridgeMatch) (int, bool) {
+	switch name {
+	case "小球组":
+		return m.UnderValue, m.UnderHit
+	case "追大组":
+		return m.OverValue, m.OverHit
+	case "一推":
+		if m.FirstDirection == "under" {
+			return m.UnderValue, m.FirstHit
+		}
+		return m.OverValue, m.FirstHit
+	case "二推(主推)":
+		if m.MainDirection == "under" {
+			return m.UnderValue, m.MainHit
+		}
+		return m.OverValue, m.MainHit
+	default: // 反向推 = 与二推相反的一侧
+		if m.MainDirection == "under" {
+			return m.OverValue, m.ReverseHit
+		}
+		return m.UnderValue, m.ReverseHit
+	}
+}
+
+// evilCultStrategyDetails 把逐场行转成某策略的明细列表。
+func evilCultStrategyDetails(name string, rows []evilCultBridgeMatch) []statisticsDetail {
+	details := make([]statisticsDetail, 0, len(rows))
+	for _, m := range rows {
+		pick, hit := evilCultStrategyPickHit(name, m)
+		details = append(details, statisticsDetail{
+			MatchID: m.MatchID, Date: m.Date, MatchTime: m.MatchTime, League: m.League,
+			Home: m.Home, Guest: m.Guest, HomeLogo: m.HomeLogo, GuestLogo: m.GuestLogo,
+			HomeScore: m.HomeScore, GuestScore: m.GuestScore, State: "完",
+			Pick:   fmt.Sprintf("%d球", pick),
+			Result: fmt.Sprintf("%d球", m.ActualTotal),
+			Hit:    hit,
+		})
+	}
+	return details
+}
+
+const evilCultDimensionTitle = "18. 邪修一推/二推/反向推（口径=H5 platform.evilCult，由 go_server 结算）"
+
+const evilCultDimensionDefinition = "桥接 go_server /analysis/accuracy-stats 的邪修正确率，只取【球数】（精确球数）口径。" +
 	"小球组/追大组=邪修两套原始方向；一推=首轮评分高的一侧；二推(主推)=反诱导修正后的最终主推；反向推=与二推相反。" +
-	"统计窗口由 go_server 固定（2026-05-28 起全部完赛），不随本页日期范围过滤，暂无逐场明细。"
+	"统计窗口由 go_server 固定（2026-05-28 起全部完赛），不随本页日期范围过滤；点分档「查看」可看逐场明细。"
 
 func evilCultDimensionFailed(reason string) gin.H {
 	return gin.H{
@@ -66,10 +132,11 @@ func buildEvilCultSignals() gin.H {
 	}
 
 	var payload struct {
-		StartDate    string              `json:"startDate"`
-		EndDate      string              `json:"endDate"`
-		Total        int                 `json:"total"`
-		EvilCultRows []evilCultBridgeRow `json:"evilCultRows"`
+		StartDate           string                `json:"startDate"`
+		EndDate             string                `json:"endDate"`
+		Total               int                   `json:"total"`
+		EvilCultRows        []evilCultBridgeRow   `json:"evilCultRows"`
+		EvilCultGoalMatches []evilCultBridgeMatch `json:"evilCultGoalMatches"`
 	}
 	if err := json.Unmarshal(body, &payload); err != nil {
 		return evilCultDimensionFailed(err.Error())
@@ -89,14 +156,16 @@ func buildEvilCultSignals() gin.H {
 		{"反向推", func(row evilCultBridgeRow) int { return row.ReverseCorrect }},
 	}
 
-	buckets := make([]gin.H, 0, len(payload.EvilCultRows)*len(strategies))
+	// 只保留【球数】（精确球数）口径的一行；综合/大小球/比分/胜平负 都不再展示，
+	// 避免出现"综合=四类合计"导致符合场次是完赛基数4倍的迷惑数字。
+	buckets := make([]gin.H, 0, len(strategies))
 	headlineMatched, headlineHit := 0, 0
 	for _, row := range payload.EvilCultRows {
-		// 维度头条用"综合·二推(主推)"——邪修的最终主推表现。
-		if row.Label == "综合" {
-			headlineMatched = row.Sample
-			headlineHit = row.MainCorrect
+		if row.Label != "球数" {
+			continue
 		}
+		headlineMatched = row.Sample
+		headlineHit = row.MainCorrect
 		for _, strategy := range strategies {
 			hit := strategy.correct(row)
 			accuracy := 0.0
@@ -109,16 +178,19 @@ func buildEvilCultSignals() gin.H {
 				"definition": "",
 				"matched":    row.Sample, "hit": hit, "miss": row.Sample - hit,
 				"accuracy": accuracy,
-				"matches":  []statisticsDetail{},
+				"matches":  evilCultStrategyDetails(strategy.name, payload.EvilCultGoalMatches),
 			})
 		}
+	}
+	if len(buckets) == 0 {
+		return evilCultDimensionFailed("go_server 未返回【球数】口径的邪修结算行")
 	}
 
 	headlineAccuracy := 0.0
 	if headlineMatched > 0 {
 		headlineAccuracy = math.Round(float64(headlineHit)/float64(headlineMatched)*10000) / 100
 	}
-	definition := evilCultDimensionDefinition + fmt.Sprintf(" 当前窗口 %s ~ %s，完赛基数 %d 场；头条数字为 综合·二推(主推)。",
+	definition := evilCultDimensionDefinition + fmt.Sprintf(" 当前窗口 %s ~ %s，完赛基数 %d 场；头条数字为 球数·二推(主推)。",
 		payload.StartDate, payload.EndDate, payload.Total)
 
 	return gin.H{

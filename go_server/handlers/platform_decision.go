@@ -1931,6 +1931,16 @@ func pfProfitAlignmentWarningRows(response *analysisMatchResponse) []platformWar
 			Tone:  "red",
 		})
 	}
+	// 模拟盘同向：竞彩模拟对比(sportterySim) 与 竞彩让球模拟(sportteryRqspfSim) 的
+	// 庄家舒服方向一致时，给出与官方竞彩同样口径的警示（纯本地模拟，不含竞彩官方数据）。
+	sportterySim := pfStrongMarketComfortRow(response, "sportterySim")
+	rqSim := pfStrongMarketComfortRow(response, "sportteryRqspfSim")
+	if sportterySim != nil && rqSim != nil && sportterySim.Outcome == rqSim.Outcome {
+		warnings = append(warnings, platformWarningRow{
+			Value: "警示：模拟交易盈亏同向：竞彩模拟" + pfOutcomeShortLabel(sportterySim.Outcome) + pfSignedMoneyText(sportterySim.BookmakerProfit, sportterySim.Available) + "、让球模拟" + pfOutcomeShortLabel(rqSim.Outcome) + pfSignedMoneyText(rqSim.BookmakerProfit, rqSim.Available) + "，均为庄家舒服项（模拟盘）",
+			Tone:  "red",
+		})
+	}
 	if sportteryLoss != nil && rqLoss != nil && sportteryLoss.Outcome == "away" && rqLoss.Outcome == "away" {
 		warnings = append(warnings, platformWarningRow{Value: "警示：庄家同向亏损：胜平负负、让球负均为最大亏损项" + simulatedTag, Tone: "green"})
 	}

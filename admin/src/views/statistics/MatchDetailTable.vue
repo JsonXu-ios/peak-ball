@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { computed } from 'vue'
+
 interface MatchDetail {
   match_id: string
   date: string
@@ -15,9 +17,11 @@ interface MatchDetail {
   result: string
   hit: boolean
   value: number
+  /** 该场结算用的盘口线（仅盘口类信号有值） */
+  line?: string
 }
 
-withDefaults(
+const props = withDefaults(
   defineProps<{
     matches: MatchDetail[]
     total: number
@@ -26,6 +30,9 @@ withDefaults(
   }>(),
   { showValue: false },
 )
+
+/** 有任何一场带盘口线才显示盘口列 */
+const hasLine = computed(() => props.matches.some((m) => m.line))
 
 /** 库里存的是 /footballimg/<id> 相对路径（vite 已代理到前台API），http(s) 原样返回 */
 function logoSrc(path?: string): string {
@@ -49,6 +56,7 @@ function timeText(row: MatchDetail): string {
           <th class="text-center">比分</th>
           <th>客队</th>
           <th>状态</th>
+          <th v-if="hasLine" class="text-right">盘口</th>
           <th v-if="showValue" class="text-right">数值</th>
           <th>推荐</th>
           <th>结果</th>
@@ -77,6 +85,7 @@ function timeText(row: MatchDetail): string {
             </span>
           </td>
           <td class="text-medium-emphasis">{{ m.state }}</td>
+          <td v-if="hasLine" class="text-right">{{ m.line || '-' }}</td>
           <td v-if="showValue" class="text-right">{{ Number(m.value ?? 0).toFixed(2) }}</td>
           <td>{{ m.pick || '-' }}</td>
           <td>{{ m.result || '-' }}</td>

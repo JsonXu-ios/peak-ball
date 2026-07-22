@@ -161,6 +161,7 @@ func buildWarningSignals(matches []statisticsMatch, histories, pankous, odds map
 		"让球热度过热·反过热方赢盘",
 		"大小球热度过热·反过热方向",
 		"交易盈亏同向·舒服方不打出",
+		"模拟交易盈亏同向·舒服方不打出",
 		"庄家同向亏损(负)·客胜打出",
 		"凯体反差·跟凯体共识",
 		"让球修正·跟期望方赢盘",
@@ -253,6 +254,16 @@ func buildWarningSignals(matches []statisticsMatch, histories, pankous, odds map
 			detail.Result = statisticsOutcomeLabel(actual)
 			detail.Hit = actual != comfort
 			add("交易盈亏同向·舒服方不打出", detail, 0)
+		}
+
+		// 15c-sim 模拟交易盈亏同向：竞彩模拟(胜平负)与让球模拟的舒服方向一致，
+		// 舒服方向不打出=警示正确（纯本地模拟盘，覆盖非竞彩场次；无单一赔率，不计ROI）。
+		if comfort, ok := statisticsSimulatedComfort(oddsRow, pankouRow, historyRow, match); ok {
+			detail := statisticsBaseDetail(match)
+			detail.Pick = "防" + statisticsOutcomeLabel(comfort)
+			detail.Result = statisticsOutcomeLabel(actual)
+			detail.Hit = actual != comfort
+			add("模拟交易盈亏同向·舒服方不打出", detail, 0)
 		}
 
 		// 15d 庄家同向亏损(负)：胜平负+让球最大亏损项都是客胜 → 押客胜。
@@ -362,8 +373,8 @@ func buildWarningSignals(matches []statisticsMatch, histories, pankous, odds map
 	}
 	return gin.H{
 		"key":   "warning_signals",
-		"title": "15. 警示信号结算（每类警示暗示方向的胜率与ROI）",
-		"definition": "把H5上的各类警示按其暗示方向结算：热度过热=反过热方，交易盈亏同向=舒服方不打出，同向亏损(负)=押客胜，凯体反差=跟共识，让球修正=跟期望方赢盘，大小球回归=跟回归方向。ROI为按该方向真实赔率每场投1单位（无明确单一赔率的不计）。",
+		"title": "16. 警示信号结算（每类警示暗示方向的胜率与ROI）",
+		"definition": "把H5上的各类警示按其暗示方向结算：热度过热=反过热方，交易盈亏同向=舒服方不打出，模拟交易盈亏同向=模拟盘舒服方不打出（本地模拟，覆盖非竞彩场次），同向亏损(负)=押客胜，凯体反差=跟共识，让球修正=跟期望方赢盘，大小球回归=跟回归方向。ROI为按该方向真实赔率每场投1单位（无明确单一赔率的不计）。",
 		"matched": matched, "hit": hit, "miss": matched - hit, "accuracy": accuracy,
 		"buckets": rows,
 	}

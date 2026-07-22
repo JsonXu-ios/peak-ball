@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { getMatchStatistics } from '@/api'
 import MatchDetailTable from './MatchDetailTable.vue'
 
@@ -30,40 +30,23 @@ interface HeatBucket {
   miss: number
   accuracy: number
   matches: MatchDetail[]
-  roi?: number
-  roiSample?: number
-  flag?: 'red' | 'black' | ''
-}
-
-interface RadarAxis {
-  axis: string
-  sample: number
-  accuracy: number
-  score: number
-}
-
-interface PickProfile {
-  radar: RadarAxis[]
-  asianBuckets: HeatBucket[]
-  goalBuckets: HeatBucket[]
 }
 
 interface Signal {
   key: string
   title: string
   definition: string
+  /** 命中赛果分类：spf/asian/goals/dxq/score/mixed */
+  market?: string
   matched: number
   hit: number
   miss: number
   accuracy: number
+  /** 按 赛前方向×盘口线 拆分：每行是该方向在该盘口线下的场次与命中率 */
+  directions?: Array<{ pick: string; line?: string; matched: number; hit: number; miss: number; accuracy: number }>
   matches?: MatchDetail[]
   buckets?: HeatBucket[]
-  /** 反噬指数扩展（仅我的大小球等二元玩法） */
-  z?: number
-  shrunkMissRate?: number
-  fadeEv?: number
-  fadeTriggered?: boolean
-  /** 真实赔率回报（我的选择类信号） */
+  /** 真实赔率回报（13a/13b） */
   roi?: number
   roiSample?: number
 }
@@ -74,11 +57,66 @@ interface Report {
   end_date: string
   generated_at: string
   signals: Signal[]
-  pick_profile?: PickProfile
   needs_recompute?: boolean
 }
 
 const DETAIL_CAP = 300
+
+// 维度分组（展示顺序 + 颜色）。target 说明该组信号的命中率结算于哪个赛果。
+const MARKETS: Array<{ key: string; label: string; color: string; target: string }> = [
+  { key: 'spf', label: '胜平负', color: 'indigo', target: '胜平负（主胜/平/客胜）' },
+  { key: 'asian', label: '让球/亚盘', color: 'orange-darken-2', target: '让球赢盘（主/客盖帽）' },
+  { key: 'goals', label: '球数期望', color: 'cyan-darken-2', target: '大小球（对总进球判大/小）' },
+  { key: 'dxq', label: '大小球盘口', color: 'teal', target: '大小球（对总进球判大/小）' },
+  { key: 'score', label: '比分', color: 'purple', target: '比分（任一命中）' },
+  { key: 'mixed', label: '综合/多赛果', color: 'blue-grey', target: '多赛果（按分组明细各自结算）' },
+]
+
+// 已下线的信号：旧快照里可能还带着，前端直接过滤掉。
+const REMOVED_SIGNALS = new Set([
+  'pick_spf', 'pick_rqspf', 'pick_dxq', 'pick_score', 'direct_over_signals',
+  'pick_overview', 'cross_spf_base', 'cross_spf_comfort', 'cross_dxq_qiu', 'cross_dxq_composite',
+  'chase_signals',
+])
+
+// 快照缓存里的旧数据可能没有 market 字段：按信号 key 兜底归类，保证分组不塌成一堆。
+function marketOf(signal: Signal): string {
+  if (signal.market) return signal.market
+  const map: Record<string, string> = {
+    asian_heat: 'asian', line_discrepancy: 'asian',
+    goals_heat: 'dxq', goals_discrepancy: 'dxq', base_qiu: 'dxq',
+    history_goals: 'goals', recent_goals: 'goals', goals_composite: 'goals',
+    pro_signal: 'spf', trade_comfort: 'spf', sim_trade_comfort: 'spf',
+    history_handicap: 'spf', recent_handicap: 'spf', asian_composite: 'spf',
+    base_spf: 'spf',
+  }
+  return map[signal.key] || 'mixed'
+}
+
+interface SignalGroup {
+  key: string
+  label: string
+  color: string
+  target: string
+  signals: Signal[]
+}
+
+function groupedSignals(signals: Signal[]): SignalGroup[] {
+  const byMarket = new Map<string, Signal[]>()
+  for (const signal of signals) {
+    if (REMOVED_SIGNALS.has(signal.key)) continue
+    const key = marketOf(signal)
+    if (!byMarket.has(key)) byMarket.set(key, [])
+    byMarket.get(key)!.push(signal)
+  }
+  const groups: SignalGroup[] = []
+  for (const meta of MARKETS) {
+    const rows = byMarket.get(meta.key)
+    if (!rows || !rows.length) continue
+    groups.push({ key: meta.key, label: meta.label, color: meta.color, target: meta.target, signals: rows })
+  }
+  return groups
+}
 
 const loading = ref(false)
 const recomputing = ref(false)
@@ -88,6 +126,8 @@ const report = ref<Report | null>(null)
 const error = ref('')
 // which detail tables are open, keyed by signal/bucket key
 const expanded = reactive<Record<string, boolean>>({})
+
+const signalGroups = computed(() => (report.value ? groupedSignals(report.value.signals) : []))
 
 function toggle(key: string) {
   expanded[key] = !expanded[key]
@@ -107,49 +147,6 @@ function sourceRange() {
 
 function cappedMatches(matches: MatchDetail[]) {
   return matches.slice(0, DETAIL_CAP)
-}
-
-// ---- 六边形雷达坐标 ----
-const RADAR_CX = 110
-const RADAR_CY = 108
-const RADAR_R = 78
-
-function radarPoint(index: number, total: number, ratio: number): { x: number; y: number } {
-  const angle = (Math.PI * 2 * index) / total - Math.PI / 2
-  return {
-    x: RADAR_CX + Math.cos(angle) * RADAR_R * ratio,
-    y: RADAR_CY + Math.sin(angle) * RADAR_R * ratio,
-  }
-}
-
-function radarPolygon(axes: RadarAxis[], ratio: number): string {
-  return axes.map((_, index) => {
-    const point = radarPoint(index, axes.length, ratio)
-    return `${point.x.toFixed(1)},${point.y.toFixed(1)}`
-  }).join(' ')
-}
-
-function radarScorePolygon(axes: RadarAxis[]): string {
-  return axes.map((axis, index) => {
-    const point = radarPoint(index, axes.length, Math.max(0.04, axis.score / 100))
-    return `${point.x.toFixed(1)},${point.y.toFixed(1)}`
-  }).join(' ')
-}
-
-function radarLabelPos(index: number, total: number): { x: number; y: number } {
-  return radarPoint(index, total, 1.22)
-}
-
-function flagColor(flag?: string) {
-  if (flag === 'red') return 'error'
-  if (flag === 'black') return 'secondary'
-  return undefined
-}
-
-function flagLabel(flag?: string) {
-  if (flag === 'red') return '红区'
-  if (flag === 'black') return '黑区'
-  return ''
 }
 
 async function fetchReport(refresh = false) {
@@ -194,7 +191,7 @@ onMounted(() => fetchReport(false))
       <div>
         <h2 class="text-h5 font-weight-bold">完赛比赛信号统计</h2>
         <div class="text-body-2 text-medium-emphasis mt-1">
-          基于全部完赛比赛，逐个信号统计符合条件的场次、命中率，并可下钻查看具体比赛。所有计算均在后端完成。
+          基于全部完赛比赛，按维度（胜平负 / 让球 / 球数 / 大小球 / 比分）分组，逐个信号统计符合条件的场次与命中率，并可下钻查看具体比赛。
         </div>
       </div>
       <v-spacer />
@@ -245,197 +242,113 @@ onMounted(() => fetchReport(false))
         </v-col>
       </v-row>
 
-      <!-- 我的画像：六边形 + 盘口红黑分布 -->
-      <v-card v-if="report.pick_profile" class="mb-5">
-        <v-card-title class="pt-5">我的画像（基于已录选择）</v-card-title>
-        <v-card-subtitle class="text-wrap">六边形按“命中率相对基准”归一化(0-100)；样本&lt;3的轴记0分。红区=命中≥65%且样本≥5，黑区=命中≤35%且样本≥5。</v-card-subtitle>
-        <v-card-text>
-          <v-row>
-            <v-col cols="12" md="5" class="d-flex justify-center align-center">
-              <svg viewBox="0 0 220 216" style="max-width: 320px; width: 100%">
-                <polygon
-                  v-for="ring in [1, 0.75, 0.5, 0.25]"
-                  :key="`ring-${ring}`"
-                  :points="radarPolygon(report.pick_profile.radar, ring)"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-opacity="0.15"
-                />
-                <line
-                  v-for="(axis, index) in report.pick_profile.radar"
-                  :key="`spoke-${axis.axis}`"
-                  :x1="RADAR_CX"
-                  :y1="RADAR_CY"
-                  :x2="radarPoint(index, report.pick_profile.radar.length, 1).x"
-                  :y2="radarPoint(index, report.pick_profile.radar.length, 1).y"
-                  stroke="currentColor"
-                  stroke-opacity="0.15"
-                />
-                <polygon
-                  :points="radarScorePolygon(report.pick_profile.radar)"
-                  fill="rgb(33,150,243)"
-                  fill-opacity="0.35"
-                  stroke="rgb(33,150,243)"
-                  stroke-width="2"
-                />
-                <text
-                  v-for="(axis, index) in report.pick_profile.radar"
-                  :key="`label-${axis.axis}`"
-                  :x="radarLabelPos(index, report.pick_profile.radar.length).x"
-                  :y="radarLabelPos(index, report.pick_profile.radar.length).y"
-                  text-anchor="middle"
-                  dominant-baseline="middle"
-                  fill="currentColor"
-                  font-size="10"
-                  font-weight="700"
-                >
-                  {{ axis.axis }} {{ Math.round(axis.score) }}
-                </text>
-              </svg>
-            </v-col>
-            <v-col cols="12" md="7">
-              <v-table density="compact" class="stat-table mb-3">
+      <template v-for="group in signalGroups" :key="`sec-${group.key}`">
+        <div class="market-header d-flex align-center flex-wrap ga-2 mt-8 mb-3">
+          <v-chip :color="group.color" size="small" variant="flat">{{ group.label }}</v-chip>
+          <span class="text-subtitle-1 font-weight-bold">命中赛果：{{ group.target }}</span>
+          <span class="text-caption text-medium-emphasis">{{ group.signals.length }} 个信号</span>
+        </div>
+
+        <v-card v-for="signal in group.signals" :key="signal.key" class="mb-5">
+          <v-card-title class="pt-5 d-flex align-center flex-wrap ga-2">
+            <span>{{ signal.title }}</span>
+            <v-chip color="primary" size="small" variant="tonal">符合 {{ signal.matched.toLocaleString() }} 场</v-chip>
+            <v-chip :color="accuracyColor(signal.accuracy, signal.matched)" size="small" variant="tonal">
+              命中率 {{ signal.matched ? signal.accuracy.toFixed(2) + '%' : '-' }}
+            </v-chip>
+            <v-chip size="small" variant="text">命中 {{ signal.hit }} / 未命中 {{ signal.miss }}</v-chip>
+            <v-chip v-if="typeof signal.roi === 'number'" size="small" variant="tonal" :color="signal.roi >= 100 ? 'success' : 'warning'">
+              ROI {{ signal.roi.toFixed(1) }}%（{{ signal.roiSample }}注有赔率）
+            </v-chip>
+          </v-card-title>
+          <v-card-subtitle class="pb-2 text-wrap">{{ signal.definition }}</v-card-subtitle>
+
+          <v-card-text>
+            <!-- Heat signals: bucket table, each bucket drills into its matches -->
+            <template v-if="signal.buckets">
+              <v-table density="comfortable" class="stat-table">
                 <thead>
-                  <tr><th>维度</th><th class="text-right">样本</th><th class="text-right">命中率/ROI</th><th class="text-right">得分</th></tr>
+                  <tr>
+                    <th>分组</th>
+                    <th class="text-right">符合场次</th>
+                    <th class="text-right">命中</th>
+                    <th class="text-right">命中率</th>
+                    <th class="text-right">明细</th>
+                  </tr>
                 </thead>
                 <tbody>
-                  <tr v-for="axis in report.pick_profile.radar" :key="axis.axis">
-                    <td class="font-weight-medium">{{ axis.axis }}</td>
-                    <td class="text-right">{{ axis.sample }}</td>
-                    <td class="text-right">{{ axis.accuracy.toFixed(1) }}%</td>
-                    <td class="text-right">{{ Math.round(axis.score) }}</td>
-                  </tr>
+                  <template v-for="bucket in signal.buckets" :key="bucket.key">
+                    <tr>
+                      <td class="font-weight-medium">{{ bucket.title }}</td>
+                      <td class="text-right">{{ bucket.matched.toLocaleString() }}</td>
+                      <td class="text-right">{{ bucket.hit }}</td>
+                      <td class="text-right">
+                        <v-chip v-if="bucket.matched" :color="accuracyColor(bucket.accuracy, bucket.matched)" size="small" variant="tonal">
+                          {{ bucket.accuracy.toFixed(2) }}%
+                        </v-chip>
+                        <span v-else>-</span>
+                      </td>
+                      <td class="text-right">
+                        <v-btn v-if="bucket.matched" size="small" variant="text" @click="toggle(bucket.key)">
+                          {{ expanded[bucket.key] ? '收起' : '查看' }}
+                        </v-btn>
+                        <span v-else>-</span>
+                      </td>
+                    </tr>
+                    <tr v-if="expanded[bucket.key]">
+                      <td colspan="5" class="pa-0">
+                        <div class="detail-wrap">
+                          <MatchDetailTable :matches="cappedMatches(bucket.matches)" :total="bucket.matched" :cap="DETAIL_CAP" show-value />
+                        </div>
+                      </td>
+                    </tr>
+                  </template>
                 </tbody>
               </v-table>
-            </v-col>
-          </v-row>
-
-          <template v-for="group in [
-            { title: '亚盘盘型分布（胜平负+让球选择）', rows: report.pick_profile.asianBuckets },
-            { title: '大小球盘口分布（大小球选择）', rows: report.pick_profile.goalBuckets },
-          ]" :key="group.title">
-            <div v-if="group.rows.length" class="mb-2 mt-2 text-subtitle-2 font-weight-bold">{{ group.title }}</div>
-            <v-table v-if="group.rows.length" density="compact" class="stat-table">
-              <thead>
-                <tr><th>盘型</th><th class="text-right">场次</th><th class="text-right">命中</th><th class="text-right">命中率</th><th class="text-right">ROI</th><th class="text-right">标记</th><th class="text-right">明细</th></tr>
-              </thead>
-              <tbody>
-                <template v-for="bucket in group.rows" :key="bucket.key">
-                  <tr>
-                    <td class="font-weight-medium">{{ bucket.title }}</td>
-                    <td class="text-right">{{ bucket.matched }}</td>
-                    <td class="text-right">{{ bucket.hit }}</td>
-                    <td class="text-right">
-                      <v-chip :color="accuracyColor(bucket.accuracy, bucket.matched)" size="x-small" variant="tonal">{{ bucket.accuracy.toFixed(1) }}%</v-chip>
-                    </td>
-                    <td class="text-right">{{ typeof bucket.roi === 'number' ? bucket.roi.toFixed(1) + '%' : '-' }}</td>
-                    <td class="text-right">
-                      <v-chip v-if="flagLabel(bucket.flag)" :color="flagColor(bucket.flag)" size="x-small" variant="flat">{{ flagLabel(bucket.flag) }}</v-chip>
-                      <span v-else>-</span>
-                    </td>
-                    <td class="text-right">
-                      <v-btn size="x-small" variant="text" @click="toggle(bucket.key)">{{ expanded[bucket.key] ? '收起' : '查看' }}</v-btn>
-                    </td>
-                  </tr>
-                  <tr v-if="expanded[bucket.key]">
-                    <td colspan="7" class="pa-0">
-                      <div class="detail-wrap">
-                        <MatchDetailTable :matches="cappedMatches(bucket.matches)" :total="bucket.matched" :cap="DETAIL_CAP" show-value />
-                      </div>
-                    </td>
-                  </tr>
-                </template>
-              </tbody>
-            </v-table>
-          </template>
-        </v-card-text>
-      </v-card>
-
-      <v-card v-for="signal in report.signals" :key="signal.key" class="mb-5">
-        <v-card-title class="pt-5 d-flex align-center flex-wrap ga-2">
-          <span>{{ signal.title }}</span>
-          <v-chip color="primary" size="small" variant="tonal">符合 {{ signal.matched.toLocaleString() }} 场</v-chip>
-          <v-chip :color="accuracyColor(signal.accuracy, signal.matched)" size="small" variant="tonal">
-            命中率 {{ signal.matched ? signal.accuracy.toFixed(2) + '%' : '-' }}
-          </v-chip>
-          <v-chip size="small" variant="text">命中 {{ signal.hit }} / 未命中 {{ signal.miss }}</v-chip>
-          <v-chip v-if="typeof signal.roi === 'number'" size="small" variant="tonal" :color="signal.roi >= 100 ? 'success' : 'warning'">
-            ROI {{ signal.roi.toFixed(1) }}%（{{ signal.roiSample }}注有赔率）
-          </v-chip>
-          <template v-if="typeof signal.z === 'number'">
-            <v-chip size="small" variant="tonal" :color="signal.z <= -1.64 ? 'error' : 'default'">z={{ signal.z.toFixed(2) }}</v-chip>
-            <v-chip size="small" variant="tonal">收缩错误率 {{ signal.shrunkMissRate?.toFixed(1) }}%</v-chip>
-            <v-chip size="small" variant="tonal" :color="(signal.fadeEv ?? 0) > 6 ? 'success' : 'default'">反买EV {{ signal.fadeEv?.toFixed(1) }}%</v-chip>
-            <v-chip v-if="signal.fadeTriggered" color="error" size="small" variant="flat">反噬触发：反买你的大小球方向</v-chip>
-          </template>
-        </v-card-title>
-        <v-card-subtitle class="pb-2 text-wrap">{{ signal.definition }}</v-card-subtitle>
-
-        <v-card-text>
-          <!-- Heat signals: bucket table, each bucket drills into its matches -->
-          <template v-if="signal.buckets">
-            <v-table density="comfortable" class="stat-table">
-              <thead>
-                <tr>
-                  <th>分组</th>
-                  <th class="text-right">符合场次</th>
-                  <th class="text-right">命中</th>
-                  <th class="text-right">命中率</th>
-                  <th class="text-right">ROI</th>
-                  <th class="text-right">标记</th>
-                  <th class="text-right">明细</th>
-                </tr>
-              </thead>
-              <tbody>
-                <template v-for="bucket in signal.buckets" :key="bucket.key">
-                  <tr>
-                    <td class="font-weight-medium">{{ bucket.title }}</td>
-                    <td class="text-right">{{ bucket.matched.toLocaleString() }}</td>
-                    <td class="text-right">{{ bucket.hit }}</td>
-                    <td class="text-right">
-                      <v-chip v-if="bucket.matched" :color="accuracyColor(bucket.accuracy, bucket.matched)" size="small" variant="tonal">
-                        {{ bucket.accuracy.toFixed(2) }}%
-                      </v-chip>
-                      <span v-else>-</span>
-                    </td>
-                    <td class="text-right">{{ typeof bucket.roi === 'number' ? bucket.roi.toFixed(1) + '%' : '-' }}</td>
-                    <td class="text-right">
-                      <v-chip v-if="flagLabel(bucket.flag)" :color="flagColor(bucket.flag)" size="x-small" variant="flat">{{ flagLabel(bucket.flag) }}</v-chip>
-                      <span v-else>-</span>
-                    </td>
-                    <td class="text-right">
-                      <v-btn v-if="bucket.matched" size="small" variant="text" @click="toggle(bucket.key)">
-                        {{ expanded[bucket.key] ? '收起' : '查看' }}
-                      </v-btn>
-                      <span v-else>-</span>
-                    </td>
-                  </tr>
-                  <tr v-if="expanded[bucket.key]">
-                    <td colspan="7" class="pa-0">
-                      <div class="detail-wrap">
-                        <MatchDetailTable :matches="cappedMatches(bucket.matches)" :total="bucket.matched" :cap="DETAIL_CAP" show-value />
-                      </div>
-                    </td>
-                  </tr>
-                </template>
-              </tbody>
-            </v-table>
-          </template>
-
-          <!-- Normal signals: single drill-down of matched matches -->
-          <template v-else>
-            <div v-if="!signal.matched" class="text-medium-emphasis py-4">暂无符合条件的比赛。</div>
-            <template v-else>
-              <v-btn size="small" variant="tonal" class="mb-3" @click="toggle(signal.key)">
-                {{ expanded[signal.key] ? '收起明细' : `查看明细（${signal.matched} 场）` }}
-              </v-btn>
-              <div v-if="expanded[signal.key]" class="detail-wrap">
-                <MatchDetailTable :matches="cappedMatches(signal.matches || [])" :total="signal.matched" :cap="DETAIL_CAP" show-value />
-              </div>
             </template>
-          </template>
-        </v-card-text>
-      </v-card>
+
+            <!-- Normal signals: single drill-down of matched matches -->
+            <template v-else>
+              <div v-if="!signal.matched" class="text-medium-emphasis py-4">暂无符合条件的比赛。</div>
+              <template v-else>
+                <!-- 按 赛前方向×盘口线 拆分：盘口线是该行统计的结算依据 -->
+                <v-table v-if="signal.directions?.length" density="compact" class="stat-table direction-table mb-3">
+                  <thead>
+                    <tr>
+                      <th>赛前方向</th>
+                      <th v-if="signal.directions.some((d) => d.line)" class="text-right">盘口</th>
+                      <th class="text-right">场次</th>
+                      <th class="text-right">命中</th>
+                      <th class="text-right">未命中</th>
+                      <th class="text-right">命中率</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr v-for="direction in signal.directions" :key="`${direction.pick}|${direction.line || ''}`">
+                      <td class="font-weight-medium">{{ direction.pick }}</td>
+                      <td v-if="signal.directions.some((d) => d.line)" class="text-right">{{ direction.line || '-' }}</td>
+                      <td class="text-right">{{ direction.matched.toLocaleString() }}</td>
+                      <td class="text-right">{{ direction.hit }}</td>
+                      <td class="text-right">{{ direction.miss }}</td>
+                      <td class="text-right">
+                        <v-chip :color="accuracyColor(direction.accuracy, direction.matched)" size="small" variant="tonal">
+                          {{ direction.accuracy.toFixed(2) }}%
+                        </v-chip>
+                      </td>
+                    </tr>
+                  </tbody>
+                </v-table>
+                <v-btn size="small" variant="tonal" class="mb-3" @click="toggle(signal.key)">
+                  {{ expanded[signal.key] ? '收起明细' : `查看明细（${signal.matched} 场）` }}
+                </v-btn>
+                <div v-if="expanded[signal.key]" class="detail-wrap">
+                  <MatchDetailTable :matches="cappedMatches(signal.matches || [])" :total="signal.matched" :cap="DETAIL_CAP" show-value />
+                </div>
+              </template>
+            </template>
+          </v-card-text>
+        </v-card>
+      </template>
     </template>
 
     <v-card v-else-if="!loading && !report?.needs_recompute" variant="tonal">
@@ -447,6 +360,15 @@ onMounted(() => fetchReport(false))
 <style scoped>
 .stat-table th {
   white-space: nowrap;
+}
+.market-header {
+  padding: 6px 12px;
+  border-left: 4px solid rgba(var(--v-theme-primary), 0.6);
+  background: rgba(var(--v-theme-primary), 0.04);
+  border-radius: 4px;
+}
+.direction-table {
+  max-width: 620px;
 }
 .detail-wrap {
   max-height: 460px;

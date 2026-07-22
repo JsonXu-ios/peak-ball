@@ -36,6 +36,8 @@ type recommendCtx struct {
 	basePredProb  float64
 	comfortDir    string
 	hasComfort    bool
+	simComfortDir string
+	hasSimComfort bool
 	lossDir       string
 	hasLossBoth   bool
 	kellyChoices  map[string]bool
@@ -75,6 +77,7 @@ func buildRecommendCtx(match statisticsMatch, historyRow, pankouRow, oddsRow map
 		ctx.basePredProb = ctx.probabilities[map[string]int{"home": 0, "draw": 1, "away": 2}[ctx.basePred]]
 	}
 	ctx.comfortDir, ctx.hasComfort = statisticsBookmakerComfort(statisticsValue(oddsRow, "sporttery_trade", "sportteryTrade"))
+	ctx.simComfortDir, ctx.hasSimComfort = statisticsSimulatedComfort(oddsRow, pankouRow, historyRow, match)
 	ctx.lossDir, ctx.hasLossBoth = statisticsBookmakerLossBoth(statisticsValue(oddsRow, "sporttery_trade", "sportteryTrade"))
 	ctx.kellyChoices = statisticsKellySportteryChoices(oddsRow)
 
@@ -250,6 +253,18 @@ func recommendCatalogue() []recommendCondition {
 			},
 		},
 		recommendCondition{
+			Key: "sim_trade_comfort", Title: "模拟交易盈亏同向·舒服方打出", Market: "spf",
+			Evaluate: func(ctx recommendCtx) recommendFire {
+				if !ctx.hasSimComfort {
+					return recommendFire{}
+				}
+				return recommendFire{
+					fires: true, settle: "outcome", direction: ctx.simComfortDir,
+					pick: "防" + recommendOutcomeLabelFor(ctx.simComfortDir, ctx.match) + "——模拟盘庄家舒服方大概率不打出",
+				}
+			},
+		},
+		recommendCondition{
 			Key: "kelly_ticai_conflict", Title: "凯体反差·跟共识方向", Market: "spf",
 			Evaluate: func(ctx recommendCtx) recommendFire {
 				if len(ctx.kellyChoices) == 0 || ctx.basePred == "" || ctx.kellyChoices[ctx.basePred] {
@@ -288,66 +303,94 @@ func recommendCatalogue() []recommendCondition {
 		}),
 	)
 
-	// ---- 1a 亚盘热度分档 (asian) ----
+	// ---- 1a 亚盘热度分档 (asian)，与统计维度一致：档位×主客方向拆分 ----
 	for _, tier := range statisticsHeatTiers {
 		tierValue := tier
-		conditions = append(conditions, recommendCondition{
-			Key: fmt.Sprintf("asian_heat_%d", tierValue), Title: fmt.Sprintf("亚盘热度%d档·跟热度方向赢盘", tierValue), Market: "asian",
-			Evaluate: func(ctx recommendCtx) recommendFire {
-				if !ctx.hasAsianHeat {
-					return recommendFire{}
-				}
-				heat := math.Max(ctx.asianHeat, 100-ctx.asianHeat)
-				matchTier, ok := statisticsHeatTier(heat)
-				if !ok || matchTier != tierValue {
-					return recommendFire{}
-				}
-				pickHome := ctx.asianHeat >= 50
-				side, oddsValue, direction := ctx.match.Guest, ctx.awayWater, "away"
-				if pickHome {
-					side, oddsValue, direction = ctx.match.Home, ctx.homeWater, "home"
-				}
-				if !ctx.hasAsianWater {
-					oddsValue = 0
-				}
-				return recommendFire{
-					fires: true, settle: "cover", direction: direction, line: ctx.asianLine, oddsValue: oddsValue,
-					pick:  "买" + side + "赢盘(" + fmt.Sprintf("%.2f", ctx.asianLine) + ")",
-					extra: fmt.Sprintf("热度%.1f%%", heat),
-				}
-			},
-		})
+		for _, dir := range []struct {
+			suffix, label string
+			home          bool
+		}{
+			{"home", "朝主队", true},
+			{"guest", "朝客队", false},
+		} {
+			condDir := dir
+			conditions = append(conditions, recommendCondition{
+				Key:    fmt.Sprintf("asian_heat_%d_%s", tierValue, condDir.suffix),
+				Title:  fmt.Sprintf("亚盘热度%d档·%s跟赢盘", tierValue, condDir.label),
+				Market: "asian",
+				Evaluate: func(ctx recommendCtx) recommendFire {
+					if !ctx.hasAsianHeat {
+						return recommendFire{}
+					}
+					heat := math.Max(ctx.asianHeat, 100-ctx.asianHeat)
+					matchTier, ok := statisticsHeatTier(heat)
+					if !ok || matchTier != tierValue {
+						return recommendFire{}
+					}
+					pickHome := ctx.asianHeat >= 50
+					if pickHome != condDir.home {
+						return recommendFire{}
+					}
+					side, oddsValue, direction := ctx.match.Guest, ctx.awayWater, "away"
+					if pickHome {
+						side, oddsValue, direction = ctx.match.Home, ctx.homeWater, "home"
+					}
+					if !ctx.hasAsianWater {
+						oddsValue = 0
+					}
+					return recommendFire{
+						fires: true, settle: "cover", direction: direction, line: ctx.asianLine, oddsValue: oddsValue,
+						pick:  "买" + side + "赢盘(" + fmt.Sprintf("%.2f", ctx.asianLine) + ")",
+						extra: fmt.Sprintf("热度%.1f%%", heat),
+					}
+				},
+			})
+		}
 	}
 
-	// ---- 1b 大小球热度分档 (dxq) ----
-	for _, tier := range statisticsHeatTiers {
+	// ---- 1b 大小球热度分档 (dxq)，与统计维度一致：档位×大小方向拆分 ----
+	for _, tier := range statisticsGoalsHeatTiers {
 		tierValue := tier
-		conditions = append(conditions, recommendCondition{
-			Key: fmt.Sprintf("goals_heat_%d", tierValue), Title: fmt.Sprintf("大小球热度%d档·跟热度方向", tierValue), Market: "dxq",
-			Evaluate: func(ctx recommendCtx) recommendFire {
-				if !ctx.hasGoalsHeat {
-					return recommendFire{}
-				}
-				heat := math.Max(ctx.goalsHeat, 100-ctx.goalsHeat)
-				matchTier, ok := statisticsHeatTier(heat)
-				if !ok || matchTier != tierValue {
-					return recommendFire{}
-				}
-				pickOver := ctx.goalsHeat >= 50
-				direction, label, oddsValue := "under", "买小", ctx.underWater
-				if pickOver {
-					direction, label, oddsValue = "over", "买大", ctx.overWater
-				}
-				if !ctx.hasDxqWater {
-					oddsValue = 0
-				}
-				return recommendFire{
-					fires: true, settle: "over", direction: direction, line: ctx.dxqLine, oddsValue: oddsValue,
-					pick:  fmt.Sprintf("%s%.2f", label, ctx.dxqLine),
-					extra: fmt.Sprintf("热度%.1f%%", heat),
-				}
-			},
-		})
+		for _, dir := range []struct {
+			suffix, label string
+			over          bool
+		}{
+			{"over", "判大", true},
+			{"under", "判小", false},
+		} {
+			condDir := dir
+			conditions = append(conditions, recommendCondition{
+				Key:    fmt.Sprintf("goals_heat_%d_%s", tierValue, condDir.suffix),
+				Title:  fmt.Sprintf("大小球热度%d档·%s跟方向", tierValue, condDir.label),
+				Market: "dxq",
+				Evaluate: func(ctx recommendCtx) recommendFire {
+					if !ctx.hasGoalsHeat {
+						return recommendFire{}
+					}
+					heat := math.Max(ctx.goalsHeat, 100-ctx.goalsHeat)
+					matchTier, ok := statisticsHeatTierIn(statisticsGoalsHeatTiers, heat)
+					if !ok || matchTier != tierValue {
+						return recommendFire{}
+					}
+					pickOver := ctx.goalsHeat >= 50
+					if pickOver != condDir.over {
+						return recommendFire{}
+					}
+					direction, label, oddsValue := "under", "买小", ctx.underWater
+					if pickOver {
+						direction, label, oddsValue = "over", "买大", ctx.overWater
+					}
+					if !ctx.hasDxqWater {
+						oddsValue = 0
+					}
+					return recommendFire{
+						fires: true, settle: "over", direction: direction, line: ctx.dxqLine, oddsValue: oddsValue,
+						pick:  fmt.Sprintf("%s%.2f", label, ctx.dxqLine),
+						extra: fmt.Sprintf("热度%.1f%%", heat),
+					}
+				},
+			})
+		}
 	}
 
 	// ---- 7 亚盘背离≥0.75 (asian) ----
@@ -833,26 +876,49 @@ func GetSignalRecommendations(c *gin.Context) {
 		return
 	}
 
+	// 条件列表返回全量目录（含未上岗），上岗的排最前；待赛推荐仍只用上岗条件。
 	catalogue := recommendCatalogue()
 	conditionByKey := map[string]recommendCondition{}
-	activeConditions := []gin.H{}
+	type conditionListRow struct {
+		payload  gin.H
+		active   bool
+		accuracy float64
+		sample   int
+	}
+	conditionRows := make([]conditionListRow, 0, len(catalogue))
 	for _, condition := range catalogue {
 		mode, isActive := snapshot.ActiveModes[condition.Key]
-		if !isActive {
-			continue
+		if isActive {
+			conditionByKey[condition.Key] = condition
 		}
-		conditionByKey[condition.Key] = condition
+		sample, hitCount, accuracy := 0, 0, 0.0
 		stat := snapshot.Stats[condition.Key]
-		accuracy := math.Round(float64(stat.Hit)/float64(stat.Sample)*10000) / 100
+		if stat != nil && stat.Sample > 0 {
+			sample, hitCount = stat.Sample, stat.Hit
+			accuracy = math.Round(float64(stat.Hit)/float64(stat.Sample)*10000) / 100
+		}
 		row := gin.H{
 			"key": condition.Key, "title": condition.Title, "market": condition.Market,
-			"sample": stat.Sample, "hit": stat.Hit, "accuracy": accuracy, "mode": mode,
+			"sample": sample, "hit": hitCount, "accuracy": accuracy, "mode": mode,
 		}
-		if stat.Stake > 0 {
+		if stat != nil && stat.Stake > 0 {
 			row["roi"] = statisticsRound2(stat.Ret / stat.Stake * 100)
 			row["roiSample"] = stat.OddsN
 		}
-		activeConditions = append(activeConditions, row)
+		conditionRows = append(conditionRows, conditionListRow{payload: row, active: isActive, accuracy: accuracy, sample: sample})
+	}
+	sort.SliceStable(conditionRows, func(i, j int) bool {
+		if conditionRows[i].active != conditionRows[j].active {
+			return conditionRows[i].active
+		}
+		if (conditionRows[i].sample > 0) != (conditionRows[j].sample > 0) {
+			return conditionRows[i].sample > 0
+		}
+		return conditionRows[i].accuracy > conditionRows[j].accuracy
+	})
+	activeConditions := make([]gin.H, 0, len(conditionRows))
+	for _, row := range conditionRows {
+		activeConditions = append(activeConditions, row.payload)
 	}
 
 	// upcoming scan (cheap): only matches in the window, only active conditions

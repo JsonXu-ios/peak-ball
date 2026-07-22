@@ -165,7 +165,7 @@ func buildDeviationSignals(matches []statisticsMatch, histories, pankous map[str
 	}
 	return gin.H{
 		"key":   "deviation_signals",
-		"title": "16. 盘口偏离特殊局面 v2（夸大/隐藏强势方；大小球统一买大+对照组）",
+		"title": "17. 盘口偏离特殊局面 v2（夸大/隐藏强势方；大小球统一买大+对照组）",
 		"definition": "前提：历史期望与近期状态一致（差≤0.5）。让球：夸大强势方=盘口比共识深≥0.25→反强方赢盘，隐藏强势方=盘口比共识浅≥0.25→买强方赢盘。大小球：v1显示盘高于共识买小仅25%，故v2全部按买大结算并加对照组（盘≈共识）——若对照组与偏离组命中率相当，则规律是“该局面下大球被低估”而非偏离本身。ROI按真实水位每场1单位。",
 		"matched": matched, "hit": hit, "miss": matched - hit, "accuracy": accuracy,
 		"buckets": rows,

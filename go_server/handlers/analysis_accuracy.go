@@ -46,6 +46,31 @@ type evilCultAccuracyRow struct {
 	ReverseCorrect int    `json:"reverseCorrect"`
 }
 
+// evilCultGoalMatchRow 是邪修【球数】口径的逐场结算行（供管理后台明细下钻），
+// 命中标志与 buildEvilCultAccuracyRows 同一循环产出，保证口径零漂移。
+type evilCultGoalMatchRow struct {
+	MatchID        string `json:"matchId"`
+	Date           string `json:"date"`
+	MatchTime      string `json:"matchTime"`
+	League         string `json:"league"`
+	Home           string `json:"home"`
+	Guest          string `json:"guest"`
+	HomeLogo       string `json:"homeLogo"`
+	GuestLogo      string `json:"guestLogo"`
+	HomeScore      int    `json:"homeScore"`
+	GuestScore     int    `json:"guestScore"`
+	ActualTotal    int    `json:"actualTotal"`
+	UnderValue     int    `json:"underValue"`
+	OverValue      int    `json:"overValue"`
+	FirstDirection string `json:"firstDirection"`
+	MainDirection  string `json:"mainDirection"`
+	UnderHit       bool   `json:"underHit"`
+	OverHit        bool   `json:"overHit"`
+	FirstHit       bool   `json:"firstHit"`
+	MainHit        bool   `json:"mainHit"`
+	ReverseHit     bool   `json:"reverseHit"`
+}
+
 type accuracyFitSummary struct {
 	Label     string  `json:"label"`
 	Tone      string  `json:"tone"`
@@ -78,6 +103,7 @@ type accuracyStatsSummary struct {
 	Overall             accuracyOverallStats         `json:"overall"`
 	Rows                []accuracyStatsRow           `json:"rows"`
 	EvilCultRows        []evilCultAccuracyRow        `json:"evilCultRows"`
+	EvilCultGoalMatches []evilCultGoalMatchRow       `json:"evilCultGoalMatches"`
 	CommonRows          []analysisRuleSnapshotCommon `json:"commonRows"`
 	GeneratedCommonRows []analysisRuleSnapshotCommon `json:"generatedCommonRows"`
 	MatchRows           []accuracyMatchRow           `json:"matchRows"`
@@ -120,13 +146,15 @@ func GetAnalysisAccuracyStats(c *gin.Context) {
 	}
 
 	rows := buildAccuracyStatsRows(settled)
+	evilCultRows, evilCultGoalMatches := buildEvilCultAccuracyRows(settled)
 	summary := accuracyStatsSummary{
 		StartDate:           accuracyRuleStartDate,
 		EndDate:             endDate,
 		Total:               len(settled),
 		Overall:             buildAccuracyOverall(rows),
 		Rows:                rows,
-		EvilCultRows:        buildEvilCultAccuracyRows(settled),
+		EvilCultRows:        evilCultRows,
+		EvilCultGoalMatches: evilCultGoalMatches,
 		CommonRows:          commonRows,
 		GeneratedCommonRows: generated,
 		MatchRows:           buildAccuracyMatchRows(currentItems, commonRows, "upcoming"),
@@ -274,12 +302,13 @@ func buildAccuracyOverall(rows []accuracyStatsRow) accuracyOverallStats {
 	return overall
 }
 
-func buildEvilCultAccuracyRows(settled []analysisMatchResponse) []evilCultAccuracyRow {
+func buildEvilCultAccuracyRows(settled []analysisMatchResponse) ([]evilCultAccuracyRow, []evilCultGoalMatchRow) {
 	overall := evilCultAccuracyRow{Label: "综合"}
 	goal := evilCultAccuracyRow{Label: "大小球"}
 	total := evilCultAccuracyRow{Label: "球数"}
 	score := evilCultAccuracyRow{Label: "比分"}
 	outcome := evilCultAccuracyRow{Label: "胜平负"}
+	goalMatches := make([]evilCultGoalMatchRow, 0, len(settled))
 
 	for _, item := range settled {
 		if item.Platform == nil {
@@ -312,9 +341,34 @@ func buildEvilCultAccuracyRows(settled []analysisMatchResponse) []evilCultAccura
 			}
 			addEvilCultAccuracy(check.row, check.under, check.over, first, main, reverse)
 			addEvilCultAccuracy(&overall, check.under, check.over, first, main, reverse)
+			// 【球数】口径同时输出逐场行，命中标志与上面同源。
+			if check.row == &total {
+				goalMatches = append(goalMatches, evilCultGoalMatchRow{
+					MatchID:        item.MatchID,
+					Date:           item.Date.Format("2006-01-02"),
+					MatchTime:      item.MatchTime.Format("2006-01-02 15:04"),
+					League:         item.League,
+					Home:           item.Home,
+					Guest:          item.Guest,
+					HomeLogo:       item.HomeLogo,
+					GuestLogo:      item.GuestLogo,
+					HomeScore:      item.HomeScore,
+					GuestScore:     item.GuestScore,
+					ActualTotal:    actualTotal,
+					UnderValue:     prediction.UnderTotalValue,
+					OverValue:      prediction.OverTotalValue,
+					FirstDirection: prediction.FirstDirection,
+					MainDirection:  prediction.GoalDirection,
+					UnderHit:       check.under,
+					OverHit:        check.over,
+					FirstHit:       first,
+					MainHit:        main,
+					ReverseHit:     reverse,
+				})
+			}
 		}
 	}
-	return []evilCultAccuracyRow{overall, goal, total, score, outcome}
+	return []evilCultAccuracyRow{overall, goal, total, score, outcome}, goalMatches
 }
 
 func addEvilCultAccuracy(row *evilCultAccuracyRow, under bool, over bool, first bool, main bool, reverse bool) {

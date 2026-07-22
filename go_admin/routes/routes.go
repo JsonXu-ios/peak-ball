@@ -78,4 +78,5 @@ func SetupProtectedRoutes(r *gin.RouterGroup) {
 	r.GET("/dashboard/stats", handlers.GetDashboardStats)
 	r.GET("/statistics/matches", handlers.GetMatchStatistics)
 	r.GET("/statistics/recommendations", handlers.GetSignalRecommendations)
+	r.GET("/statistics/cross", handlers.GetCrossStatistics)
 }

@@ -11,7 +11,7 @@ interface ConditionRow {
   accuracy: number
   roi?: number
   roiSample?: number
-  mode: 'follow' | 'inverse'
+  mode: 'follow' | 'inverse' | ''
 }
 
 interface FiredSignal {
@@ -128,7 +128,15 @@ function marketLabel(market: string) {
 }
 
 function modeColor(mode: string) {
-  return mode === 'follow' ? 'success' : 'error'
+  if (mode === 'follow') return 'success'
+  if (mode === 'inverse') return 'error'
+  return 'grey'
+}
+
+function modeLabel(mode: string) {
+  if (mode === 'follow') return '跟'
+  if (mode === 'inverse') return '反向'
+  return '未上岗'
 }
 
 onMounted(() => fetchReport(false))
@@ -182,10 +190,10 @@ onMounted(() => fetchReport(false))
           <v-card variant="tonal">
             <v-card-text>
               <div class="d-flex align-center justify-space-between">
-                <div class="text-body-2 text-medium-emphasis">上岗信号（{{ report.conditions.length }} 条）</div>
+                <div class="text-body-2 text-medium-emphasis">信号库（{{ report.conditions.length }} 条 · 上岗 {{ report.conditions.filter((c) => c.mode).length }} 条）</div>
                 <div class="text-caption text-medium-emphasis">信号库结算时间：{{ report.stats_generated_at }}</div>
               </div>
-              <v-table density="compact" class="mt-1">
+              <v-table density="compact" class="mt-1" fixed-header height="340">
                 <thead>
                   <tr><th>信号</th><th>方向</th><th class="text-right">命中率(样本)</th><th class="text-right">ROI</th><th class="text-right">模式</th></tr>
                 </thead>
@@ -193,10 +201,10 @@ onMounted(() => fetchReport(false))
                   <tr v-for="condition in report.conditions" :key="condition.key">
                     <td class="font-weight-medium">{{ condition.title }}</td>
                     <td>{{ marketLabel(condition.market) }}</td>
-                    <td class="text-right">{{ condition.accuracy.toFixed(1) }}% ({{ condition.sample }})</td>
+                    <td class="text-right">{{ condition.sample > 0 ? `${condition.accuracy.toFixed(1)}% (${condition.sample})` : '-' }}</td>
                     <td class="text-right">{{ typeof condition.roi === 'number' ? condition.roi.toFixed(1) + '%' : '-' }}</td>
                     <td class="text-right">
-                      <v-chip :color="modeColor(condition.mode)" size="x-small" variant="flat">{{ condition.mode === 'follow' ? '跟' : '反向' }}</v-chip>
+                      <v-chip :color="modeColor(condition.mode)" size="x-small" :variant="condition.mode ? 'flat' : 'tonal'">{{ modeLabel(condition.mode) }}</v-chip>
                     </td>
                   </tr>
                 </tbody>

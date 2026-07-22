@@ -77,6 +77,29 @@ function getStatusColor(s: string) {
   return map[s] || 'grey'
 }
 
+const typeLabelMap: Record<string, string> = {
+  all: '全量',
+  match_list: '比赛列表',
+  history: '历史数据',
+  rank: '排名',
+  odds_euro: '欧赔',
+  odds_pankou: '盘口',
+  odds_refresh: '赔率刷新',
+}
+
+function crawlType(log: CrawlerLog) {
+  return parseDetails(log.details).type || ''
+}
+
+function typeLabel(log: CrawlerLog) {
+  const type = crawlType(log)
+  return typeLabelMap[type] || type || '-'
+}
+
+function crawlDate(log: CrawlerLog) {
+  return parseDetails(log.details).date || '-'
+}
+
 function formatDuration(ms: number) {
   if (ms < 1000) return `${ms}ms`
   if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`
@@ -146,6 +169,8 @@ function progressPercent(log: CrawlerLog) {
         :headers="[
           { title: 'ID', key: 'id', width: 60 },
           { title: '任务名称', key: 'task_name' },
+          { title: '比赛日期', key: 'crawl_date', sortable: false, width: 120 },
+          { title: '数据类型', key: 'crawl_type', sortable: false, width: 110 },
           { title: '状态', key: 'status', width: 100 },
           { title: '开始时间', key: 'start_time' },
           { title: '耗时', key: 'duration', width: 100 },
@@ -162,6 +187,14 @@ function progressPercent(log: CrawlerLog) {
         @update:page="page = $event; fetchLogs()"
         @update:items-per-page="pageSize = $event; fetchLogs()"
       >
+        <template #item.crawl_date="{ item }">
+          {{ crawlDate(item) }}
+        </template>
+
+        <template #item.crawl_type="{ item }">
+          <v-chip size="small" variant="tonal" color="info">{{ typeLabel(item) }}</v-chip>
+        </template>
+
         <template #item.status="{ item }">
           <v-chip :color="getStatusColor(item.status)" size="small" variant="tonal">
             {{ item.status }}
@@ -211,7 +244,9 @@ function progressPercent(log: CrawlerLog) {
             <v-col cols="4"><strong>成功:</strong> {{ selectedLog.success_count }}</v-col>
             <v-col cols="4"><strong>失败:</strong> {{ selectedLog.failed_count }}</v-col>
             <v-col cols="4"><strong>跳过:</strong> {{ selectedDetails.skipped_count || 0 }}</v-col>
-            <v-col cols="8"><strong>当前:</strong> {{ selectedDetails.current || '-' }}</v-col>
+            <v-col cols="4"><strong>比赛日期:</strong> {{ selectedDetails.date || '-' }}</v-col>
+            <v-col cols="4"><strong>数据类型:</strong> {{ typeLabelMap[selectedDetails.type || ''] || selectedDetails.type || '-' }}</v-col>
+            <v-col cols="4"><strong>当前:</strong> {{ selectedDetails.current || '-' }}</v-col>
             <v-col cols="12">
               <v-progress-linear :model-value="progressPercent(selectedLog)" height="10" rounded color="primary" />
             </v-col>
