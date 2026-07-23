@@ -27,6 +27,33 @@ func TestStatisticsPankouRowsNoAsianFallbackForDxq(t *testing.T) {
 	}
 }
 
+func TestStatisticsPankouLineMedianFallback(t *testing.T) {
+	// 真实场景（match 498116085）：bet365 缺席，第一行是立博的 0.5 离群脏行，
+	// 其余公司都在 2/2.25/2.5。兜底必须取中位数 2.25，绝不能取第一行 0.5。
+	row := map[string]interface{}{
+		"asia_data": `{"dxq":[
+			{"companyId":4,"pankou":"半球"},
+			{"companyId":14,"pankou":"二球/二球半"},
+			{"companyId":17,"pankou":"二球/二球半"},
+			{"companyId":31,"pankou":"二球"},
+			{"companyId":9,"pankou":"二球半"},
+			{"companyId":24,"pankou":"二球/二球半"},
+			{"companyId":3,"pankou":"二球/二球半"}
+		]}`,
+	}
+	line, ok := statisticsPankouLine(row, "bet365_dxq", "dxq_data")
+	if !ok || line != 2.25 {
+		t.Fatalf("median fallback line = %v/%v, want 2.25/true", line, ok)
+	}
+	// bet365 在场时仍然优先 bet365。
+	withBet365 := map[string]interface{}{
+		"asia_data": `{"dxq":[{"companyId":4,"pankou":"半球"},{"companyId":8,"pankou":"二球半"}]}`,
+	}
+	if line, ok := statisticsPankouLine(withBet365, "bet365_dxq", "dxq_data"); !ok || line != 2.5 {
+		t.Fatalf("bet365 line = %v/%v, want 2.5/true", line, ok)
+	}
+}
+
 func TestStatisticsKellySportterySingleChoice(t *testing.T) {
 	// 构造一场凯利在主胜、平局两个方向同时有价值，且威廉-体彩差值都在容差内的比赛：
 	// 旧算法会给出 主胜/平局 双选；新算法必须只保留一个首选方向。

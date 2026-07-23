@@ -534,7 +534,7 @@ func buildSignalStatistics(matches []statisticsMatch, histories, pankous, odds m
 				{suffix: "over", label: "判大球", buckets: goalsHeatOver},
 				{suffix: "under", label: "判小球", buckets: goalsHeatUnder},
 			}),
-			proSignal.payload("pro_signal", "1. 专业信号（凯利×体彩同向）", "凯利与体彩参考同向时取一个首选方向（体彩差值最小，打平取凯利价值更强方），不做双选；命中=该方向即实际赛果。"),
+			proSignal.payload("pro_signal", "1. 专业信号（凯利×体彩同向）", "与前台H5专业信号同口径：凯利取凯利值最小的一个方向、体彩取威廉差值最小的一个方向，两者同向时纳入；命中=该方向即实际赛果。"),
 			tradeComfort.payload("trade_comfort", "2. 交易盈亏同向（庄家舒服）", "仅体彩比赛；胜平负交易盈亏与让球交易盈亏最舒服方向一致且均为庄家盈利；命中=该方向即实际赛果。"),
 			simTradeComfort.payload("sim_trade_comfort", "3. 模拟交易盈亏同向（庄家舒服）", "本地模拟盘：竞彩模拟对比(胜平负)与竞彩让球模拟由平均欧赔+加权散户心理+泊松让球推算（不含竞彩官方数据，覆盖非竞彩场次）；两者最舒服方向一致且均为庄家盈利时纳入，命中=该方向即实际赛果。"),
 			historyHandicap.payload("history_handicap", "4. 历史期望让球", "赛前3年内交锋净胜球期望；|期望|≤0.25判平，否则判主/客；命中=胜平负判断正确。"),
@@ -955,6 +955,25 @@ func statisticsMarketRows(value interface{}, market string) []interface{} {
 	return nil
 }
 
+// statisticsPankouMedian 取全部公司可解析盘口线的中位数（偶数取下中位，保持真实
+// 盘口值）。bet365 缺席时的兜底：单家公司偶发脏行（如某家 0.5 混进一片 2.25 的大
+// 小球盘），取第一行会拿到离群值，中位数天然稳健。
+func statisticsPankouMedian(items []interface{}, keys ...string) (float64, bool) {
+	lines := []float64{}
+	for _, value := range items {
+		if item, ok := value.(map[string]interface{}); ok {
+			if line, ok := statisticsLine(statisticsText(statisticsValue(item, keys...))); ok {
+				lines = append(lines, line)
+			}
+		}
+	}
+	if len(lines) == 0 {
+		return 0, false
+	}
+	sort.Float64s(lines)
+	return lines[(len(lines)-1)/2], true
+}
+
 func statisticsPankouLine(row map[string]interface{}, preferred, rowsKey string) (float64, bool) {
 	if item, ok := statisticsJSON(statisticsValue(row, preferred)).(map[string]interface{}); ok {
 		if line, ok := statisticsLine(statisticsText(statisticsValue(item, "pankou", "firstPankou", "first_pankou"))); ok {
@@ -971,14 +990,7 @@ func statisticsPankouLine(row map[string]interface{}, preferred, rowsKey string)
 			return line, true
 		}
 	}
-	for _, value := range items {
-		if item, ok := value.(map[string]interface{}); ok {
-			if line, ok := statisticsLine(statisticsText(statisticsValue(item, "pankou", "firstPankou", "first_pankou"))); ok {
-				return line, true
-			}
-		}
-	}
-	return 0, false
+	return statisticsPankouMedian(items, "pankou", "firstPankou", "first_pankou")
 }
 
 // statisticsPankouLinePair resolves both the opening line (firstPankou/初盘) and
@@ -1013,12 +1025,13 @@ func statisticsPankouLinePair(row map[string]interface{}, preferred, rowsKey str
 			return first, current, true
 		}
 	}
-	for _, value := range items {
-		if item, ok := value.(map[string]interface{}); ok {
-			if first, current, ok := read(item); ok {
-				return first, current, true
-			}
+	// bet365 缺席 → 初盘/即时盘各取全公司中位数，避免第一行离群值。
+	if current, ok := statisticsPankouMedian(items, "pankou", "firstPankou", "first_pankou"); ok {
+		first, ok := statisticsPankouMedian(items, "firstPankou", "first_pankou")
+		if !ok {
+			first = current
 		}
+		return first, current, true
 	}
 	return 0, 0, false
 }
@@ -1182,55 +1195,64 @@ func statisticsKellySportteryChoices(row map[string]interface{}) map[string]bool
 		source = statisticsOdds(statisticsValue(row, "bet365"))
 	}
 	if len(source) < 3 {
+		source = statisticsFindOdds(oddsRows, "281", "")
+	}
+	if len(source) < 3 {
 		return nil
 	}
-	kelly := map[string]bool{}
 	labels := []string{"home", "draw", "away"}
-	sourceReturn, avgReturn := statisticsReturn(source), statisticsReturn(avg)
+	avgReturn := statisticsReturn(avg)
+	// 凯利首选（与前台 kellyResult 同口径）：取凯利值最小的方向；
+	// 打平取靠后的（胜平→平，胜负/平负→负）。
+	kellyBest, kellyBestValue := -1, 0.0
 	for i := 0; i < 3; i++ {
-		if source[i]/avg[i]*avgReturn < sourceReturn {
-			kelly[labels[i]] = true
+		if source[i] <= 0 || avg[i] <= 0 {
+			continue
+		}
+		kelly := source[i] / avg[i] * avgReturn
+		if kellyBest == -1 || kelly <= kellyBestValue {
+			kellyBest = i
+			kellyBestValue = kelly
 		}
 	}
+	if kellyBest == -1 {
+		return nil
+	}
+
+	// 体彩首选（与前台 ticaiResult 同口径）：威廉 vs 体彩官方赔率差值最小的方向；
+	// 威廉或体彩缺失时回退 任一公司赔率 vs 平均欧赔。
 	william := statisticsOdds(statisticsValue(row, "william"))
 	if len(william) < 3 {
 		william = statisticsFindOdds(oddsRows, "115", "威廉")
 	}
+	basis := statisticsSportteryOdds(statisticsValue(row, "sporttery_trade", "sportteryTrade"))
+	if len(william) < 3 || len(basis) != 3 {
+		if len(william) < 3 {
+			for _, oddsRow := range oddsRows {
+				if odds := statisticsOdds(oddsRow); len(odds) >= 3 {
+					william = odds
+					break
+				}
+			}
+		}
+		basis = avg
+	}
 	if len(william) < 3 {
 		return nil
 	}
-	// Prefer the cached official Sporttery odds when the crawler collected them.
-	// The William-vs-average comparison is the same fallback used by the public analysis.
-	ticaiReference := avg
-	if sporttery := statisticsSportteryOdds(statisticsValue(row, "sporttery_trade", "sportteryTrade")); len(sporttery) == 3 {
-		ticaiReference = sporttery
-	}
-	min := math.MaxFloat64
-	diffs := make([]float64, 3)
-	for i := range diffs {
-		diffs[i] = math.Abs(william[i] - ticaiReference[i])
-		if diffs[i] < min {
-			min = diffs[i]
+	// 体彩差值打平同样取靠后的方向。
+	ticaiBest := 0
+	for i := 1; i < 3; i++ {
+		if math.Abs(william[i]-basis[i]) <= math.Abs(william[ticaiBest]-basis[ticaiBest]) {
+			ticaiBest = i
 		}
 	}
-	// 只保留一个首选方向（不做双选）：在凯利有价值且体彩同向(差值≤min+0.03)的方向里，
-	// 取体彩差值最小的；差值打平时取凯利价值更强（被平均赔率低估更多）的方向。
-	best := -1
-	bestStrength := 0.0
-	for i, diff := range diffs {
-		if diff > min+.03 || !kelly[labels[i]] {
-			continue
-		}
-		strength := sourceReturn - source[i]/avg[i]*avgReturn
-		if best == -1 || diff < diffs[best]-1e-9 || (math.Abs(diff-diffs[best]) <= 1e-9 && strength > bestStrength) {
-			best = i
-			bestStrength = strength
-		}
-	}
-	if best == -1 {
+
+	// 前台专业信号显示 凯利X/体彩Y——两者同向才算凯体同向信号。
+	if ticaiBest != kellyBest {
 		return nil
 	}
-	return map[string]bool{labels[best]: true}
+	return map[string]bool{labels[kellyBest]: true}
 }
 
 func statisticsSportteryOdds(value interface{}) []float64 {

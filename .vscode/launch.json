@@ -55,7 +55,7 @@
         "3. 启动前台 API",
         "4. 启动管理 API"
       ],
-      "stopAll": false
+      "stopAll": true
     }
   ]
 }

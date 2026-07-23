@@ -142,7 +142,7 @@ func recomputeCrossSnapshot() (*crossSnapshot, error) {
 		hit bool
 	}
 	for _, match := range settled {
-		ctx := buildRecommendCtx(match, histories[match.ID], pankous[match.ID], odds[match.ID])
+		ctx := buildRecommendCtx(match, histories[match.ID], pankous[match.ID], odds[match.ID], nil)
 		scoreBucket := crossScoreBucket(match.HomeScore, match.GuestScore)
 		goalsBucket := crossGoalsBucket(match.HomeScore + match.GuestScore)
 		outcome := statisticsActualOutcome(match)
@@ -510,7 +510,7 @@ func GetCrossStatistics(c *gin.Context) {
 	}
 	derivedRows := []derivedRow{}
 	for _, match := range upcoming {
-		ctx := buildRecommendCtx(match, histories[match.ID], pankous[match.ID], odds[match.ID])
+		ctx := buildRecommendCtx(match, histories[match.ID], pankous[match.ID], odds[match.ID], nil)
 		type firedEntry struct {
 			condition recommendCondition
 			fire      recommendFire

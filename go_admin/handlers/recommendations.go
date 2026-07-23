@@ -67,9 +67,16 @@ type recommendCtx struct {
 	hasAsianHeat  bool
 	goalsHeat     float64 // over side heat
 	hasGoalsHeat  bool
+	// 维度15 前端球数倾向（与统计端 pickQiuPrediction/pickQiuStrength 同口径）
+	qiuDirection string
+	qiuLine      float64
+	qiuStrength  float64
+	hasQiu       bool
+	// 维度18 邪修一推/二推预测（由 go_server 桥接，nil=该场无预测）
+	evil *recommendEvilPred
 }
 
-func buildRecommendCtx(match statisticsMatch, historyRow, pankouRow, oddsRow map[string]interface{}) recommendCtx {
+func buildRecommendCtx(match statisticsMatch, historyRow, pankouRow, oddsRow map[string]interface{}, evil *recommendEvilPred) recommendCtx {
 	ctx := recommendCtx{match: match}
 	ctx.probabilities = statisticsProbabilities(oddsRow)
 	ctx.basePred = pickBasePrediction(oddsRow)
@@ -109,6 +116,11 @@ func buildRecommendCtx(match statisticsMatch, historyRow, pankouRow, oddsRow map
 		ctx.goalsHeat = statisticsClamp(50+(expected-ctx.dxqLine)*18, 0, 100)
 		ctx.hasGoalsHeat = true
 	}
+	ctx.qiuDirection, ctx.qiuLine, ctx.hasQiu = pickQiuPrediction(historyRow, pankouRow, match)
+	if ctx.hasQiu && ctx.qiuDirection != "" {
+		ctx.qiuStrength = pickQiuStrength(historyRow, ctx.qiuLine, match)
+	}
+	ctx.evil = evil
 	return ctx
 }
 
@@ -199,11 +211,16 @@ func recommendGoalsCondition(key, title string, project func(ctx recommendCtx) (
 	}
 }
 
-// recommendCatalogue covers every dimension the statistics page settles.
+// recommendCatalogue 覆盖完赛统计页全部 18 个维度：
+// 1凯体同向 2交易盈亏 3模拟盈亏 4/5/6让球模型 7主推分档 8亚盘热度 9亚盘背离
+// 10/11/12球数模型 13大小球热度 14期望背离 15球数压力分档 16警示(过热/修正/回归/
+// 反差/同向亏损) 17盘口偏离(夸大/隐藏/大小球+对照组) 18邪修一推/二推。
+// 维度18 的预测由 go_server 桥接：重算时用 accuracy-stats 的已结算逐场行，
+// 页面加载时（仅当邪修条件上岗）按日期拉 /analysis/matches 的待赛预测。
 func recommendCatalogue() []recommendCondition {
 	conditions := []recommendCondition{}
 
-	// ---- 13a 主推概率分档 (spf) ----
+	// ---- 维度7 前端主推·概率分档 (spf) ----
 	probBand := func(key, title string, low, high float64) recommendCondition {
 		return recommendCondition{
 			Key: key, Title: title, Market: "spf",
@@ -226,17 +243,17 @@ func recommendCatalogue() []recommendCondition {
 		probBand("base_prob_lt45", "主推概率<45%·跟主推", 0.01, 45),
 	)
 
-	// ---- 2 凯体交集 / 3 庄家舒服 / 凯体反差 / 庄家同向亏损 (spf) ----
+	// ---- 维度1 凯体同向 / 2 庄家舒服 / 3 模拟舒服 / 16警示(凯体反差·同向亏损) (spf) ----
 	conditions = append(conditions,
 		recommendCondition{
-			Key: "pro_signal", Title: "凯体交集·跟交集方向", Market: "spf",
+			Key: "pro_signal", Title: "凯体同向·跟首选方向", Market: "spf",
 			Evaluate: func(ctx recommendCtx) recommendFire {
 				if len(ctx.kellyChoices) == 0 {
 					return recommendFire{}
 				}
 				return recommendFire{
 					fires: true, settle: "choices",
-					pick: "跟凯体交集：" + statisticsChoiceLabel(ctx.kellyChoices),
+					pick: "跟凯体首选：" + statisticsChoiceLabel(ctx.kellyChoices),
 				}
 			},
 		},
@@ -290,7 +307,7 @@ func recommendCatalogue() []recommendCondition {
 		},
 	)
 
-	// ---- 4/5/6 让球模型 (spf) ----
+	// ---- 维度4/5/6 让球模型 (spf) ----
 	conditions = append(conditions,
 		recommendOutcomeCondition("history_handicap", "历史期望让球·判胜平负", func(ctx recommendCtx) (float64, bool) {
 			return ctx.historyDiff, ctx.hasHistory
@@ -303,7 +320,7 @@ func recommendCatalogue() []recommendCondition {
 		}),
 	)
 
-	// ---- 1a 亚盘热度分档 (asian)，与统计维度一致：档位×主客方向拆分 ----
+	// ---- 维度8 亚盘热度分档 (asian)，与统计维度一致：档位×主客方向拆分 ----
 	for _, tier := range statisticsHeatTiers {
 		tierValue := tier
 		for _, dir := range []struct {
@@ -348,7 +365,7 @@ func recommendCatalogue() []recommendCondition {
 		}
 	}
 
-	// ---- 1b 大小球热度分档 (dxq)，与统计维度一致：档位×大小方向拆分 ----
+	// ---- 维度13 大小球热度分档 (dxq)，与统计维度一致：档位×大小方向拆分 ----
 	for _, tier := range statisticsGoalsHeatTiers {
 		tierValue := tier
 		for _, dir := range []struct {
@@ -393,7 +410,7 @@ func recommendCatalogue() []recommendCondition {
 		}
 	}
 
-	// ---- 7 亚盘背离≥0.75 (asian) ----
+	// ---- 维度9 亚盘背离≥0.75 (asian) ----
 	conditions = append(conditions, recommendCondition{
 		Key: "line_discrepancy", Title: "亚盘背离≥0.75·反被高估方赢盘", Market: "asian",
 		Evaluate: func(ctx recommendCtx) recommendFire {
@@ -424,7 +441,7 @@ func recommendCatalogue() []recommendCondition {
 		},
 	})
 
-	// ---- 15a 让球热度过热·反过热方 (asian) ----
+	// ---- 维度16警示 让球热度过热·反过热方 (asian) ----
 	conditions = append(conditions, recommendCondition{
 		Key: "asian_hot_fade", Title: "让球热度>65过热·反过热方赢盘", Market: "asian",
 		Evaluate: func(ctx recommendCtx) recommendFire {
@@ -450,7 +467,7 @@ func recommendCatalogue() []recommendCondition {
 		},
 	})
 
-	// ---- 15g 让球修正 (asian) ----
+	// ---- 维度16警示 让球修正 (asian) ----
 	conditions = append(conditions, recommendCondition{
 		Key: "handicap_fix", Title: "让球修正·跟期望方赢盘", Market: "asian",
 		Evaluate: func(ctx recommendCtx) recommendFire {
@@ -475,7 +492,7 @@ func recommendCatalogue() []recommendCondition {
 		},
 	})
 
-	// ---- 16 亚盘夸大/隐藏 (asian) ----
+	// ---- 维度17 亚盘夸大/隐藏 (asian) ----
 	asianDeviation := func(key, title string, hidden bool, minDeviation, maxDeviation float64) recommendCondition {
 		return recommendCondition{
 			Key: key, Title: title, Market: "asian",
@@ -525,7 +542,7 @@ func recommendCatalogue() []recommendCondition {
 		asianDeviation("asian_hidden_025", "隐藏强势方0.25·买强方赢盘", true, 0.25, 0.5),
 	)
 
-	// ---- 8/9/10/11 球数模型 (dxq) ----
+	// ---- 维度10/11/12/14 球数模型 (dxq) ----
 	conditions = append(conditions,
 		recommendGoalsCondition("history_goals", "历史平均球数·对盘判大小", func(ctx recommendCtx) (float64, bool) {
 			return ctx.historyGoals, ctx.hasHistory
@@ -556,7 +573,74 @@ func recommendCatalogue() []recommendCondition {
 		},
 	)
 
-	// ---- 15h 大小球回归 (dxq) ----
+	// ---- 维度15 前端球数倾向·压力分档 (dxq)，与统计维度同口径（盘口球<5不计入） ----
+	qiuBand := func(key, title string, low, high float64) recommendCondition {
+		return recommendCondition{
+			Key: key, Title: title, Market: "dxq",
+			Evaluate: func(ctx recommendCtx) recommendFire {
+				if !ctx.hasQiu || ctx.qiuDirection == "" || ctx.qiuStrength < low || ctx.qiuStrength >= high {
+					return recommendFire{}
+				}
+				direction, label, oddsValue := "under", "买小", ctx.underWater
+				if ctx.qiuDirection == "over" {
+					direction, label, oddsValue = "over", "买大", ctx.overWater
+				}
+				if !ctx.hasDxqWater {
+					oddsValue = 0
+				}
+				return recommendFire{
+					fires: true, settle: "over", direction: direction, line: ctx.qiuLine, oddsValue: oddsValue,
+					pick:  fmt.Sprintf("%s%.2f", label, ctx.qiuLine),
+					extra: fmt.Sprintf("压力差%.1f", ctx.qiuStrength),
+				}
+			},
+		}
+	}
+	conditions = append(conditions,
+		qiuBand("base_qiu_30", "前端球数压力差≥30·跟方向", 30, 1000),
+		qiuBand("base_qiu_15_30", "前端球数压力差15-30·跟方向", 15, 30),
+		qiuBand("base_qiu_5_15", "前端球数压力差5-15·跟方向", 5, 15),
+	)
+
+	// ---- 维度18 邪修一推/二推 (dxq)：跟该推方向对其大小球线；结算=方向正确 ----
+	evilCond := func(key, title string, main bool, over bool) recommendCondition {
+		return recommendCondition{
+			Key: key, Title: title, Market: "dxq",
+			Evaluate: func(ctx recommendCtx) recommendFire {
+				if ctx.evil == nil {
+					return recommendFire{}
+				}
+				name, dir, line, value := "一推", ctx.evil.FirstDirection, ctx.evil.FirstLine, ctx.evil.FirstValue
+				if main {
+					name, dir, line, value = "二推", ctx.evil.MainDirection, ctx.evil.MainLine, ctx.evil.MainValue
+				}
+				wantDir := "over"
+				if !over {
+					wantDir = "under"
+				}
+				if dir != wantDir || line <= 0 {
+					return recommendFire{}
+				}
+				label, direction := "买大", "over"
+				if !over {
+					label, direction = "买小", "under"
+				}
+				return recommendFire{
+					fires: true, settle: "over", direction: direction, line: line,
+					pick:  fmt.Sprintf("邪修%s：%s%.2f", name, label, line),
+					extra: fmt.Sprintf("%s精确球数%d", name, value),
+				}
+			},
+		}
+	}
+	conditions = append(conditions,
+		evilCond("evil_first_over", "邪修一推·判大球跟方向", false, true),
+		evilCond("evil_first_under", "邪修一推·判小球跟方向", false, false),
+		evilCond("evil_main_over", "邪修二推·判大球跟方向", true, true),
+		evilCond("evil_main_under", "邪修二推·判小球跟方向", true, false),
+	)
+
+	// ---- 维度16警示 大小球回归 (dxq) ----
 	conditions = append(conditions, recommendCondition{
 		Key: "goal_balance", Title: "大小球回归(2.5均衡)·跟回归方向", Market: "dxq",
 		Evaluate: func(ctx recommendCtx) recommendFire {
@@ -581,7 +665,7 @@ func recommendCatalogue() []recommendCondition {
 		},
 	})
 
-	// ---- 16 大小球盘口偏离 (dxq) ----
+	// ---- 维度17 大小球盘口偏离 (dxq) ----
 	goalDeviation := func(key, title string, above bool, minDeviation, maxDeviation float64, pickOver bool) recommendCondition {
 		return recommendCondition{
 			Key: key, Title: title, Market: "dxq",
@@ -611,11 +695,29 @@ func recommendCatalogue() []recommendCondition {
 			},
 		}
 	}
+	// 与统计17 v2 同口径：大小球偏离统一买大，另加 盘≈共识 对照组。
 	conditions = append(conditions,
 		goalDeviation("goal_line_above_050", "盘高于共识≥0.5·买大[跟市场]", true, 0.5, 1000, true),
 		goalDeviation("goal_line_above_025", "盘高于共识0.25·买大[跟市场]", true, 0.25, 0.5, true),
-		goalDeviation("goal_line_below_050", "盘低于共识≥0.5·买小[跟市场]", false, 0.5, 1000, false),
+		goalDeviation("goal_line_below_050", "盘低于共识≥0.5·买大", false, 0.5, 1000, true),
 		goalDeviation("goal_line_below_025", "盘低于共识0.25·买大", false, 0.25, 0.5, true),
+		recommendCondition{
+			Key: "goal_line_near", Title: "盘≈共识(<0.25)·买大[对照组]", Market: "dxq",
+			Evaluate: func(ctx recommendCtx) recommendFire {
+				if !ctx.hasGoalAgree || !ctx.hasDxq || ctx.dxqLine <= 0 || math.Abs(ctx.dxqLine-ctx.goalConsensus) >= 0.25 {
+					return recommendFire{}
+				}
+				oddsValue := ctx.overWater
+				if !ctx.hasDxqWater {
+					oddsValue = 0
+				}
+				return recommendFire{
+					fires: true, settle: "over", direction: "over", line: ctx.dxqLine, oddsValue: oddsValue,
+					pick:  fmt.Sprintf("买大%.2f", ctx.dxqLine),
+					extra: fmt.Sprintf("共识%.2f/盘口%.2f", ctx.goalConsensus, ctx.dxqLine),
+				}
+			},
+		},
 	)
 
 	return conditions
@@ -684,10 +786,22 @@ func recomputeRecommendSnapshot() (*recommendSnapshot, error) {
 	pankous := loadStatisticsRows("pankou_moneys", statisticsPankouColumns, ids)
 	odds := loadStatisticsRows("odds_moneys", statisticsOddsColumns, ids)
 
+	// 维度18 邪修：已结算逐场预测由 go_server 桥接；失败则该维度本轮无样本，不阻塞重算。
+	evilPreds := map[string]recommendEvilPred{}
+	if payload, err := fetchEvilCultAccuracy(); err == nil {
+		for _, m := range payload.EvilCultGoalMatches {
+			evilPreds[m.MatchID] = evilCultPredFromBridge(m)
+		}
+	}
+
 	catalogue := recommendCatalogue()
 	stats := map[string]*recommendStat{}
 	for _, match := range settled {
-		ctx := buildRecommendCtx(match, histories[match.ID], pankous[match.ID], odds[match.ID])
+		var evil *recommendEvilPred
+		if pred, ok := evilPreds[match.ID]; ok {
+			evil = &pred
+		}
+		ctx := buildRecommendCtx(match, histories[match.ID], pankous[match.ID], odds[match.ID], evil)
 		for _, condition := range catalogue {
 			fire := condition.Evaluate(ctx)
 			if !fire.fires {
@@ -943,13 +1057,38 @@ func GetSignalRecommendations(c *gin.Context) {
 	pankous := loadStatisticsRows("pankou_moneys", statisticsPankouColumns, ids)
 	odds := loadStatisticsRows("odds_moneys", statisticsOddsColumns, ids)
 
+	// 维度18 邪修：仅在有邪修条件上岗时才向 go_server 拉取待赛预测（每个日期一次调用）。
+	evilPreds := map[string]recommendEvilPred{}
+	hasEvilActive := false
+	for key := range conditionByKey {
+		if strings.HasPrefix(key, "evil_") {
+			hasEvilActive = true
+			break
+		}
+	}
+	if hasEvilActive && len(upcoming) > 0 {
+		seenDates := map[string]bool{}
+		dates := []string{}
+		for _, match := range upcoming {
+			if !seenDates[match.Date] {
+				seenDates[match.Date] = true
+				dates = append(dates, match.Date)
+			}
+		}
+		evilPreds = fetchEvilCultPredictions(dates)
+	}
+
 	type recommendationRow struct {
 		sortKey string
 		payload gin.H
 	}
 	rows := []recommendationRow{}
 	for _, match := range upcoming {
-		ctx := buildRecommendCtx(match, histories[match.ID], pankous[match.ID], odds[match.ID])
+		var evil *recommendEvilPred
+		if pred, ok := evilPreds[match.ID]; ok {
+			evil = &pred
+		}
+		ctx := buildRecommendCtx(match, histories[match.ID], pankous[match.ID], odds[match.ID], evil)
 		markets := map[string][]gin.H{"spf": {}, "asian": {}, "dxq": {}, "score": {}}
 		fired := 0
 		for key, condition := range conditionByKey {

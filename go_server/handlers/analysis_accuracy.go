@@ -69,6 +69,11 @@ type evilCultGoalMatchRow struct {
 	FirstHit       bool   `json:"firstHit"`
 	MainHit        bool   `json:"mainHit"`
 	ReverseHit     bool   `json:"reverseHit"`
+	// 一推/二推方向层（大小球口径）：各自方向对应的盘口线 与 方向是否判对。
+	FirstGoalLine     float64 `json:"firstGoalLine"`
+	FirstDirectionHit bool    `json:"firstDirectionHit"`
+	MainGoalLine      float64 `json:"mainGoalLine"`
+	MainDirectionHit  bool    `json:"mainDirectionHit"`
 }
 
 type accuracyFitSummary struct {
@@ -328,6 +333,19 @@ func buildEvilCultAccuracyRows(settled []analysisMatchResponse) ([]evilCultAccur
 			{&score, accuracyScoreCorrect(item, prediction.UnderScore), accuracyScoreCorrect(item, prediction.OverScore)},
 			{&outcome, actualOutcome == prediction.UnderOutcome, actualOutcome == prediction.OverOutcome},
 		}
+		// 一推/二推方向层（大小球口径）：先于 checks 循环取出，供逐场行使用。
+		goalFirstHit := evilCultGoalDirectionCorrect(actualTotal, "over", prediction.OverGoalLine)
+		firstGoalLine := prediction.OverGoalLine
+		if prediction.FirstDirection == "under" {
+			goalFirstHit = evilCultGoalDirectionCorrect(actualTotal, "under", prediction.UnderGoalLine)
+			firstGoalLine = prediction.UnderGoalLine
+		}
+		goalMainHit := evilCultGoalDirectionCorrect(actualTotal, "over", prediction.OverGoalLine)
+		mainGoalLine := prediction.OverGoalLine
+		if prediction.GoalDirection == "under" {
+			goalMainHit = evilCultGoalDirectionCorrect(actualTotal, "under", prediction.UnderGoalLine)
+			mainGoalLine = prediction.UnderGoalLine
+		}
 		for _, check := range checks {
 			first := check.over
 			if prediction.FirstDirection == "under" {
@@ -364,6 +382,11 @@ func buildEvilCultAccuracyRows(settled []analysisMatchResponse) ([]evilCultAccur
 					FirstHit:       first,
 					MainHit:        main,
 					ReverseHit:     reverse,
+
+					FirstGoalLine:     firstGoalLine,
+					FirstDirectionHit: goalFirstHit,
+					MainGoalLine:      mainGoalLine,
+					MainDirectionHit:  goalMainHit,
 				})
 			}
 		}

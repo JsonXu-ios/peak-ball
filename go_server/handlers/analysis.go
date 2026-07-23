@@ -1305,20 +1305,24 @@ func kellyResult(odds models.OddsMoney, avgOdds []float64, rows []analysisEuroOd
 	}
 
 	avgReturn := returnRatioFromOdds(avgOdds)
-	sourceReturn := returnRatioValue(source)
 	labels := []string{"胜", "平", "负"}
-	result := []string{}
+	// 只出一个值：取凯利值最小的方向；打平取靠后的（胜平→平，胜负/平负→负）。
+	best, bestKelly := -1, 0.0
 	for i := 0; i < 3; i++ {
 		value := parseFloat(source.Odds[i])
 		if value <= 0 || avgOdds[i] <= 0 {
 			continue
 		}
 		kelly := value / avgOdds[i] * avgReturn
-		if sourceReturn > kelly {
-			result = append(result, labels[i])
+		if best == -1 || kelly <= bestKelly {
+			best = i
+			bestKelly = kelly
 		}
 	}
-	return result
+	if best == -1 {
+		return nil
+	}
+	return []string{labels[best]}
 }
 
 func ticaiResult(rows []analysisEuroOdd, avgOdds []float64, sportteryOdd []float64) []string {
@@ -1469,19 +1473,20 @@ func firstEuroOdd(rows []analysisEuroOdd) analysisEuroOdd {
 	return analysisEuroOdd{}
 }
 
-func labelsForSmallestDiffs(diffs []float64, tolerance float64) []string {
+// labelsForSmallestDiffs 只出一个值：取差值最小的方向；打平取靠后的
+//（胜平→平，胜负/平负→负）。
+func labelsForSmallestDiffs(diffs []float64, _ float64) []string {
 	if len(diffs) < 3 {
 		return nil
 	}
-	minDiff := math.Min(diffs[0], math.Min(diffs[1], diffs[2]))
 	labels := []string{"胜", "平", "负"}
-	result := []string{}
-	for i, diff := range diffs {
-		if diff <= minDiff+tolerance {
-			result = append(result, labels[i])
+	best := 0
+	for i := 1; i < 3; i++ {
+		if diffs[i] <= diffs[best] {
+			best = i
 		}
 	}
-	return result
+	return []string{labels[best]}
 }
 
 func analysisTags(league string, prediction string, probabilities []float64, summary analysisHistorySummary, firstLine float64, currentLine float64, expectedGoals float64, goalLine float64) []string {
