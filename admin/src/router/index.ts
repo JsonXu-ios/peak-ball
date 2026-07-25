@@ -84,16 +84,10 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '统计分析', icon: 'mdi-chart-box-outline' },
       },
       {
-        path: 'statistics/recommendations',
-        name: 'SignalRecommendations',
-        component: () => import('@/views/statistics/SignalRecommendations.vue'),
-        meta: { title: '高价值信号推荐', icon: 'mdi-target' },
-      },
-      {
         path: 'statistics/cross',
         name: 'CrossStatistics',
         component: () => import('@/views/statistics/CrossStatistics.vue'),
-        meta: { title: '交叉信号分析', icon: 'mdi-vector-combine' },
+        meta: { title: '信号命中率总台', icon: 'mdi-target' },
       },
     ],
   },

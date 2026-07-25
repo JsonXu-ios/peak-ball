@@ -141,9 +141,6 @@ export const getDashboardStats = () =>
 export const getMatchStatistics = (params?: { start_date?: string; end_date?: string; refresh?: number }) =>
   api.get('/admin/statistics/matches', { params, timeout: 300000 })
 
-// ---- Signal Recommendations（高价值信号推荐）----
-export const getSignalRecommendations = (params?: { days?: number; refresh?: number }) =>
-  api.get('/admin/statistics/recommendations', { params, timeout: 300000 })
 
 // ---- Cross Statistics（交叉信号分析）----
 export const getCrossStatistics = (params?: { days?: number; refresh?: number }) =>

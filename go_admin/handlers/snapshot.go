@@ -10,8 +10,7 @@ import (
 
 const (
 	snapshotKindMatchStatistics = "match_statistics"
-	snapshotKindRecommendations = "signal_recommendations"
-	snapshotKindCrossStatistics = "cross_statistics"
+	snapshotKindWorkshop        = "signal_workshop"
 )
 
 func saveStatSnapshot(kind string, payload []byte, generatedAt time.Time) error {

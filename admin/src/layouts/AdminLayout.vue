@@ -57,8 +57,7 @@ const menuItems = computed(() => [
     icon: 'mdi-chart-box-outline',
     children: [
       { title: '完赛基础统计', icon: 'mdi-chart-bar', to: '/statistics/matches' },
-      { title: '高价值信号推荐', icon: 'mdi-target', to: '/statistics/recommendations' },
-      { title: '交叉信号分析', icon: 'mdi-vector-combine', to: '/statistics/cross' },
+      { title: '信号命中率总台', icon: 'mdi-target', to: '/statistics/cross' },
     ],
   },
 ])
