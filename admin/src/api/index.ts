@@ -145,3 +145,11 @@ export const getMatchStatistics = (params?: { start_date?: string; end_date?: st
 // ---- Cross Statistics（交叉信号分析）----
 export const getCrossStatistics = (params?: { days?: number; refresh?: number }) =>
   api.get('/admin/statistics/cross', { params, timeout: 300000 })
+
+// ---- Last Dance（最后一舞·组合信号验证）----
+export const getLastDanceStatistics = (params?: { refresh?: number }) =>
+  api.get('/admin/statistics/lastdance', { params, timeout: 300000 })
+
+// ---- Finale（终章·未来比赛预测）----
+export const getFinalePredictions = () =>
+  api.get('/admin/statistics/finale', { timeout: 120000 })

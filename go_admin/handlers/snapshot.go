@@ -11,6 +11,7 @@ import (
 const (
 	snapshotKindMatchStatistics = "match_statistics"
 	snapshotKindWorkshop        = "signal_workshop"
+	snapshotKindLastDance       = "last_dance"
 )
 
 func saveStatSnapshot(kind string, payload []byte, generatedAt time.Time) error {

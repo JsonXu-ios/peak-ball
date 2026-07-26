@@ -89,6 +89,18 @@ const routes: RouteRecordRaw[] = [
         component: () => import('@/views/statistics/CrossStatistics.vue'),
         meta: { title: '信号命中率总台', icon: 'mdi-target' },
       },
+      {
+        path: 'statistics/lastdance',
+        name: 'LastDance',
+        component: () => import('@/views/statistics/LastDance.vue'),
+        meta: { title: '最后一舞', icon: 'mdi-dance-ballroom' },
+      },
+      {
+        path: 'statistics/finale',
+        name: 'Finale',
+        component: () => import('@/views/statistics/Finale.vue'),
+        meta: { title: '终章', icon: 'mdi-flag-checkered' },
+      },
     ],
   },
   {
