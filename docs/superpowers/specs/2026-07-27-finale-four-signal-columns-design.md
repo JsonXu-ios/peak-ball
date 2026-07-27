@@ -29,6 +29,13 @@
   红=主胜（text-error）、绿=客胜（text-success）、平局/无方向为默认色，空值显示 `-`。
 - 日期分组行 colspan 由 11 改为 12。
 
+## 追加（同日确认）
+
+- 再增两列：亚盘盘口（即时）`ah_line`、大小球盘口（即时）`ou_line`，取
+  `statisticsPankouLinePair` 的即时值（bet365_asia / bet365_dxq），仅展示。
+- 四信号列与两个盘口列均改用 tag（v-chip）显示：信号 tag 主胜=红、客胜=绿
+  （tonal），盘口 tag 为中性 outlined。
+
 ## 验证
 
 - `cd go_admin && go build ./... && go test ./handlers/`

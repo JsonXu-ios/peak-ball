@@ -120,8 +120,10 @@ func pickQiuStrength(historyRow map[string]interface{}, line float64, match stat
 
 func pickBaseProbBand(probability float64) string {
 	switch {
+	case probability >= 70:
+		return "主推概率≥70%"
 	case probability >= 65:
-		return "主推概率≥65%"
+		return "主推概率65-70%"
 	case probability >= 55:
 		return "主推概率55-65%"
 	case probability >= 45:
@@ -131,7 +133,7 @@ func pickBaseProbBand(probability float64) string {
 	}
 }
 
-var pickBaseProbBandOrder = []string{"主推概率≥65%", "主推概率55-65%", "主推概率45-55%", "主推概率<45%"}
+var pickBaseProbBandOrder = []string{"主推概率≥70%", "主推概率65-70%", "主推概率55-65%", "主推概率45-55%", "主推概率<45%"}
 
 func pickQiuStrengthBand(strength float64) string {
 	switch {

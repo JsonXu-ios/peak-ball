@@ -15,12 +15,16 @@ interface Prediction {
   pick: string
   /** 四信号齐备 / 主推≥70% / '' */
   signal: string
-  base_prob: number
-  pro_dir: string
+  /** 四信号提示（仅展示）：方向+数值文本，如「客胜 72.3%」，无数据为 '' */
+  sig_base: string
+  sig_pro: string
+  sig_recent: string
+  sig_comp: string
+  /** 亚盘/大小球即时盘口（仅展示），无数据为 '' */
+  ah_line: string
+  ou_line: string
   trade_pick: string
   sim_pick: string
-  recent_diff?: number
-  composite?: number
 }
 
 interface Report {
@@ -66,6 +70,13 @@ function logoSrc(path?: string): string {
   return path || ''
 }
 
+/** 四信号提示文本按方向着色：主胜=红、客胜=绿，其余默认色 */
+function sigClass(text: string) {
+  if (text.startsWith('主胜')) return 'text-error'
+  if (text.startsWith('客胜')) return 'text-success'
+  return ''
+}
+
 async function fetchReport() {
   loading.value = true
   error.value = ''
@@ -90,7 +101,7 @@ onMounted(() => fetchReport())
         <h2 class="text-h5 font-weight-bold">终章 · 未来比赛预测</h2>
         <div class="text-body-2 text-medium-emphasis mt-1">
           未来 {{ report?.horizon_days ?? 14 }} 天待赛比赛中，命中「四信号齐备」或「前端主推≥70%」信号的场次。
-          <span class="text-error font-weight-bold">红色=买主胜</span>、<span class="text-success font-weight-bold">绿色=买客胜</span>；交易/模拟盈亏的推荐仅随行展示，不参与预测。
+          <span class="text-error font-weight-bold">红色=买主胜</span>、<span class="text-success font-weight-bold">绿色=买客胜</span>；主推/专业/让球/综合四信号提示与交易/模拟盈亏推荐仅随行展示，不参与预测。
         </div>
       </div>
       <v-spacer />
@@ -155,16 +166,19 @@ onMounted(() => fetchReport())
                 <th>客队</th>
                 <th class="text-center">预测</th>
                 <th>信号</th>
-                <th class="text-right">主推概率</th>
-                <th class="text-right">让球差</th>
-                <th class="text-right">综合期望</th>
-                <th>盈亏提示（仅展示）</th>
+                <th>主推</th>
+                <th>专业</th>
+                <th>让球</th>
+                <th>综合</th>
+                <th class="text-right">亚盘</th>
+                <th class="text-right">大小球</th>
+                <th>盈亏提示</th>
               </tr>
             </thead>
             <tbody>
               <template v-for="group in groupedByDate" :key="group.date">
                 <tr class="date-row">
-                  <td colspan="11" class="font-weight-bold">
+                  <td colspan="14" class="font-weight-bold">
                     {{ group.date }}
                     <span class="text-caption text-medium-emphasis ml-2">{{ group.rows.length }} 场</span>
                   </td>
@@ -205,13 +219,34 @@ onMounted(() => fetchReport())
                     </v-chip>
                     <span v-else class="text-medium-emphasis">-</span>
                   </td>
-                  <td class="text-right">{{ p.base_prob ? p.base_prob.toFixed(1) + '%' : '-' }}</td>
-                  <td class="text-right">{{ typeof p.recent_diff === 'number' ? p.recent_diff.toFixed(2) : '-' }}</td>
-                  <td class="text-right">{{ typeof p.composite === 'number' ? p.composite.toFixed(2) : '-' }}</td>
-                  <td class="text-no-wrap">
-                    <v-chip v-if="p.trade_pick" size="x-small" variant="outlined" class="mr-1">交易:{{ p.trade_pick }}</v-chip>
-                    <v-chip v-if="p.sim_pick" size="x-small" variant="outlined">模拟:{{ p.sim_pick }}</v-chip>
-                    <span v-if="!p.trade_pick && !p.sim_pick" class="text-medium-emphasis">-</span>
+                  <td class="text-no-wrap" :class="sigClass(p.sig_base)">
+                    <span v-if="p.sig_base">{{ p.sig_base }}</span>
+                    <span v-else class="text-medium-emphasis">-</span>
+                  </td>
+                  <td class="text-no-wrap" :class="sigClass(p.sig_pro)">
+                    <span v-if="p.sig_pro">{{ p.sig_pro }}</span>
+                    <span v-else class="text-medium-emphasis">-</span>
+                  </td>
+                  <td class="text-no-wrap" :class="sigClass(p.sig_recent)">
+                    <span v-if="p.sig_recent">{{ p.sig_recent }}</span>
+                    <span v-else class="text-medium-emphasis">-</span>
+                  </td>
+                  <td class="text-no-wrap" :class="sigClass(p.sig_comp)">
+                    <span v-if="p.sig_comp">{{ p.sig_comp }}</span>
+                    <span v-else class="text-medium-emphasis">-</span>
+                  </td>
+                  <td class="text-right text-no-wrap">
+                    <span v-if="p.ah_line">{{ p.ah_line }}</span>
+                    <span v-else class="text-medium-emphasis">-</span>
+                  </td>
+                  <td class="text-right text-no-wrap">
+                    <span v-if="p.ou_line">{{ p.ou_line }}</span>
+                    <span v-else class="text-medium-emphasis">-</span>
+                  </td>
+                  <td class="text-no-wrap text-medium-emphasis">
+                    <span v-if="p.trade_pick" class="mr-2">交易:{{ p.trade_pick }}</span>
+                    <span v-if="p.sim_pick">模拟:{{ p.sim_pick }}</span>
+                    <span v-if="!p.trade_pick && !p.sim_pick">-</span>
                   </td>
                 </tr>
               </template>

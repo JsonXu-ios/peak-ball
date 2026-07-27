@@ -6,11 +6,13 @@
 //	四信号齐备·同推客胜 / 前端主推≥70%·推荐客胜
 //	四信号齐备·同推主胜 / 前端主推≥70%·推荐主胜
 //
-// 交易盈亏/模拟盈亏（舒服项映射）的推荐只随行展示，不参与预测。
+// 交易盈亏/模拟盈亏（舒服项映射）的推荐，以及四个信号各自的方向+数值
+//（sig_base/sig_pro/sig_recent/sig_comp），都只随行展示，不参与预测。
 // 待赛场次数量小，每次请求实时计算，不落快照。
 package handlers
 
 import (
+	"fmt"
 	"net/http"
 	"sort"
 	"time"
@@ -115,6 +117,37 @@ func GetFinaleStatistics(c *gin.Context) {
 		fourHome := basePromoted && baseDir == "home" && proDir == "home" &&
 			hasRecentDiff && recentDiff > 0 && compDir == "home"
 
+		// —— 四信号提示（仅展示，不参与预测；有数据即显示方向+数值） ——
+		sigBase, sigPro, sigRecent, sigComp := "", "", "", ""
+		if baseDir != "" {
+			sigBase = fmt.Sprintf("%s %.1f%%", statisticsOutcomeLabel(baseDir), baseProb)
+		}
+		if proDir != "" {
+			sigPro = statisticsOutcomeLabel(proDir)
+		}
+		if hasRecentDiff {
+			switch {
+			case recentDiff > 0:
+				sigRecent = fmt.Sprintf("主胜 %.2f", recentDiff)
+			case recentDiff < 0:
+				sigRecent = fmt.Sprintf("客胜 %.2f", recentDiff)
+			default:
+				sigRecent = "0.00"
+			}
+		}
+		if hasComposite {
+			sigComp = fmt.Sprintf("%s %.2f", statisticsOutcomeLabel(compDir), composite)
+		}
+		// 亚盘/大小球即时盘口（仅展示）。
+		_, ouLine, hasOU := statisticsPankouLinePair(pankouRow, "bet365_dxq", "dxq_data")
+		ahText, ouText := "", ""
+		if hasAH {
+			ahText = fmt.Sprintf("%g", statisticsRound2(ahLine))
+		}
+		if hasOU {
+			ouText = fmt.Sprintf("%g", statisticsRound2(ouLine))
+		}
+
 		// 未命中信号的比赛 pick/signal 留空，仍然下发（前端默认只显示有预测的，
 		// 可切换查看全部）。
 		pick, signal := "", ""
@@ -129,7 +162,7 @@ func GetFinaleStatistics(c *gin.Context) {
 			pick, signal = "home", "主推≥70%"
 		}
 
-		row := gin.H{
+		predictions = append(predictions, gin.H{
 			"match_id":   match.ID,
 			"date":       match.Date,
 			"match_time": match.MatchTime,
@@ -140,21 +173,15 @@ func GetFinaleStatistics(c *gin.Context) {
 			"guest_logo": match.GuestLogo,
 			"pick":       pick,
 			"signal":     signal,
-			"base_prob":  statisticsRound2(baseProb),
-			"pro_dir":    "",
+			"sig_base":   sigBase,
+			"sig_pro":    sigPro,
+			"sig_recent": sigRecent,
+			"sig_comp":   sigComp,
+			"ah_line":    ahText,
+			"ou_line":    ouText,
 			"trade_pick": tradePick,
 			"sim_pick":   simPick,
-		}
-		if proDir != "" {
-			row["pro_dir"] = statisticsOutcomeLabel(proDir)
-		}
-		if hasRecentDiff {
-			row["recent_diff"] = statisticsRound2(recentDiff)
-		}
-		if hasComposite {
-			row["composite"] = statisticsRound2(composite)
-		}
-		predictions = append(predictions, row)
+		})
 	}
 
 	sort.SliceStable(predictions, func(i, j int) bool {
