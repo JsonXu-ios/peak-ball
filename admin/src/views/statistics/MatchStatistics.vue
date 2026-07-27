@@ -86,9 +86,10 @@ function marketOf(signal: Signal): string {
     asian_heat: 'asian', line_discrepancy: 'asian',
     goals_heat: 'dxq', goals_discrepancy: 'dxq', base_qiu: 'dxq',
     history_goals: 'goals', recent_goals: 'goals', goals_composite: 'goals',
+    front_goals_avg: 'goals',
     pro_signal: 'spf', trade_comfort: 'spf', sim_trade_comfort: 'spf',
     history_handicap: 'spf', recent_handicap: 'spf', asian_composite: 'spf',
-    base_spf: 'spf',
+    front_handicap_avg: 'spf', base_spf: 'spf',
   }
   return map[signal.key] || 'mixed'
 }

@@ -3,17 +3,16 @@
 // 只保留一张卡片：各信号推荐客胜时的命中率（命中=客胜打出），加上大球推荐
 // 的两组。信号口径全部沿用「完赛基础统计」对应维度：
 //
-//	1  四信号齐备同推客胜：前端主推≥70%、专业信号（凯体同向）、近期状态让球
-//	   （净胜球差<0）、亚盘综合均值（期望<-0.25）同时推荐客胜。
-//	2~5  单个信号推荐客胜，各自统计。
-//	6  近期平均球数与球数综合均值同时高于大小球盘口（同推大球），命中=大球
+//	1~4  单个信号推荐客胜，各自统计（前端主推≥70%、近期状态让球净胜球差<0、
+//	     专业信号凯体同向、亚盘综合均值期望<-0.25）。
+//	5  近期平均球数与球数综合均值同时高于大小球盘口（同推大球），命中=大球
 //	   打出（走盘不计）。
-//	7  存在任一客胜推荐（2~5条件之一）且同推大球的场次，命中=大球打出；
+//	6  存在任一客胜推荐（1~4条件之一）且同推大球的场次，命中=大球打出；
 //	   明细推荐列标注客胜推荐来源。
-//	8~10  交易盈亏/模拟盈亏（舒服项映射）推荐主胜时反买客胜，命中=客胜打出。
-//	11~14 任一盈亏推荐主胜（反买客胜）×四个客胜信号的组合，命中=客胜打出。
-//	15~16 主胜对照组：四信号齐备同推主胜、前端主推≥70%推荐主胜，命中=主胜打出。
-//	17~18 纯反买：交易/模拟盈亏映射推荐的反方向，无其他条件，命中=反方向打出。
+//	7~9  交易盈亏/模拟盈亏（舒服项映射）推荐主胜时反买客胜，命中=客胜打出。
+//	10~13 任一盈亏推荐主胜（反买客胜）×四个客胜信号的组合，命中=客胜打出。
+//	14 主胜对照组：前端主推≥70%推荐主胜，命中=主胜打出。
+//	15~16 纯反买：交易/模拟盈亏映射推荐的反方向，无其他条件，命中=反方向打出。
 package handlers
 
 import (
@@ -98,24 +97,22 @@ func buildLastDanceAwayCard(matches []statisticsMatch, histories, pankous, odds 
 	buckets := map[string]*statisticsSignal{}
 	covered := map[string]struct{}{}
 	order := []string{
-		"1. 四信号齐备·同推客胜",
-		"2. 前端主推≥70%·推荐客胜",
-		"3. 近期状态让球·推荐客胜",
-		"4. 专业信号·推荐客胜",
-		"5. 亚盘综合均值·推荐客胜",
-		"6. 双球数期望＞盘口·同推大球",
-		"7. 有客胜推荐＋同推大球",
-		"8. 交易盈亏推荐主胜·反买客胜",
-		"9. 模拟盈亏推荐主胜·反买客胜",
-		"10. 双盈亏同推主胜·反买客胜",
-		"11. 盈亏反买客胜×主推≥70%客胜",
-		"12. 盈亏反买客胜×近期状态让球客胜",
-		"13. 盈亏反买客胜×专业信号客胜",
-		"14. 盈亏反买客胜×亚盘综合均值客胜",
-		"15. 四信号齐备·同推主胜",
-		"16. 前端主推≥70%·推荐主胜",
-		"17. 反买交易盈亏（推荐反向·无其他条件）",
-		"18. 反买模拟盈亏（推荐反向·无其他条件）",
+		"1. 前端主推≥70%·推荐客胜",
+		"2. 近期状态让球·推荐客胜",
+		"3. 专业信号·推荐客胜",
+		"4. 亚盘综合均值·推荐客胜",
+		"5. 双球数期望＞盘口·同推大球",
+		"6. 有客胜推荐＋同推大球",
+		"7. 交易盈亏推荐主胜·反买客胜",
+		"8. 模拟盈亏推荐主胜·反买客胜",
+		"9. 双盈亏同推主胜·反买客胜",
+		"10. 盈亏反买客胜×主推≥70%客胜",
+		"11. 盈亏反买客胜×近期状态让球客胜",
+		"12. 盈亏反买客胜×专业信号客胜",
+		"13. 盈亏反买客胜×亚盘综合均值客胜",
+		"14. 前端主推≥70%·推荐主胜",
+		"15. 反买交易盈亏（推荐反向·无其他条件）",
+		"16. 反买模拟盈亏（推荐反向·无其他条件）",
 	}
 	file := func(key string, detail statisticsDetail) {
 		sig := buckets[key]
@@ -224,26 +221,21 @@ func buildLastDanceAwayCard(matches []statisticsMatch, histories, pankous, odds 
 			detail.Hit = actual == "home"
 			file(key, detail)
 		}
-		// 1. 四信号齐备且同推客胜。
-		if baseAway && proAway && recentAway && compAway {
-			fileAway("1. 四信号齐备·同推客胜",
-				fmt.Sprintf("客胜（主推%.1f%%｜专业｜让球%.2f｜综合%.2f）", baseProb, recentDiff, composite), baseProb)
-		}
-		// 2~5. 单信号推荐客胜。
+		// 1~4. 单信号推荐客胜。
 		if baseAway {
-			fileAway("2. 前端主推≥70%·推荐客胜", "主推:客胜", baseProb)
+			fileAway("1. 前端主推≥70%·推荐客胜", "主推:客胜", baseProb)
 		}
 		if recentAway {
-			fileAway("3. 近期状态让球·推荐客胜", "让球:客胜", recentDiff)
+			fileAway("2. 近期状态让球·推荐客胜", "让球:客胜", recentDiff)
 		}
 		if proAway {
-			fileAway("4. 专业信号·推荐客胜", "专业:客胜", 0)
+			fileAway("3. 专业信号·推荐客胜", "专业:客胜", 0)
 		}
 		if compAway {
-			fileAway("5. 亚盘综合均值·推荐客胜", "综合:客胜", composite)
+			fileAway("4. 亚盘综合均值·推荐客胜", "综合:客胜", composite)
 		}
 
-		// 6/7. 双球数期望同推大球：近期平均球数与球数综合均值都高于盘口。
+		// 5/6. 双球数期望同推大球：近期平均球数与球数综合均值都高于盘口。
 		bothOver := hasOU && hasRecentGoals && hasGoalsComp &&
 			recentGoals-ouLine >= statisticsPushEpsilon && goalsComp-ouLine >= statisticsPushEpsilon
 		if bothOver {
@@ -254,9 +246,9 @@ func buildLastDanceAwayCard(matches []statisticsMatch, histories, pankous, odds 
 				detail.Line = statisticsFormatLine(ouLine)
 				detail.Result = statisticsOverLabel(over)
 				detail.Hit = over
-				file("6. 双球数期望＞盘口·同推大球", detail)
+				file("5. 双球数期望＞盘口·同推大球", detail)
 
-				// 7. 同场存在任一客胜推荐时，大球推荐的命中率。
+				// 6. 同场存在任一客胜推荐时，大球推荐的命中率。
 				sources := []string{}
 				if baseAway {
 					sources = append(sources, "主推")
@@ -273,22 +265,22 @@ func buildLastDanceAwayCard(matches []statisticsMatch, histories, pankous, odds 
 				if len(sources) > 0 {
 					combo := detail
 					combo.Pick = fmt.Sprintf("判大（客胜推荐:%s）", strings.Join(sources, "/"))
-					file("7. 有客胜推荐＋同推大球", combo)
+					file("6. 有客胜推荐＋同推大球", combo)
 				}
 			}
 		}
 
-		// 8~10. 交易/模拟盈亏（舒服项映射）推荐主胜 → 反买客胜，命中=客胜打出。
+		// 7~9. 交易/模拟盈亏（舒服项映射）推荐主胜 → 反买客胜，命中=客胜打出。
 		if tradeHome {
-			fileAway("8. 交易盈亏推荐主胜·反买客胜", "反买客胜（交易推主胜）", 0)
+			fileAway("7. 交易盈亏推荐主胜·反买客胜", "反买客胜（交易推主胜）", 0)
 		}
 		if simHome {
-			fileAway("9. 模拟盈亏推荐主胜·反买客胜", "反买客胜（模拟推主胜）", 0)
+			fileAway("8. 模拟盈亏推荐主胜·反买客胜", "反买客胜（模拟推主胜）", 0)
 		}
 		if tradeHome && simHome {
-			fileAway("10. 双盈亏同推主胜·反买客胜", "反买客胜（交易+模拟推主胜）", 0)
+			fileAway("9. 双盈亏同推主胜·反买客胜", "反买客胜（交易+模拟推主胜）", 0)
 		}
-		// 11~14. 反买客胜与四个客胜信号的组合：任一盈亏推荐主胜且该信号推荐
+		// 10~13. 反买客胜与四个客胜信号的组合：任一盈亏推荐主胜且该信号推荐
 		// 客胜，命中=客胜打出。
 		if tradeHome || simHome {
 			source := "交易"
@@ -298,30 +290,25 @@ func buildLastDanceAwayCard(matches []statisticsMatch, histories, pankous, odds 
 				source = "模拟"
 			}
 			if baseAway {
-				fileAway("11. 盈亏反买客胜×主推≥70%客胜", "反买客胜（"+source+"）×主推:客胜", baseProb)
+				fileAway("10. 盈亏反买客胜×主推≥70%客胜", "反买客胜（"+source+"）×主推:客胜", baseProb)
 			}
 			if recentAway {
-				fileAway("12. 盈亏反买客胜×近期状态让球客胜", "反买客胜（"+source+"）×让球:客胜", recentDiff)
+				fileAway("11. 盈亏反买客胜×近期状态让球客胜", "反买客胜（"+source+"）×让球:客胜", recentDiff)
 			}
 			if proAway {
-				fileAway("13. 盈亏反买客胜×专业信号客胜", "反买客胜（"+source+"）×专业:客胜", 0)
+				fileAway("12. 盈亏反买客胜×专业信号客胜", "反买客胜（"+source+"）×专业:客胜", 0)
 			}
 			if compAway {
-				fileAway("14. 盈亏反买客胜×亚盘综合均值客胜", "反买客胜（"+source+"）×综合:客胜", composite)
+				fileAway("13. 盈亏反买客胜×亚盘综合均值客胜", "反买客胜（"+source+"）×综合:客胜", composite)
 			}
 		}
 
-		// 15~16. 主胜对照组：口径与分组1/2完全对称，方向换成主胜，命中=主胜打出。
-		baseHome := baseDir == "home" && baseProb >= lastDanceProbThreshold
-		if baseHome && proDir == "home" && hasRecentDiff && recentDiff > 0 && compDir == "home" {
-			fileHome("15. 四信号齐备·同推主胜",
-				fmt.Sprintf("主胜（主推%.1f%%｜专业｜让球%.2f｜综合%.2f）", baseProb, recentDiff, composite), baseProb)
-		}
-		if baseHome {
-			fileHome("16. 前端主推≥70%·推荐主胜", "主推:主胜", baseProb)
+		// 14. 主胜对照组：口径与分组1完全对称，方向换成主胜，命中=主胜打出。
+		if baseDir == "home" && baseProb >= lastDanceProbThreshold {
+			fileHome("14. 前端主推≥70%·推荐主胜", "主推:主胜", baseProb)
 		}
 
-		// 17~18. 纯反买：盈亏映射推荐什么就买反方向（推主胜买客胜、推客胜买
+		// 15~16. 纯反买：盈亏映射推荐什么就买反方向（推主胜买客胜、推客胜买
 		// 主胜），无其他条件；命中=反方向打出。
 		fileFade := func(key, source, pick string) {
 			opposite := "home"
@@ -335,10 +322,10 @@ func buildLastDanceAwayCard(matches []statisticsMatch, histories, pankous, odds 
 			file(key, detail)
 		}
 		if tradePick != "" {
-			fileFade("17. 反买交易盈亏（推荐反向·无其他条件）", "交易", tradePick)
+			fileFade("15. 反买交易盈亏（推荐反向·无其他条件）", "交易", tradePick)
 		}
 		if simPick != "" {
-			fileFade("18. 反买模拟盈亏（推荐反向·无其他条件）", "模拟", simPick)
+			fileFade("16. 反买模拟盈亏（推荐反向·无其他条件）", "模拟", simPick)
 		}
 	}
 
@@ -358,11 +345,11 @@ func buildLastDanceAwayCard(matches []statisticsMatch, histories, pankous, odds 
 		accuracy = math.Round(float64(hit)/float64(matched)*10000) / 100
 	}
 	return gin.H{
-		"key":   "dance_away",
-		"title": "客胜命中率（各信号推荐客胜的结算）",
-		"definition": "1=前端主推≥70%、专业信号（凯体同向）、近期状态让球（净胜球差<0）、亚盘综合均值（期望<-0.25）四个信号同时推荐客胜；2~5=单个信号推荐客胜；命中=客胜打出，明细数值列为该信号数值。6=近期平均球数与球数综合均值同时高于大小球盘口（同推大球），命中=大球打出（走盘不计），数值列为综合期望、盘口列为大小球线。7=同场存在任一客胜推荐（2~5条件之一）且同推大球，命中=大球打出，明细推荐列标注客胜推荐来源。8~10=交易盈亏/模拟盈亏（舒服项映射：胜→主胜，平/负→主让判客胜、主受让判主胜）推荐主胜时反买客胜，命中=客胜打出。11~14=任一盈亏推荐主胜（反买客胜）且对应信号推荐客胜的组合，命中=客胜打出，明细推荐列标注盈亏来源。15~16=主胜对照组：四信号齐备同推主胜、前端主推≥70%推荐主胜，命中=主胜打出。17~18=纯反买：交易盈亏/模拟盈亏（舒服项映射）推荐什么就买反方向（推主胜买客胜、推客胜买主胜），无其他条件，命中=反方向打出。同一场比赛可进入多个分组。",
-		"covered": len(covered),
-		"matched": matched, "hit": hit, "miss": matched - hit, "accuracy": accuracy,
+		"key":        "dance_away",
+		"title":      "客胜命中率（各信号推荐客胜的结算）",
+		"definition": "1~4=单个信号推荐客胜（前端主推≥70%、近期状态让球净胜球差<0、专业信号凯体同向、亚盘综合均值期望<-0.25）；命中=客胜打出，明细数值列为该信号数值。5=近期平均球数与球数综合均值同时高于大小球盘口（同推大球），命中=大球打出（走盘不计），数值列为综合期望、盘口列为大小球线。6=同场存在任一客胜推荐（1~4条件之一）且同推大球，命中=大球打出，明细推荐列标注客胜推荐来源。7~9=交易盈亏/模拟盈亏（舒服项映射：胜→主胜，平/负→主让判客胜、主受让判主胜）推荐主胜时反买客胜，命中=客胜打出。10~13=任一盈亏推荐主胜（反买客胜）且对应信号推荐客胜的组合，命中=客胜打出，明细推荐列标注盈亏来源。14=主胜对照组：前端主推≥70%推荐主胜，命中=主胜打出。15~16=纯反买：交易盈亏/模拟盈亏（舒服项映射）推荐什么就买反方向（推主胜买客胜、推客胜买主胜），无其他条件，命中=反方向打出。同一场比赛可进入多个分组。",
+		"covered":    len(covered),
+		"matched":    matched, "hit": hit, "miss": matched - hit, "accuracy": accuracy,
 		"buckets": rows,
 	}
 }

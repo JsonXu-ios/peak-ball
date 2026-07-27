@@ -150,6 +150,7 @@ export const getCrossStatistics = (params?: { days?: number; refresh?: number })
 export const getLastDanceStatistics = (params?: { refresh?: number }) =>
   api.get('/admin/statistics/lastdance', { params, timeout: 300000 })
 
-// ---- Finale（终章·未来比赛预测）----
-export const getFinalePredictions = () =>
-  api.get('/admin/statistics/finale', { timeout: 120000 })
+// ---- Finale（终章·未来比赛预测 + 前瞻实测存档）----
+// 默认 = 未来待赛；mode=history（可带 start/end）= 历史存档。
+export const getFinalePredictions = (params?: { mode?: string; start?: string; end?: string }) =>
+  api.get('/admin/statistics/finale', { params, timeout: 120000 })

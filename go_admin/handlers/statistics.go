@@ -86,10 +86,12 @@ var signalMarketMap = map[string]string{
 	"history_handicap":    "spf",
 	"recent_handicap":     "spf",
 	"asian_composite":     "spf",
+	"front_handicap_avg":  "spf",
 	"line_discrepancy":    "asian",
 	"history_goals":       "goals",
 	"recent_goals":        "goals",
 	"goals_composite":     "goals",
+	"front_goals_avg":     "goals",
 	"goals_discrepancy":   "dxq",
 	"warning_signals":     "mixed",
 	"deviation_signals":   "mixed",
@@ -381,10 +383,12 @@ func buildSignalStatistics(matches []statisticsMatch, histories, pankous, odds m
 	historyHandicap := &statisticsSignal{}
 	recentHandicap := &statisticsSignal{}
 	asianComposite := &statisticsSignal{}
+	frontHandicapAvg := &statisticsSignal{}
 	lineDiscrepancy := &statisticsSignal{}
 	historyGoalsSig := &statisticsSignal{}
 	recentGoalsSig := &statisticsSignal{}
 	goalsComposite := &statisticsSignal{}
+	frontGoalsAvg := &statisticsSignal{}
 	goalsDiscrepancy := &statisticsSignal{}
 
 	for _, match := range matches {
@@ -474,6 +478,12 @@ func buildSignalStatistics(matches []statisticsMatch, histories, pankous, odds m
 		if composite, ok := statisticsAverage(historyDiff, hasHistory, recentDiff, hasRecentDiff, ahLine, hasAH); ok {
 			statisticsOutcomeSignal(asianComposite, match, composite)
 		}
+		// 6b. 前端 H5「期望让球·综合均值」原样复刻：只取历史与近期的等权平均，
+		// 不含亚盘线（这是它与 #6 的唯一差别）。go_server 缺样本时会拿 0 参与
+		// 平均，这里改成缺任一样本就不纳入统计。
+		if hasHistory && hasRecentDiff {
+			statisticsOutcomeSignal(frontHandicapAvg, match, (historyDiff+recentDiff)/2)
+		}
 
 		// 7. Current Asian line diverges from both history and recent form by ≥0.75.
 		if hasAH && hasHistory && hasRecentDiff {
@@ -505,6 +515,11 @@ func buildSignalStatistics(matches []statisticsMatch, histories, pankous, odds m
 			}
 			if hasRecentGoals {
 				statisticsGoalSignal(recentGoalsSig, match, recentGoals, ouLine)
+			}
+			// 12b. 前端 H5「期望球数·综合均值」原样复刻：0.45×历史 + 0.55×近期
+			// 加权（#12 是等权，这是唯一差别）；缺任一样本不纳入统计。
+			if hasHistory && hasRecentGoals {
+				statisticsGoalSignal(frontGoalsAvg, match, historyGoals*0.45+recentGoals*0.55, ouLine)
 			}
 			if composite, ok := statisticsAverage(historyGoals, hasHistory, recentGoals, hasRecentGoals); ok {
 				statisticsGoalSignal(goalsComposite, match, composite, ouLine)
@@ -540,10 +555,12 @@ func buildSignalStatistics(matches []statisticsMatch, histories, pankous, odds m
 			historyHandicap.payload("history_handicap", "4. 历史期望让球", "赛前3年内交锋净胜球期望；|期望|≤0.25判平，否则判主/客；命中=胜平负判断正确。"),
 			recentHandicap.payload("recent_handicap", "5. 近期状态让球", "两队各自最近5场净胜球差；判断口径同上。"),
 			asianComposite.payload("asian_composite", "6. 亚盘综合均值", "取【历史期望让球】【近期状态让球】【当前亚盘线】中有值者求平均；判断口径同上。"),
+			frontHandicapAvg.payload("front_handicap_avg", "6b. 前端期望让球·综合均值（不含亚盘线）", "与 H5【期望让球】区块显示的「综合均值」同口径：(历史期望让球 + 近期状态让球) / 2，不掺当前亚盘线——这是它与 #6 的唯一差别。两项样本缺任一则不纳入统计（H5 的显示值在缺样本时会拿0参与平均，此处不复刻该行为）。|期望|≤0.25判平，否则判主/客；命中=胜平负判断正确。"),
 			lineDiscrepancy.payload("line_discrepancy", "9. 亚盘即时盘背离≥0.75", "当前亚盘线较历史与近期期望同时背离≥0.75时纳入；盘口高估一方则站另一方赢盘。"),
 			historyGoalsSig.payload("history_goals", "10. 历史平均球数", "赛前3年内交锋场均总进球；与当前大小球线比较判大/小；命中=大小球判断正确。"),
 			recentGoalsSig.payload("recent_goals", "11. 近期平均球数", "两队最近5场场均总进球；判断口径同上。"),
 			goalsComposite.payload("goals_composite", "12. 球数综合均值", "取【历史平均球数】【近期平均球数】求平均(不含盘口线)；判断口径同上。"),
+			frontGoalsAvg.payload("front_goals_avg", "12b. 前端期望球数·综合均值（0.45/0.55加权）", "与 H5【期望球数】区块显示的「综合均值」同口径：0.45×历史平均球数 + 0.55×近期平均球数——#12 是等权平均，这是唯一差别。两项样本缺任一则不纳入统计。与当前大小球线比较判大/小；命中=大小球判断正确。"),
 			goalsDiscrepancy.payload("goals_discrepancy", "14. 期望球数高于大小球即时盘≥0.75", "球数综合均值高于当前大小球线≥0.75时纳入，判大球；命中=实际打出大球。"),
 		},
 	}

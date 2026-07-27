@@ -64,5 +64,6 @@ func AutoMigrate() error {
 		&models.CrawlerTask{},
 		&models.CrawlerLog{},
 		&models.StatSnapshot{},
+		&models.FinalePrediction{},
 	)
 }
