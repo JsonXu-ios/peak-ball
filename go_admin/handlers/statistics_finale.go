@@ -41,12 +41,11 @@ type finaleColumn struct {
 	Hit   func(models.FinalePrediction) *bool
 }
 
+// 大小球热度/期望让球/期望球数三列已从页面撤下，命中率也不再统计（大小球那套
+// 判断改由「大小球」选项卡专门跟踪）。它们的值仍照常算并写进存档，数据不断档，
+// 日后想恢复只要把对应行加回这里、并把列加回表格即可。
 var finaleColumns = []finaleColumn{
 	{"pick", "预测（主推≥70%）", func(p models.FinalePrediction) *bool { return p.HitPick }},
-	{"ou_heat", "大小球热度", func(p models.FinalePrediction) *bool { return p.HitOuHeat }},
-	{"ou_pick", "球数倾向", func(p models.FinalePrediction) *bool { return p.HitOuPick }},
-	{"exp_ah", "期望让球（对亚盘判赢盘）", func(p models.FinalePrediction) *bool { return p.HitExpAh }},
-	{"exp_ou", "期望球数", func(p models.FinalePrediction) *bool { return p.HitExpOu }},
 	{"trade", "交易盈亏·反买", func(p models.FinalePrediction) *bool { return p.HitTrade }},
 	{"sim", "模拟盈亏·反买", func(p models.FinalePrediction) *bool { return p.HitSim }},
 }
@@ -164,6 +163,9 @@ type finaleRow struct {
 	ouText    string
 	tradePick string // 展示文本（主胜/客胜）
 	simPick   string
+	// goalPick 命中「大小球」选项卡那两种反向组合之一时为「买大球」，否则为空。
+	// 只展示，不在本页结算——命中率由大小球选项卡单独统计。
+	goalPick string
 
 	baseDir   string
 	ouHeatDir string
@@ -199,6 +201,7 @@ func (r finaleRow) payload() gin.H {
 		"ou_line":    r.ouText,
 		"trade_pick": r.tradePick,
 		"sim_pick":   r.simPick,
+		"goal_pick":  r.goalPick,
 		"settled":    false,
 	}
 }
@@ -210,7 +213,7 @@ func (r finaleRow) record(now time.Time) models.FinalePrediction {
 		HomeLogo: r.match.HomeLogo, GuestLogo: r.match.GuestLogo,
 		Pick: r.pick, SigBase: r.sigBase, OuHeat: r.ouHeat, OuPick: r.ouPick,
 		ExpAh: r.expAh, ExpOu: r.expOu, AhLine: r.ahText, OuLine: r.ouText,
-		TradePick: r.tradePick, SimPick: r.simPick,
+		TradePick: r.tradePick, SimPick: r.simPick, GoalPick: r.goalPick,
 		BaseDir: r.baseDir, OuHeatDir: r.ouHeatDir, OuPickDir: r.ouPickDir,
 		ExpAhDir: r.expAhDir, ExpOuDir: r.expOuDir, TradeDir: r.tradeDir, SimDir: r.simDir,
 		SnapshotAt: now,
@@ -336,11 +339,12 @@ func buildFinaleRow(match statisticsMatch, historyRow, pankouRow, oddsRow map[st
 
 	// 13. 大小球投注热度分档：期望球数=历史交锋场均与近期场均的等权平均，
 	// 热度=clamp(50+(期望-盘口)×18)，取大/小两侧较大值分档(90…55)。
+	// 终章只认 65 档及以上（55/60 档命中率不稳），低档位留空、不参与结算。
 	if hasOU && (hasRecentGoals || hasHistory) {
 		expected := statisticsMean(recentGoals, hasRecentGoals, historyGoals, hasHistory)
 		overHeat := statisticsClamp(50+(expected-ouLine)*18, 0, 100)
 		heat := math.Max(overHeat, 100-overHeat)
-		if tier, ok := statisticsHeatTierIn(statisticsGoalsHeatTiers, heat); ok {
+		if tier, ok := statisticsHeatTierIn(statisticsGoalsHeatTiers, heat); ok && tier >= 65 {
 			row.ouHeatDir = finaleOverDirection(overHeat >= 50)
 			row.ouHeat = fmt.Sprintf("%d档 判%s %.1f", tier, statisticsOverLabel(overHeat >= 50), heat)
 		}
@@ -351,7 +355,7 @@ func buildFinaleRow(match statisticsMatch, historyRow, pankouRow, oddsRow map[st
 		row.ouPick = "判" + statisticsOverLabel(qiuDir == "over")
 	}
 
-	// —— H5 两个「综合均值」的判断（口径同「完赛基础统计」6b / 12b） ——
+	// —— H5 两个「综合均值」的判断（让球同「完赛基础统计」6b；球数为 0.7/0.3 加权）——
 	// 历史与近期缺任一样本即留空，不用 0 顶替。
 	recentDiff, hasRecentDiff := statisticsRecentDifference(
 		statisticsRecentForm(homeRecent, match.Home), statisticsRecentForm(guestRecent, match.Guest))
@@ -367,8 +371,13 @@ func buildFinaleRow(match statisticsMatch, historyRow, pankouRow, oddsRow map[st
 				statisticsCoverLabel(coverHome), composite, statisticsRound2(ahLine))
 		}
 	}
+	// 大小球推荐：命中「大小球」选项卡那两种反向组合之一就显示买大球，口径完全
+	// 复用同一个函数，避免两处判断走偏。只展示，不在本页结算。
+	if _, ok := buildFinaleGoalRow(match, historyRow, pankouRow); ok {
+		row.goalPick = "买大球"
+	}
 	if hasOU && hasHistory && hasRecentGoals {
-		composite := historyGoals*0.45 + recentGoals*0.55
+		composite := historyGoals*0.7 + recentGoals*0.3
 		if math.Abs(composite-ouLine) >= statisticsPushEpsilon {
 			row.expOuDir = finaleOverDirection(composite > ouLine)
 			row.expOu = fmt.Sprintf("判%s %.2f", statisticsOverLabel(composite > ouLine), composite)
@@ -439,7 +448,7 @@ func archiveFinalePredictions(rows []finaleRow) error {
 		DoUpdates: clause.AssignmentColumns([]string{
 			"date", "match_time", "league", "home", "guest", "home_logo", "guest_logo",
 			"pick", "sig_base", "ou_heat", "ou_pick", "exp_ah", "exp_ou", "ah_line", "ou_line",
-			"trade_pick", "sim_pick",
+			"trade_pick", "sim_pick", "goal_pick",
 			"base_dir", "ou_heat_dir", "ou_pick_dir", "exp_ah_dir", "exp_ou_dir",
 			"trade_dir", "sim_dir", "ah_line_value", "ou_line_value", "snapshot_at", "updated_at",
 		}),
@@ -644,9 +653,28 @@ func loadFinaleArchive(start, end string) ([]models.FinalePrediction, error) {
 	return records, err
 }
 
+// finaleOuHeatTierOK 终章大小球热度只认 65 档及以上。口径收紧前按 55/60 档写入
+// 的旧存档在读取层过滤：展示留空、命中率不计分母。档位是赛前已知特征，事后按它
+// 筛选不构成前视偏差；库里的原始快照不改写，随时可回退。
+func finaleOuHeatTierOK(text string) bool {
+	var tier int
+	if _, err := fmt.Sscanf(text, "%d档", &tier); err != nil {
+		return text != "" // 解析不出档位的旧格式按原样放行
+	}
+	return tier >= 65
+}
+
+// finaleApplyOuHeatGate 对一条存档行套用档位闸门（只改内存副本，不写库）。
+func finaleApplyOuHeatGate(record *models.FinalePrediction) {
+	if !finaleOuHeatTierOK(record.OuHeat) {
+		record.OuHeat, record.OuHeatDir, record.HitOuHeat = "", "", nil
+	}
+}
+
 // finaleArchiveRow 渲染一条存档/回算行。source 必须如实标注：archive=赛前存档
 // （真前瞻），recompute=事后用当前赔率回算（仅参考），前端据此打标签。
 func finaleArchiveRow(record models.FinalePrediction, source string) gin.H {
+	finaleApplyOuHeatGate(&record)
 	return gin.H{
 		"source":      source,
 		"match_id":    record.MatchID,
@@ -667,6 +695,7 @@ func finaleArchiveRow(record models.FinalePrediction, source string) gin.H {
 		"ou_line":     record.OuLine,
 		"trade_pick":  record.TradePick,
 		"sim_pick":    record.SimPick,
+		"goal_pick":   record.GoalPick,
 		"settled":     record.Settled,
 		"home_score":  record.HomeScore,
 		"guest_score": record.GuestScore,
@@ -704,6 +733,9 @@ func buildFinaleAccuracy(start, end string) (gin.H, error) {
 // finaleAccuracyOf 按列聚合命中率。hit_* 为 nil 的列（信号为空、走盘、盘口缺失）
 // 不计入分母——不适用不等于没中。
 func finaleAccuracyOf(records []models.FinalePrediction) gin.H {
+	for i := range records {
+		finaleApplyOuHeatGate(&records[i])
+	}
 	settled := 0
 	for _, record := range records {
 		if record.Settled {

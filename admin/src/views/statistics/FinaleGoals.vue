@@ -1,15 +1,11 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { getFinalePredictions } from '@/api'
-import FinaleGoals from './FinaleGoals.vue'
+import { getFinaleGoalPredictions } from '@/api'
 
-/** 选项卡：胜平负（本文件）/ 大小球（FinaleGoals.vue，两套预测互不相干） */
-const tab = ref<'spf' | 'goals'>('spf')
-
-/** 逐列命中：true=中、false=没中、null=不适用（信号为空/走盘），不计入命中率 */
+/** 命中：true=中、false=没中、null=不适用（走盘/盘口缺失），不计入命中率 */
 type Hit = boolean | null
 
-interface Prediction {
+interface GoalPrediction {
   match_id: string
   date: string
   match_time: string
@@ -18,31 +14,32 @@ interface Prediction {
   guest: string
   home_logo?: string
   guest_logo?: string
-  /** home / away（只有主推≥70% 的场次会下发） */
+  /** split_under=反向·热度判小球；split_over=反向·热度判大球 */
+  combo: string
+  combo_label: string
+  /** 恒为 over（两种组合都买大球） */
   pick: string
-  /** 主推提示：方向+概率文本，如「客胜 72.3%」，无数据为 '' */
-  sig_base: string
-  /** 命中「大小球」选项卡两种反向组合之一时为「买大球」，否则 ''。仅展示，不在本页结算 */
-  goal_pick: string
-  /** 亚盘/大小球即时盘口，无数据为 '' */
-  ah_line: string
+  /** 如「判大球 3.60」 */
+  exp_goals: string
+  /** 如「判小球 3.50」 */
+  heat_goals: string
+  /** 赛前那一刻的大小球即时盘口 */
   ou_line: string
-  trade_pick: string
-  sim_pick: string
-  /** archive=赛前存档（真前瞻）；recompute=事后用当前赔率回算（仅参考） */
+  /** archive=赛前存档（真前瞻）；recompute=事后用当前盘口回算（仅参考） */
   source?: 'archive' | 'recompute'
-  /** 以下仅历史行有值 */
   settled?: boolean
   home_score?: number
   guest_score?: number
+  /** over / under，走盘为空 */
   result?: string
   snapshot_at?: string
-  hits?: Record<string, Hit>
+  hit_pick?: Hit
 }
 
 interface AccuracyColumn {
   key: string
   label: string
+  range: string
   matched: number
   hit: number
   miss: number
@@ -56,7 +53,7 @@ interface Report {
   mode: 'upcoming' | 'history'
   start: string
   end: string
-  predictions: Prediction[]
+  predictions: GoalPrediction[]
   /** 赛前存档的命中率（真前瞻实测） */
   accuracy: { settled_total: number; columns: AccuracyColumn[] }
   /** 事后回算的命中率，单独一套，绝不与 accuracy 合并 */
@@ -64,7 +61,6 @@ interface Report {
   warning?: string
 }
 
-/** 区间快捷键。upcoming=未来待赛（默认）；其余都查存档 */
 const RANGES = [
   { value: 'upcoming', label: '未来待赛' },
   { value: 'yesterday', label: '昨天' },
@@ -104,7 +100,6 @@ function rangeParams(value: RangeValue) {
     case '30d':
       return { mode: 'history', start: ymd(-29), end: ymd(0) }
     case 'custom':
-      // 起止都留空就是全部；只填一头也允许（另一头不限）。
       return { mode: 'history', start: customStart.value, end: customEnd.value }
     default:
       return { mode: 'history' }
@@ -113,8 +108,8 @@ function rangeParams(value: RangeValue) {
 
 const isHistory = computed(() => report.value?.mode === 'history')
 const rows = computed(() => report.value?.predictions ?? [])
-const homePicks = computed(() => rows.value.filter((row) => row.pick === 'home'))
-const awayPicks = computed(() => rows.value.filter((row) => row.pick === 'away'))
+const underHeatRows = computed(() => rows.value.filter((row) => row.combo === 'split_under'))
+const overHeatRows = computed(() => rows.value.filter((row) => row.combo === 'split_over'))
 const settledRows = computed(() => rows.value.filter((row) => row.settled))
 const archiveRows = computed(() => rows.value.filter((row) => row.source === 'archive'))
 const recomputeRows = computed(() => rows.value.filter((row) => row.source === 'recompute'))
@@ -122,15 +117,14 @@ const accuracyColumns = computed(() => report.value?.accuracy?.columns ?? [])
 const recomputeColumns = computed(() => report.value?.recompute_accuracy?.columns ?? [])
 const recomputeTotal = computed(() => report.value?.recompute_accuracy?.settled_total ?? 0)
 /**
- * 表格总列数。固定 11 列：时间/联赛/主队/VS/客队/预测/主推/大小球推荐/亚盘/
- * 大小球/盈亏提示；历史模式再多「来源」「比分」两列。数错会让日期分组行的
+ * 日期分组行的 colspan。固定 10 列：时间/联赛/主队/vs/客队/预测/组合/期望球数/
+ * 球数热度/盘口；历史模式再多「来源」「比分」「结果」三列。数错会让分组行的
  * 背景色在中途断掉，加减列时务必同步改这里。
  */
-const columnCount = computed(() => 11 + (isHistory.value ? 2 : 0))
+const columnCount = computed(() => 10 + (isHistory.value ? 3 : 0))
 
-/** 按日期分组（接口已按开赛时间升序返回） */
 const groupedByDate = computed(() => {
-  const groups: Array<{ date: string; rows: Prediction[] }> = []
+  const groups: Array<{ date: string; rows: GoalPrediction[] }> = []
   for (const row of rows.value) {
     const last = groups[groups.length - 1]
     if (last && last.date === row.date) last.rows.push(row)
@@ -139,59 +133,43 @@ const groupedByDate = computed(() => {
   return groups
 })
 
-function pickColor(pick: string) {
-  return pick === 'home' ? 'error' : 'success'
-}
-
-function pickLabel(pick: string) {
-  return pick === 'home' ? '买主胜' : '买客胜'
-}
-
 function logoSrc(path?: string): string {
   return path || ''
 }
 
-/** 按方向着色：偏主队=红、偏客队=绿（含赢盘方向），其余默认色 */
-function sigClass(text: string) {
-  if (text.startsWith('主胜') || text.startsWith('主队')) return 'text-error'
-  if (text.startsWith('客胜') || text.startsWith('客队')) return 'text-success'
+/** 大小球提示按大/小着色：判大球=橙、判小球=蓝 */
+function ouClass(text: string) {
+  if (text.includes('判大球') || text === 'over') return 'text-warning'
+  if (text.includes('判小球') || text === 'under') return 'text-info'
   return ''
 }
 
-/** 取某列的命中结果；未结算或不适用返回 null */
-function hitOf(row: Prediction, key: string): Hit {
-  if (!row.settled) return null
-  const value = row.hits?.[key]
-  return value === true || value === false ? value : null
+function resultText(row: GoalPrediction) {
+  if (!row.settled) return ''
+  if (row.result === 'over') return '大球'
+  if (row.result === 'under') return '小球'
+  return '走盘'
 }
 
-/**
- * 命中标记：✓ 中、✗ 没中。不适用（走盘、信号为空）与未结算一律返回空串、
- * 不渲染任何标记——口径和命中率分母一致，不显示不等于没中。
- */
-function hitMark(row: Prediction, key: string): string {
-  const hit = hitOf(row, key)
-  if (hit === null) return ''
-  return hit ? '✓' : '✗'
-}
-
-function hitMarkClass(row: Prediction, key: string): string {
-  return hitOf(row, key) ? 'text-success' : 'text-error'
+/** ✓ 中、✗ 没中；走盘与未结算不渲染标记——不显示不等于没中 */
+function hitMark(row: GoalPrediction): string {
+  if (!row.settled || (row.hit_pick !== true && row.hit_pick !== false)) return ''
+  return row.hit_pick ? '✓' : '✗'
 }
 
 function accuracyColor(accuracy: number, matched: number) {
   if (!matched) return 'default'
   if (accuracy >= 60) return 'success'
-  if (accuracy >= 50) return 'primary'
-  return 'warning'
+  if (accuracy >= 50) return 'warning'
+  return 'error'
 }
 
 async function fetchReport() {
   loading.value = true
   error.value = ''
   try {
-    const { data } = await getFinalePredictions(rangeParams(range.value))
-    report.value = data as Report
+    const response = await getFinaleGoalPredictions(rangeParams(range.value))
+    report.value = response.data as Report
   } catch (requestError) {
     const err = requestError as { response?: { data?: { error?: string } }; message?: string }
     error.value = err.response?.data?.error || err.message || '加载预测失败'
@@ -210,20 +188,14 @@ onMounted(() => fetchReport())
 
 <template>
   <div>
-    <h2 class="text-h5 font-weight-bold mb-2">终章 · 比赛预测与前瞻实测</h2>
-    <v-tabs v-model="tab" color="primary" density="comfortable" class="mb-4">
-      <v-tab value="spf">胜平负</v-tab>
-      <v-tab value="goals">大小球</v-tab>
-    </v-tabs>
-
-    <FinaleGoals v-if="tab === 'goals'" />
-
-    <template v-else>
     <div class="d-flex flex-wrap align-center mb-4 ga-3">
       <div>
-        <div class="text-body-2 text-medium-emphasis mt-1">
-          未来 {{ report?.horizon_days ?? 14 }} 天待赛比赛中命中「前端主推≥70%」信号的场次，赛前自动存档；比赛完赛后（拉回结果即可）自动逐列结算命中。
-          <span class="text-error font-weight-bold">红色=偏主队</span>、<span class="text-success font-weight-bold">绿色=偏客队</span>；主推概率、亚盘/大小球盘口与交易/模拟盈亏推荐仅随行展示，不参与预测。<b>大小球推荐</b>列命中「大小球」选项卡那两种反向组合时显示<b>买大球</b>，它的命中率在那个选项卡里单独统计，本页不结算。
+        <div class="text-body-2 text-medium-emphasis">
+          未来 {{ report?.horizon_days ?? 14 }} 天待赛比赛中，<b>期望球数与球数热度判到相反侧</b>的场次，<b>两种组合都买大球</b>，赛前自动存档、完赛后自动结算。
+          期望球数=0.7×历史场均+0.3×近期场均，球数热度方向=<b>等权</b>综合均值（历史与近期各半）对盘口的方向——两者喂的是同一对样本、只是权重不同，这正是它们能判到相反侧的原因。
+          <b>两队没有交锋记录的比赛整场剔除</b>，不参与预测。
+          <b>反向·热度判小球</b>只取盘口 <b>3.75 以下</b>（3.75 本身剔除）；<b>反向·热度判大球</b>只剔除 <b>2.25 这一档</b>，其余盘口不限。
+          走盘（总进球正好等于盘口）不计入命中率分母。
         </div>
       </div>
       <v-spacer />
@@ -278,7 +250,7 @@ onMounted(() => fetchReport())
         <v-col cols="12" md="3">
           <v-card color="primary" variant="tonal">
             <v-card-text>
-              <div class="text-body-2">{{ isHistory ? '区间内存档场次' : `待赛场次（${report.horizon_days}天内）` }}</div>
+              <div class="text-body-2">{{ isHistory ? '区间内入选场次' : `待赛场次（${report.horizon_days}天内）` }}</div>
               <div class="text-h4 font-weight-bold mt-1">
                 {{ (isHistory ? rows.length : report.upcoming_total).toLocaleString() }}
               </div>
@@ -289,18 +261,20 @@ onMounted(() => fetchReport())
           </v-card>
         </v-col>
         <v-col cols="12" md="3">
-          <v-card color="error" variant="tonal">
+          <v-card color="info" variant="tonal">
             <v-card-text>
-              <div class="text-body-2">买主胜</div>
-              <div class="text-h4 font-weight-bold mt-1">{{ homePicks.length }}</div>
+              <div class="text-body-2">反向·热度判小球</div>
+              <div class="text-h4 font-weight-bold mt-1">{{ underHeatRows.length }}</div>
+              <div class="text-caption text-medium-emphasis">盘口 &lt; 3.75</div>
             </v-card-text>
           </v-card>
         </v-col>
         <v-col cols="12" md="3">
-          <v-card color="success" variant="tonal">
+          <v-card color="warning" variant="tonal">
             <v-card-text>
-              <div class="text-body-2">买客胜</div>
-              <div class="text-h4 font-weight-bold mt-1">{{ awayPicks.length }}</div>
+              <div class="text-body-2">反向·热度判大球</div>
+              <div class="text-h4 font-weight-bold mt-1">{{ overHeatRows.length }}</div>
+              <div class="text-caption text-medium-emphasis">仅剔除 2.25</div>
             </v-card-text>
           </v-card>
         </v-col>
@@ -317,7 +291,7 @@ onMounted(() => fetchReport())
 
       <v-card class="mb-5">
         <v-card-title class="pt-5 d-flex align-center flex-wrap ga-2">
-          <span>逐列命中率</span>
+          <span>买大球命中率</span>
           <v-chip color="primary" size="small" variant="tonal">
             已结算 {{ report.accuracy.settled_total.toLocaleString() }} 场
           </v-chip>
@@ -326,7 +300,7 @@ onMounted(() => fetchReport())
           </v-chip>
         </v-card-title>
         <v-card-subtitle class="pb-2 text-wrap">
-          <b>存档</b>=赛前写入、事后不可改，这才是真正的前瞻实测；<b>回算</b>=上线前的比赛没有赛前快照，用库里<b>当前</b>的赔率盘口事后重算出来的，赔率早已被赛果消化过，只能当参考，两套数字分开统计、绝不合并。空信号（页面显示 -）与走盘不计入分母。「预测」列与「主推」列口径相同（预测就是主推≥70% 推出来的），所以只列一行。
+          <b>存档</b>=赛前写入、事后不可改，这才是真正的前瞻实测；<b>回算</b>=上线前的比赛没有赛前快照，用库里<b>当前</b>的盘口事后重算出来的，盘口早已被赛果消化过，只能当参考，两套数字分开统计、绝不合并。走盘不计入分母。
         </v-card-subtitle>
         <v-card-text>
           <div v-if="!report.accuracy.settled_total" class="text-medium-emphasis py-3">
@@ -335,7 +309,8 @@ onMounted(() => fetchReport())
           <v-table v-else density="compact">
             <thead>
               <tr>
-                <th>信号列</th>
+                <th>组合</th>
+                <th>盘口区间</th>
                 <th class="text-right">结算场次</th>
                 <th class="text-right">命中</th>
                 <th class="text-right">未中</th>
@@ -345,6 +320,7 @@ onMounted(() => fetchReport())
             <tbody>
               <tr v-for="column in accuracyColumns" :key="column.key">
                 <td class="font-weight-medium">{{ column.label }}</td>
+                <td class="text-caption text-medium-emphasis">{{ column.range }}</td>
                 <td class="text-right">{{ column.matched.toLocaleString() }}</td>
                 <td class="text-right">{{ column.hit }}</td>
                 <td class="text-right">{{ column.miss }}</td>
@@ -364,12 +340,13 @@ onMounted(() => fetchReport())
               <v-chip color="warning" size="small" variant="tonal">{{ recomputeTotal.toLocaleString() }} 场</v-chip>
             </div>
             <div class="text-caption text-medium-emphasis mb-2">
-              这批比赛没有赛前存档，信号是拿库里当前的赔率盘口现算的。别把它当成实测成绩——真正能验证策略的只有上面那张表。
+              这批比赛没有赛前存档，信号是拿库里当前的盘口现算的。别把它当成实测成绩——真正能验证策略的只有上面那张表。
             </div>
             <v-table density="compact">
               <thead>
                 <tr>
-                  <th>信号列</th>
+                  <th>组合</th>
+                  <th>盘口区间</th>
                   <th class="text-right">结算场次</th>
                   <th class="text-right">命中</th>
                   <th class="text-right">未中</th>
@@ -379,11 +356,12 @@ onMounted(() => fetchReport())
               <tbody>
                 <tr v-for="column in recomputeColumns" :key="column.key">
                   <td class="font-weight-medium">{{ column.label }}</td>
+                  <td class="text-caption text-medium-emphasis">{{ column.range }}</td>
                   <td class="text-right">{{ column.matched.toLocaleString() }}</td>
                   <td class="text-right">{{ column.hit }}</td>
                   <td class="text-right">{{ column.miss }}</td>
                   <td class="text-right">
-                    <v-chip v-if="column.matched" size="small" variant="tonal" color="warning">
+                    <v-chip v-if="column.matched" :color="accuracyColor(column.accuracy, column.matched)" size="small" variant="tonal">
                       {{ column.accuracy.toFixed(2) }}%
                     </v-chip>
                     <span v-else class="text-medium-emphasis">-</span>
@@ -396,9 +374,9 @@ onMounted(() => fetchReport())
       </v-card>
 
       <v-card>
-        <v-card-text>
-          <div v-if="!rows.length" class="text-medium-emphasis text-center py-10">
-            {{ isHistory ? '该区间内没有主推≥70% 的比赛（既没有赛前存档，回算也没算出符合条件的场次）。' : '当前没有符合信号的待赛比赛。' }}
+        <v-card-text class="pa-0">
+          <div v-if="!rows.length" class="text-medium-emphasis pa-6">
+            {{ isHistory ? '该区间没有入选的比赛。' : '未来窗口内没有符合条件的比赛。' }}
           </div>
           <v-table v-else density="comfortable" class="finale-table">
             <thead>
@@ -407,15 +385,15 @@ onMounted(() => fetchReport())
                 <th v-if="isHistory">来源</th>
                 <th>联赛</th>
                 <th>主队</th>
-                <th class="text-center">VS</th>
+                <th class="text-center">vs</th>
                 <th>客队</th>
                 <th v-if="isHistory" class="text-center">比分</th>
                 <th class="text-center">预测</th>
-                <th>主推</th>
-                <th>大小球推荐</th>
-                <th class="text-right">亚盘</th>
-                <th class="text-right">大小球</th>
-                <th>盈亏提示</th>
+                <th>组合</th>
+                <th>期望球数</th>
+                <th>球数热度</th>
+                <th class="text-right">盘口</th>
+                <th v-if="isHistory">结果</th>
               </tr>
             </thead>
             <tbody>
@@ -426,19 +404,10 @@ onMounted(() => fetchReport())
                     <span class="text-caption text-medium-emphasis ml-2">{{ group.rows.length }} 场</span>
                   </td>
                 </tr>
-                <tr
-                  v-for="p in group.rows"
-                  :key="p.match_id"
-                  :class="p.pick === 'home' ? 'row-home' : p.pick === 'away' ? 'row-away' : ''"
-                >
+                <tr v-for="p in group.rows" :key="p.match_id">
                   <td class="text-no-wrap">{{ p.match_time || p.date }}</td>
                   <td v-if="isHistory" class="text-no-wrap">
-                    <v-chip
-                      :color="p.source === 'archive' ? 'primary' : 'warning'"
-                      size="x-small"
-                      variant="tonal"
-                      :title="p.source === 'archive' ? `赛前存档，快照于 ${p.snapshot_at}` : '无赛前存档，用当前赔率事后回算，仅供参考'"
-                    >
+                    <v-chip :color="p.source === 'archive' ? 'primary' : 'warning'" size="x-small" variant="tonal">
                       {{ p.source === 'archive' ? '存档' : '回算' }}
                     </v-chip>
                   </td>
@@ -461,43 +430,25 @@ onMounted(() => fetchReport())
                     </span>
                   </td>
                   <td v-if="isHistory" class="text-center text-no-wrap font-weight-bold">
-                    <span v-if="p.settled">{{ p.home_score }} - {{ p.guest_score }}</span>
-                    <span v-else class="text-medium-emphasis font-weight-regular">未开赛</span>
+                    {{ p.settled ? `${p.home_score} - ${p.guest_score}` : '-' }}
                   </td>
-                  <td class="text-center">
-                    <v-chip v-if="p.pick" :color="pickColor(p.pick)" variant="flat" size="large" class="font-weight-bold px-5">
-                      {{ pickLabel(p.pick) }}
-                    </v-chip>
-                    <span v-else class="text-medium-emphasis">-</span>
-                    <span v-if="hitMark(p, 'pick')" class="ml-1 font-weight-bold" :class="hitMarkClass(p, 'pick')">{{ hitMark(p, 'pick') }}</span>
-                  </td>
-                  <td class="text-no-wrap" :class="sigClass(p.sig_base)">
-                    <span v-if="p.sig_base">{{ p.sig_base }}</span>
-                    <span v-else class="text-medium-emphasis">-</span>
+                  <td class="text-center text-no-wrap">
+                    <v-chip color="warning" size="small" variant="flat">买大球</v-chip>
                   </td>
                   <td class="text-no-wrap">
-                    <v-chip v-if="p.goal_pick" color="warning" size="small" variant="flat">{{ p.goal_pick }}</v-chip>
-                    <span v-else class="text-medium-emphasis">-</span>
+                    <v-chip size="x-small" variant="tonal" :color="p.combo === 'split_under' ? 'info' : 'warning'">
+                      {{ p.combo_label }}
+                    </v-chip>
                   </td>
-                  <td class="text-right text-no-wrap">
-                    <span v-if="p.ah_line">{{ p.ah_line }}</span>
-                    <span v-else class="text-medium-emphasis">-</span>
-                  </td>
-                  <td class="text-right text-no-wrap">
-                    <span v-if="p.ou_line">{{ p.ou_line }}</span>
-                    <span v-else class="text-medium-emphasis">-</span>
-                  </td>
-                  <td class="text-no-wrap text-medium-emphasis">
-                    <template v-if="p.trade_pick">
-                      <span>交易:{{ p.trade_pick }}</span>
-                      <span v-if="hitMark(p, 'trade')" class="mx-1 font-weight-bold" :class="hitMarkClass(p, 'trade')">{{ hitMark(p, 'trade') }}</span>
-                      <span v-else class="mr-2"></span>
-                    </template>
-                    <template v-if="p.sim_pick">
-                      <span>模拟:{{ p.sim_pick }}</span>
-                      <span v-if="hitMark(p, 'sim')" class="ml-1 font-weight-bold" :class="hitMarkClass(p, 'sim')">{{ hitMark(p, 'sim') }}</span>
-                    </template>
-                    <span v-if="!p.trade_pick && !p.sim_pick">-</span>
+                  <td class="text-no-wrap" :class="ouClass(p.exp_goals)">{{ p.exp_goals || '-' }}</td>
+                  <td class="text-no-wrap" :class="ouClass(p.heat_goals)">{{ p.heat_goals || '-' }}</td>
+                  <td class="text-right text-no-wrap">{{ p.ou_line || '-' }}</td>
+                  <td v-if="isHistory" class="text-no-wrap">
+                    <span v-if="p.settled" :class="ouClass(p.result || '')">{{ resultText(p) }}</span>
+                    <span v-else class="text-medium-emphasis">未结算</span>
+                    <span v-if="hitMark(p)" class="ml-1 font-weight-bold" :class="p.hit_pick ? 'text-success' : 'text-error'">
+                      {{ hitMark(p) }}
+                    </span>
                   </td>
                 </tr>
               </template>
@@ -506,7 +457,6 @@ onMounted(() => fetchReport())
         </v-card-text>
       </v-card>
     </template>
-    </template>
   </div>
 </template>
 
@@ -514,14 +464,8 @@ onMounted(() => fetchReport())
 .finale-table th {
   white-space: nowrap;
 }
-.date-row {
-  background: rgba(var(--v-theme-primary), 0.08);
-}
-.row-home {
-  background: rgba(var(--v-theme-error), 0.06);
-}
-.row-away {
-  background: rgba(var(--v-theme-success), 0.06);
+.date-row td {
+  background: rgba(var(--v-theme-primary), 0.06);
 }
 .team-cell {
   display: inline-flex;
@@ -532,8 +476,8 @@ onMounted(() => fetchReport())
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 20px;
-  height: 20px;
+  width: 22px;
+  height: 22px;
   flex-shrink: 0;
   border-radius: 50%;
   background: rgba(var(--v-border-color), 0.12);
@@ -545,7 +489,7 @@ onMounted(() => fetchReport())
   object-fit: contain;
 }
 .league-cell {
-  max-width: 130px;
+  max-width: 140px;
   overflow: hidden;
   text-overflow: ellipsis;
 }

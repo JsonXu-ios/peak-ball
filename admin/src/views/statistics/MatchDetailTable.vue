@@ -19,6 +19,9 @@ interface MatchDetail {
   value: number
   /** 该场结算用的盘口线（仅盘口类信号有值） */
   line?: string
+  /** 期望球数 / 球数热度各自的方向+数值，如「判大球 3.73」（仅大小球方向组有值） */
+  exp_goals?: string
+  heat_goals?: string
 }
 
 const props = withDefaults(
@@ -33,6 +36,17 @@ const props = withDefaults(
 
 /** 有任何一场带盘口线才显示盘口列 */
 const hasLine = computed(() => props.matches.some((m) => m.line))
+
+/** 期望球数/球数热度两列只有大小球方向组才有值 */
+const hasGoalsDir = computed(() => props.matches.some((m) => m.exp_goals || m.heat_goals))
+
+/** 判大球=橙、判小球=蓝，和终章、H5 的大小球配色一致 */
+function goalsDirClass(text?: string) {
+  if (!text) return ''
+  if (text.includes('大球')) return 'text-warning'
+  if (text.includes('小球')) return 'text-info'
+  return ''
+}
 
 /** 库里存的是 /footballimg/<id> 相对路径（vite 已代理到前台API），http(s) 原样返回 */
 function logoSrc(path?: string): string {
@@ -57,6 +71,8 @@ function timeText(row: MatchDetail): string {
           <th>客队</th>
           <th>状态</th>
           <th v-if="hasLine" class="text-right">盘口</th>
+          <th v-if="hasGoalsDir">期望球数</th>
+          <th v-if="hasGoalsDir">球数热度</th>
           <th v-if="showValue" class="text-right">数值</th>
           <th>推荐</th>
           <th>结果</th>
@@ -86,6 +102,8 @@ function timeText(row: MatchDetail): string {
           </td>
           <td class="text-medium-emphasis">{{ m.state }}</td>
           <td v-if="hasLine" class="text-right">{{ m.line || '-' }}</td>
+          <td v-if="hasGoalsDir" :class="goalsDirClass(m.exp_goals)">{{ m.exp_goals || '-' }}</td>
+          <td v-if="hasGoalsDir" :class="goalsDirClass(m.heat_goals)">{{ m.heat_goals || '-' }}</td>
           <td v-if="showValue" class="text-right">{{ Number(m.value ?? 0).toFixed(2) }}</td>
           <td>{{ m.pick || '-' }}</td>
           <td>{{ m.result || '-' }}</td>

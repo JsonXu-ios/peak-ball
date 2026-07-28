@@ -77,6 +77,18 @@ const REMOVED_SIGNALS = new Set([
   'pick_spf', 'pick_rqspf', 'pick_dxq', 'pick_score', 'direct_over_signals',
   'pick_overview', 'cross_spf_base', 'cross_spf_comfort', 'cross_dxq_qiu', 'cross_dxq_composite',
   'chase_signals',
+  // 期望球数 0.45/0.55 加权口径已整体下线（统一改为 0.6/0.4）：12b 及按旧权重
+  // 分组的同向/反向六行。旧快照里的这些行是按旧权重算的，必须过滤掉而不是留着
+  // 让人以为它们还是当前口径。
+  'front_goals_avg',
+  'goals_align', 'goals_align_base65', 'goals_align_base70',
+  'goals_split', 'goals_split_base65', 'goals_split_base70',
+  // 13b~13k 那一整套（同向/反向 × 主推分档、以及按命中率筛盘口的四行）已撤掉，
+  // 只保留 #13 热度分档；新的方向组合是 #15/#16 两行。
+  'goals_align_w64', 'goals_align_w64_base65', 'goals_align_w64_base70',
+  'goals_split_w64', 'goals_split_w64_base65', 'goals_split_w64_base70',
+  'goals_align_w64_hot_over', 'goals_align_w64_hot_under',
+  'goals_split_w64_hot_over', 'goals_split_w64_hot_under',
 ])
 
 // 快照缓存里的旧数据可能没有 market 字段：按信号 key 兜底归类，保证分组不塌成一堆。
@@ -85,8 +97,9 @@ function marketOf(signal: Signal): string {
   const map: Record<string, string> = {
     asian_heat: 'asian', line_discrepancy: 'asian',
     goals_heat: 'dxq', goals_discrepancy: 'dxq', base_qiu: 'dxq',
+    goals_align_under: 'dxq', goals_align_over: 'dxq',
+    goals_split_over: 'dxq', goals_split_under: 'dxq',
     history_goals: 'goals', recent_goals: 'goals', goals_composite: 'goals',
-    front_goals_avg: 'goals',
     pro_signal: 'spf', trade_comfort: 'spf', sim_trade_comfort: 'spf',
     history_handicap: 'spf', recent_handicap: 'spf', asian_composite: 'spf',
     front_handicap_avg: 'spf', base_spf: 'spf',

@@ -154,3 +154,7 @@ export const getLastDanceStatistics = (params?: { refresh?: number }) =>
 // 默认 = 未来待赛；mode=history（可带 start/end）= 历史存档。
 export const getFinalePredictions = (params?: { mode?: string; start?: string; end?: string }) =>
   api.get('/admin/statistics/finale', { params, timeout: 120000 })
+
+// 终章的「大小球」选项卡：期望球数与球数热度反向的两种组合，都买大球。
+export const getFinaleGoalPredictions = (params?: { mode?: string; start?: string; end?: string }) =>
+  api.get('/admin/statistics/finale-goals', { params, timeout: 120000 })

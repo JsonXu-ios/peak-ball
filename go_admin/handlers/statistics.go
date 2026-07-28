@@ -78,26 +78,29 @@ func computeMatchStatistics(start, end string) (gin.H, error) {
 // 的玩法。#4/#5/#6 名字带“让球”，但命中=胜平负判断正确，所以归 spf；#8/#9/#10
 // 由交锋/近况球数期望驱动归 goals，而按盘口热度/背离结算的大小球信号归 dxq。
 var signalMarketMap = map[string]string{
-	"asian_heat":          "asian",
-	"goals_heat":          "dxq",
-	"pro_signal":          "spf",
-	"trade_comfort":       "spf",
-	"sim_trade_comfort":   "spf",
-	"history_handicap":    "spf",
-	"recent_handicap":     "spf",
-	"asian_composite":     "spf",
-	"front_handicap_avg":  "spf",
-	"line_discrepancy":    "asian",
-	"history_goals":       "goals",
-	"recent_goals":        "goals",
-	"goals_composite":     "goals",
-	"front_goals_avg":     "goals",
-	"goals_discrepancy":   "dxq",
-	"warning_signals":     "mixed",
-	"deviation_signals":   "mixed",
-	"evil_cult":           "mixed",
-	"base_spf":            "spf",
-	"base_qiu":            "dxq",
+	"asian_heat":         "asian",
+	"goals_heat":         "dxq",
+	"pro_signal":         "spf",
+	"trade_comfort":      "spf",
+	"sim_trade_comfort":  "spf",
+	"history_handicap":   "spf",
+	"recent_handicap":    "spf",
+	"asian_composite":    "spf",
+	"front_handicap_avg": "spf",
+	"line_discrepancy":   "asian",
+	"history_goals":      "goals",
+	"recent_goals":       "goals",
+	"goals_composite":    "goals",
+	"goals_discrepancy":  "dxq",
+	"warning_signals":    "mixed",
+	"deviation_signals":  "mixed",
+	"evil_cult":          "mixed",
+	"base_spf":           "spf",
+	"base_qiu":           "dxq",
+	"goals_align_under":  "dxq",
+	"goals_align_over":   "dxq",
+	"goals_split_over":   "dxq",
+	"goals_split_under":  "dxq",
 }
 
 // annotateSignalMarkets 给每个信号贴上 market（命中赛果分类）字段，并按赛前方向
@@ -265,6 +268,9 @@ const (
 	statisticsHandicapBand    = 0.25 // |让球期望| ≤ 此值算平局，否则算主/客
 	statisticsGoalDiscrepancy = 0.75 // #7 / #11 期望与盘口的最小背离
 	statisticsPushEpsilon     = 0.001
+	// 期望球数综合均值的历史权重（近期权重=1-它）。必须与 go_server 的
+	// combinedGoalAverage / pfCombinedGoalAverage 一致，否则统计和 H5 对不上。
+	statisticsGoalsHistoryWeight = 0.7
 )
 
 var statisticsHeatTiers = []int{90, 85, 80, 75, 70, 65, 60}
@@ -293,6 +299,10 @@ type statisticsDetail struct {
 	Value      float64 `json:"value"`
 	// Line 是该场结算用的盘口线（大小球线/亚盘线），仅盘口类信号填写。
 	Line string `json:"line,omitempty"`
+	// ExpGoals/HeatGoals 仅 #15/#16 两个方向组填写：期望球数与球数热度各自的
+	// 方向+数值，如「判大球 3.73」。明细里并排看就知道这场是同向还是反向。
+	ExpGoals  string `json:"exp_goals,omitempty"`
+	HeatGoals string `json:"heat_goals,omitempty"`
 }
 
 // statisticsFormatLine 把盘口线格式化成简洁字符串（去掉多余的0）。
@@ -388,8 +398,13 @@ func buildSignalStatistics(matches []statisticsMatch, histories, pankous, odds m
 	historyGoalsSig := &statisticsSignal{}
 	recentGoalsSig := &statisticsSignal{}
 	goalsComposite := &statisticsSignal{}
-	frontGoalsAvg := &statisticsSignal{}
 	goalsDiscrepancy := &statisticsSignal{}
+	// #15~#18：期望球数与球数热度的方向关系，同向/反向 × 热度判大/判小四种组合各
+	// 一行。四行互斥且穷尽，合起来就是全部样本齐全且不走盘的比赛。
+	goalsAlignUnder := &statisticsSignal{} // 同向且热度判小球
+	goalsAlignOver := &statisticsSignal{}  // 同向且热度判大球
+	goalsSplitOver := &statisticsSignal{}  // 反向且热度判大球
+	goalsSplitUnder := &statisticsSignal{} // 反向且热度判小球
 
 	for _, match := range matches {
 		history := histories[match.ID]
@@ -516,10 +531,40 @@ func buildSignalStatistics(matches []statisticsMatch, histories, pankous, odds m
 			if hasRecentGoals {
 				statisticsGoalSignal(recentGoalsSig, match, recentGoals, ouLine)
 			}
-			// 12b. 前端 H5「期望球数·综合均值」原样复刻：0.45×历史 + 0.55×近期
-			// 加权（#12 是等权，这是唯一差别）；缺任一样本不纳入统计。
-			if hasHistory && hasRecentGoals {
-				statisticsGoalSignal(frontGoalsAvg, match, historyGoals*0.45+recentGoals*0.55, ouLine)
+			// 15~18. 期望球数与球数热度的方向关系，按 同向/反向 × 热度判大/判小
+			// 拆成四行。期望球数=0.7×历史+0.3×近期（缺一侧时用另一侧顶上，不按 0
+			// 顶替），热度侧用等权均值；推荐方向一律跟热度。高于盘口一丝就算判大球
+			//（3.6 对盘口 3.5），不设最小偏离、也不要求热度进档。
+			// 两队没有交锋记录的比赛整场剔除：期望球数 0.7 的权重就压在交锋上，
+			// 缺了它算出来的不是同一个口径。近期样本缺失时用交锋单独顶上。
+			if hasHistory {
+				expected, _ := statisticsGoalsExpected(historyGoals, hasHistory, recentGoals, hasRecentGoals)
+				heatValue := statisticsMean(recentGoals, hasRecentGoals, historyGoals, hasHistory)
+				heatOver := heatValue >= ouLine
+				over, valid := statisticsOverOutcome(match, ouLine)
+				// 期望正好落在盘口线上就没有方向可跟；走盘同样不参与结算。
+				if valid && math.Abs(expected-ouLine) >= statisticsPushEpsilon {
+					expectedOver := expected > ouLine
+					aligned := heatOver == expectedOver
+					detail := statisticsBaseDetail(match)
+					detail.Value = statisticsRound2(heatValue)
+					detail.Line = statisticsFormatLine(ouLine)
+					detail.Pick = statisticsOverLabel(heatOver)
+					detail.Result = statisticsOverLabel(over)
+					detail.Hit = heatOver == over
+					detail.ExpGoals = statisticsGoalsDirText(expected, expectedOver)
+					detail.HeatGoals = statisticsGoalsDirText(heatValue, heatOver)
+					switch {
+					case aligned && !heatOver:
+						goalsAlignUnder.add(detail)
+					case aligned && heatOver:
+						goalsAlignOver.add(detail)
+					case !aligned && heatOver:
+						goalsSplitOver.add(detail)
+					default:
+						goalsSplitUnder.add(detail)
+					}
+				}
 			}
 			if composite, ok := statisticsAverage(historyGoals, hasHistory, recentGoals, hasRecentGoals); ok {
 				statisticsGoalSignal(goalsComposite, match, composite, ouLine)
@@ -538,32 +583,76 @@ func buildSignalStatistics(matches []statisticsMatch, histories, pankous, odds m
 		}
 	}
 
-	return gin.H{
-		"settled_total": len(matches),
-		"signals": []gin.H{
-			statisticsDirectionalHeatPayload("asian_heat", "8. 亚盘投注热度分档（档位×主客方向）", "热度=平衡点 + (主队胜负份额-50)×1.4 - 即时盘×8 - 盘口移动×1.5，与前端 pressurePair 完全一致，并按热度朝主队/朝客队方向拆分；盘口移动项是扩散到高档的主因。命中=热度方向赢盘。", statisticsHeatTiers, []statisticsHeatDirection{
-				{suffix: "home", label: "朝主队", buckets: asianHeatHome},
-				{suffix: "guest", label: "朝客队", buckets: asianHeatGuest},
-			}),
-			statisticsDirectionalHeatPayload("goals_heat", "13. 大小球投注热度分档（档位×大小方向）", "按大小球投注热度(大/小压力较大值)分档并按判大球/判小球方向拆分；热度=50+(期望球数-盘口)×18，55档要求期望偏离盘口≥0.28球，60档≥0.56球；命中=大/小方向正确。", statisticsGoalsHeatTiers, []statisticsHeatDirection{
-				{suffix: "over", label: "判大球", buckets: goalsHeatOver},
-				{suffix: "under", label: "判小球", buckets: goalsHeatUnder},
-			}),
-			proSignal.payload("pro_signal", "1. 专业信号（凯利×体彩同向）", "与前台H5专业信号同口径：凯利取凯利值最小的一个方向、体彩取威廉差值最小的一个方向，两者同向时纳入；命中=该方向即实际赛果。"),
-			tradeComfort.payload("trade_comfort", "2. 交易盈亏同向（庄家舒服）", "仅体彩比赛；胜平负交易盈亏与让球交易盈亏最舒服方向一致且均为庄家盈利；命中=该方向即实际赛果。"),
-			simTradeComfort.payload("sim_trade_comfort", "3. 模拟交易盈亏同向（庄家舒服）", "本地模拟盘：竞彩模拟对比(胜平负)与竞彩让球模拟由平均欧赔+加权散户心理+泊松让球推算（不含竞彩官方数据，覆盖非竞彩场次）；两者最舒服方向一致且均为庄家盈利时纳入，命中=该方向即实际赛果。"),
-			historyHandicap.payload("history_handicap", "4. 历史期望让球", "赛前3年内交锋净胜球期望；|期望|≤0.25判平，否则判主/客；命中=胜平负判断正确。"),
-			recentHandicap.payload("recent_handicap", "5. 近期状态让球", "两队各自最近5场净胜球差；判断口径同上。"),
-			asianComposite.payload("asian_composite", "6. 亚盘综合均值", "取【历史期望让球】【近期状态让球】【当前亚盘线】中有值者求平均；判断口径同上。"),
-			frontHandicapAvg.payload("front_handicap_avg", "6b. 前端期望让球·综合均值（不含亚盘线）", "与 H5【期望让球】区块显示的「综合均值」同口径：(历史期望让球 + 近期状态让球) / 2，不掺当前亚盘线——这是它与 #6 的唯一差别。两项样本缺任一则不纳入统计（H5 的显示值在缺样本时会拿0参与平均，此处不复刻该行为）。|期望|≤0.25判平，否则判主/客；命中=胜平负判断正确。"),
-			lineDiscrepancy.payload("line_discrepancy", "9. 亚盘即时盘背离≥0.75", "当前亚盘线较历史与近期期望同时背离≥0.75时纳入；盘口高估一方则站另一方赢盘。"),
-			historyGoalsSig.payload("history_goals", "10. 历史平均球数", "赛前3年内交锋场均总进球；与当前大小球线比较判大/小；命中=大小球判断正确。"),
-			recentGoalsSig.payload("recent_goals", "11. 近期平均球数", "两队最近5场场均总进球；判断口径同上。"),
-			goalsComposite.payload("goals_composite", "12. 球数综合均值", "取【历史平均球数】【近期平均球数】求平均(不含盘口线)；判断口径同上。"),
-			frontGoalsAvg.payload("front_goals_avg", "12b. 前端期望球数·综合均值（0.45/0.55加权）", "与 H5【期望球数】区块显示的「综合均值」同口径：0.45×历史平均球数 + 0.55×近期平均球数——#12 是等权平均，这是唯一差别。两项样本缺任一则不纳入统计。与当前大小球线比较判大/小；命中=大小球判断正确。"),
-			goalsDiscrepancy.payload("goals_discrepancy", "14. 期望球数高于大小球即时盘≥0.75", "球数综合均值高于当前大小球线≥0.75时纳入，判大球；命中=实际打出大球。"),
-		},
+	signals := []gin.H{
+		statisticsDirectionalHeatPayload("asian_heat", "8. 亚盘投注热度分档（档位×主客方向）", "热度=平衡点 + (主队胜负份额-50)×1.4 - 即时盘×8 - 盘口移动×1.5，与前端 pressurePair 完全一致，并按热度朝主队/朝客队方向拆分；盘口移动项是扩散到高档的主因。命中=热度方向赢盘。", statisticsHeatTiers, []statisticsHeatDirection{
+			{suffix: "home", label: "朝主队", buckets: asianHeatHome},
+			{suffix: "guest", label: "朝客队", buckets: asianHeatGuest},
+		}),
+		statisticsDirectionalHeatPayload("goals_heat", "13. 大小球投注热度分档（档位×大小方向）", "按大小球投注热度(大/小压力较大值)分档并按判大球/判小球方向拆分；热度=50+(期望球数-盘口)×18，55档要求期望偏离盘口≥0.28球，60档≥0.56球；命中=大/小方向正确。", statisticsGoalsHeatTiers, []statisticsHeatDirection{
+			{suffix: "over", label: "判大球", buckets: goalsHeatOver},
+			{suffix: "under", label: "判小球", buckets: goalsHeatUnder},
+		}),
+		proSignal.payload("pro_signal", "1. 专业信号（凯利×体彩同向）", "与前台H5专业信号同口径：凯利取凯利值最小的一个方向、体彩取威廉差值最小的一个方向，两者同向时纳入；命中=该方向即实际赛果。"),
+		tradeComfort.payload("trade_comfort", "2. 交易盈亏同向（庄家舒服）", "仅体彩比赛；胜平负交易盈亏与让球交易盈亏最舒服方向一致且均为庄家盈利；命中=该方向即实际赛果。"),
+		simTradeComfort.payload("sim_trade_comfort", "3. 模拟交易盈亏同向（庄家舒服）", "本地模拟盘：竞彩模拟对比(胜平负)与竞彩让球模拟由平均欧赔+加权散户心理+泊松让球推算（不含竞彩官方数据，覆盖非竞彩场次）；两者最舒服方向一致且均为庄家盈利时纳入，命中=该方向即实际赛果。"),
+		historyHandicap.payload("history_handicap", "4. 历史期望让球", "赛前3年内交锋净胜球期望；|期望|≤0.25判平，否则判主/客；命中=胜平负判断正确。"),
+		recentHandicap.payload("recent_handicap", "5. 近期状态让球", "两队各自最近5场净胜球差；判断口径同上。"),
+		asianComposite.payload("asian_composite", "6. 亚盘综合均值", "取【历史期望让球】【近期状态让球】【当前亚盘线】中有值者求平均；判断口径同上。"),
+		frontHandicapAvg.payload("front_handicap_avg", "6b. 前端期望让球·综合均值（不含亚盘线）", "与 H5【期望让球】区块显示的「综合均值」同口径：(历史期望让球 + 近期状态让球) / 2，不掺当前亚盘线——这是它与 #6 的唯一差别。两项样本缺任一则不纳入统计（H5 的显示值在缺样本时会拿0参与平均，此处不复刻该行为）。|期望|≤0.25判平，否则判主/客；命中=胜平负判断正确。"),
+		lineDiscrepancy.payload("line_discrepancy", "9. 亚盘即时盘背离≥0.75", "当前亚盘线较历史与近期期望同时背离≥0.75时纳入；盘口高估一方则站另一方赢盘。"),
+		historyGoalsSig.payload("history_goals", "10. 历史平均球数", "赛前3年内交锋场均总进球；与当前大小球线比较判大/小；命中=大小球判断正确。"),
+		recentGoalsSig.payload("recent_goals", "11. 近期平均球数", "两队最近5场场均总进球；判断口径同上。"),
+		goalsComposite.payload("goals_composite", "12. 球数综合均值", "取【历史平均球数】【近期平均球数】求平均(不含盘口线)；判断口径同上。"),
+		goalsDiscrepancy.payload("goals_discrepancy", "14. 期望球数高于大小球即时盘≥0.75", "球数综合均值高于当前大小球线≥0.75时纳入，判大球；命中=实际打出大球。"),
+		goalsAlignUnder.payload("goals_align_under", "15. 期望球数×球数热度同向·热度判小球", goalsDirCommon+
+			"本行取两者同向、且热度判小球的场次。推荐即判小球，命中=实际打出小球。"+goalsDirPartition),
+		goalsAlignOver.payload("goals_align_over", "16. 期望球数×球数热度同向·热度判大球", goalsDirCommon+
+			"本行取两者同向、且热度判大球的场次。推荐即判大球，命中=实际打出大球。与 #15 对比即可看出同向时买大球和买小球哪边更稳。"+goalsDirPartition),
+		goalsSplitOver.payload("goals_split_over", "17. 期望球数×球数热度反向·热度判大球", goalsDirCommon+
+			"本行取两者判到相反侧、且热度判大球（即期望球数判小球）的场次。推荐跟热度即判大球，命中=实际打出大球。"+goalsDirSplitNote+goalsDirPartition),
+		goalsSplitUnder.payload("goals_split_under", "18. 期望球数×球数热度反向·热度判小球", goalsDirCommon+
+			"本行取两者判到相反侧、且热度判小球（即期望球数判大球）的场次。推荐跟热度即判小球，命中=实际打出小球。"+goalsDirSplitNote+goalsDirPartition),
 	}
+	return gin.H{"settled_total": len(matches), "signals": signals}
+}
+
+// goalsDirCommon 是 #15/#16 共用的口径说明，两行各写一遍容易写歪。
+const goalsDirCommon = "期望球数=0.7×历史场均+0.3×近期场均（两队没有交锋记录的比赛整场剔除；近期样本缺失时用交锋顶上，不按 0 顶替），高于盘口即判大球——3.6 对盘口 3.5 也算，不设最小偏离；" +
+	"球数热度方向=等权综合均值对盘口的方向（热度=50+(等权均值-盘口)×18，≥50 判大球），同样不要求进档。" +
+	"推荐方向一律跟球数热度，明细的数值列也是热度值，并另有两列并排显示期望球数与热度各自的方向。走盘不计。"
+
+// goalsDirSplitNote 反向两行(#17/#18)共用的样本量提醒。
+const goalsDirSplitNote = "反向只发生在盘口落进加权均值与等权均值之间的窄带，样本天然比同向两行少，先看场次再看命中率。"
+
+// goalsDirPartition 四行的关系说明：互斥且穷尽，场次可以相加。
+const goalsDirPartition = "（#15~#18 是同向/反向 × 判大/判小的四种组合，互不重叠，合起来就是全部历史+近期样本齐全且不走盘的比赛，场次可以相加。）"
+
+// statisticsGoalsExpected 期望球数综合均值：历史与近期按 statisticsGoalsHistoryWeight
+// 加权。缺一侧时不按 0 顶替，而是用另一侧单独顶上（按实际存在的权重归一化），口径与
+// go_server 的 weightedAveragePointer 一致。两侧都缺才返回 false。
+//
+// 注意：只剩一侧样本时，加权均值必然等于等权均值（都等于那一侧本身），所以这类
+// 比赛的「期望球数」与「球数热度」方向永远一致，不可能构成反向组合。
+func statisticsGoalsExpected(history float64, hasHistory bool, recent float64, hasRecent bool) (float64, bool) {
+	sum, weight := 0.0, 0.0
+	if hasHistory {
+		sum += history * statisticsGoalsHistoryWeight
+		weight += statisticsGoalsHistoryWeight
+	}
+	if hasRecent {
+		sum += recent * (1 - statisticsGoalsHistoryWeight)
+		weight += 1 - statisticsGoalsHistoryWeight
+	}
+	if weight <= 0 {
+		return 0, false
+	}
+	return sum / weight, true
+}
+
+// statisticsGoalsDirText 把一个球数期望渲染成「判大球 3.73」，供明细里并排展示
+// 期望球数与球数热度各自的方向。
+func statisticsGoalsDirText(value float64, over bool) string {
+	return "判" + statisticsOverLabel(over) + " " + strconv.FormatFloat(statisticsRound2(value), 'f', 2, 64)
 }
 
 func statisticsBaseDetail(match statisticsMatch) statisticsDetail {
