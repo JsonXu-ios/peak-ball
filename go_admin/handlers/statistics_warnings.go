@@ -372,10 +372,10 @@ func buildWarningSignals(matches []statisticsMatch, histories, pankous, odds map
 		accuracy = math.Round(float64(hit)/float64(matched)*10000) / 100
 	}
 	return gin.H{
-		"key":   "warning_signals",
-		"title": "16. 警示信号结算（每类警示暗示方向的胜率与ROI）",
+		"key":        "warning_signals",
+		"title":      "16. 警示信号结算（每类警示暗示方向的胜率与ROI）",
 		"definition": "把H5上的各类警示按其暗示方向结算：热度过热=反过热方，交易盈亏同向=舒服方不打出，模拟交易盈亏同向=模拟盘舒服方不打出（本地模拟，覆盖非竞彩场次），同向亏损(负)=押客胜，凯体反差=跟共识，让球修正=跟期望方赢盘，大小球回归=跟回归方向。ROI为按该方向真实赔率每场投1单位（无明确单一赔率的不计）。",
-		"matched": matched, "hit": hit, "miss": matched - hit, "accuracy": accuracy,
+		"matched":    matched, "hit": hit, "miss": matched - hit, "accuracy": accuracy,
 		"buckets": rows,
 	}
 }

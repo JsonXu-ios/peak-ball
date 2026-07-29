@@ -339,7 +339,7 @@ func buildSimRetailInputs(oddsRow, pankouRow, historyRow map[string]interface{},
 	combinedHandicap := statisticsRound2((histDiffOrZero + recentDiffOrZero) / 2)
 	in.combinedHandicap = &combinedHandicap
 
-	// combinedGoals = 历史均球(0.7) 与 近期均球(0.3) 的加权，两者皆缺时为 nil。
+	// combinedGoals = 历史均球(0.3) 与 近期均球(0.7) 的加权，两者皆缺时为 nil。
 	if in.combinedGoals = simWeightedGoals(historyGoals, hasHistory, recentGoals, hasRecentGoals); in.combinedGoals != nil {
 		rounded := statisticsRound2(*in.combinedGoals)
 		in.combinedGoals = &rounded
@@ -373,18 +373,18 @@ func simHistoryWinLose(match statisticsMatch, rows []statisticsHistoryMatch) (fl
 	return float64(win) / float64(all) * 100, float64(lose) / float64(all) * 100, true
 }
 
-// simWeightedGoals ports go_server weightedAveragePointer over history(0.7) and
-// recent(0.3) goal averages, normalising by the present weights. 权重必须与
+// simWeightedGoals ports go_server weightedAveragePointer over history(0.3) and
+// recent(0.7) goal averages, normalising by the present weights. 权重必须与
 // go_server 的 combinedGoalAverage 保持一致，否则模拟盘会和 H5 对不上。
 func simWeightedGoals(history float64, hasHistory bool, recent float64, hasRecent bool) *float64 {
 	sum, weight := 0.0, 0.0
 	if hasHistory {
-		sum += history * 0.7
-		weight += 0.7
+		sum += history * 0.3
+		weight += 0.3
 	}
 	if hasRecent {
-		sum += recent * 0.3
-		weight += 0.3
+		sum += recent * 0.7
+		weight += 0.7
 	}
 	if weight <= 0 {
 		return nil

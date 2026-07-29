@@ -171,7 +171,7 @@ func evilCultPredFromBridge(m evilCultBridgeMatch) recommendEvilPred {
 }
 
 // fetchEvilCultPredictions 按日期从 go_server /analysis/matches 拉取邪修预测
-//（供推荐引擎评估待赛比赛）。任何一天失败都跳过，不阻塞页面。
+// （供推荐引擎评估待赛比赛）。任何一天失败都跳过，不阻塞页面。
 func fetchEvilCultPredictions(dates []string) map[string]recommendEvilPred {
 	out := map[string]recommendEvilPred{}
 	client := http.Client{Timeout: 60 * time.Second}

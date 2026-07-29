@@ -72,13 +72,8 @@ func pickBasePrediction(oddsRow map[string]interface{}) string {
 // ("" = 盘口球, no direction) plus the line used.
 func pickQiuPrediction(historyRow, pankouRow map[string]interface{}, match statisticsMatch) (string, float64, bool) {
 	_, homeRecent, guestRecent := statisticsHistory(historyRow)
-	homeForm := statisticsRecentForm(homeRecent, match.Home)
-	guestForm := statisticsRecentForm(guestRecent, match.Guest)
-	totalMatches := homeForm.Matches + guestForm.Matches
-	recentTotalGoals := 0.0
-	if totalMatches > 0 {
-		recentTotalGoals = (homeForm.For + homeForm.Against + guestForm.For + guestForm.Against) / totalMatches
-	}
+	recentTotalGoals, _ := statisticsRecentTotalGoals(
+		statisticsRecentForm(homeRecent, match.Home), statisticsRecentForm(guestRecent, match.Guest))
 	line, hasLine := statisticsPankouLine(pankouRow, "bet365_dxq", "dxq_data")
 	if !hasLine || line == 0 {
 		// go_server falls back to max(recent, history) when the line is missing.
@@ -107,13 +102,8 @@ func pickQiuPrediction(historyRow, pankouRow map[string]interface{}, match stati
 // pickQiuStrength returns |大球压力-小球压力| for banding dim 13b.
 func pickQiuStrength(historyRow map[string]interface{}, line float64, match statisticsMatch) float64 {
 	_, homeRecent, guestRecent := statisticsHistory(historyRow)
-	homeForm := statisticsRecentForm(homeRecent, match.Home)
-	guestForm := statisticsRecentForm(guestRecent, match.Guest)
-	totalMatches := homeForm.Matches + guestForm.Matches
-	recentTotalGoals := 0.0
-	if totalMatches > 0 {
-		recentTotalGoals = (homeForm.For + homeForm.Against + guestForm.For + guestForm.Against) / totalMatches
-	}
+	recentTotalGoals, _ := statisticsRecentTotalGoals(
+		statisticsRecentForm(homeRecent, match.Home), statisticsRecentForm(guestRecent, match.Guest))
 	overPressure := statisticsClamp(50+(recentTotalGoals-line)*18, 0, 100)
 	return math.Abs(overPressure - (100 - overPressure))
 }

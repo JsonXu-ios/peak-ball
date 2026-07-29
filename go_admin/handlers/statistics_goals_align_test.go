@@ -68,8 +68,9 @@ func TestGoalsAlignSplitsByHeatDirection(t *testing.T) {
 	if len(underDetails) != 1 || underDetails[0].MatchID != "1" || underDetails[0].Pick != "小球" {
 		t.Fatalf("#15 明细 = %+v, want 比赛1/判小球", underDetails)
 	}
-	if underDetails[0].ExpGoals != "判小球 2.00" || underDetails[0].HeatGoals != "判小球 2.00" {
-		t.Fatalf("#15 明细方向列 = %q / %q, want 判小球 2.00 / 判小球 2.00", underDetails[0].ExpGoals, underDetails[0].HeatGoals)
+	// 对照信号列带「热度」前缀，与 #19~#22 的「倾向」区分开。
+	if underDetails[0].ExpGoals != "判小球 2.00" || underDetails[0].HeatGoals != "热度 判小球 2.00" {
+		t.Fatalf("#15 明细方向列 = %q / %q, want 判小球 2.00 / 热度 判小球 2.00", underDetails[0].ExpGoals, underDetails[0].HeatGoals)
 	}
 
 	over := statSignal(t, report, "goals_align_over")
@@ -94,8 +95,8 @@ func TestGoalsDirRowsPartitionEveryMatch(t *testing.T) {
 	histories := map[string]map[string]interface{}{
 		"1": goalsHistory("A", "B", 1, 1, 1, 1), // 同向判小：期望/热度 2.0，盘口 2.5
 		"2": goalsHistory("C", "D", 3, 1, 2, 2), // 同向判大：期望/热度 4.0，盘口 2.5
-		"3": goalsHistory("E", "F", 1, 0, 3, 3), // 反向判大：期望 2.5 / 热度 3.5，盘口 3.25
-		"4": goalsHistory("G", "H", 5, 1, 1, 0), // 反向判小：期望 4.5 / 热度 3.5，盘口 3.75
+		"3": goalsHistory("E", "F", 5, 1, 1, 0), // 反向判大：期望 2.5 / 热度 3.5，盘口 3.25
+		"4": goalsHistory("G", "H", 1, 0, 3, 3), // 反向判小：期望 4.5 / 热度 3.5，盘口 3.75
 	}
 	pankous := map[string]map[string]interface{}{
 		"1": {"dxq_data": `[{"companyId":8,"pankou":"2.5"}]`},
@@ -125,18 +126,18 @@ func TestGoalsDirRowsPartitionEveryMatch(t *testing.T) {
 }
 
 func TestGoalsSplitFollowsHeatOnBothSides(t *testing.T) {
-	// 反向且热度判大球（#17）：历史 1 球、近期 6 球 → 期望=0.7×1+0.3×6=2.5（判小），
+	// 反向且热度判大球（#17）：历史 6 球、近期 1 球 → 期望=0.3×6+0.7×1=2.5（判小），
 	// 等权热度=3.5（判大），盘口 3.25 夹在中间。推荐跟热度=大球；实际 3-1 共 4 球
 	// 打出大球 → 命中。
-	// 反向且热度判小球（#18）：历史 6 球、近期 1 球 → 期望 4.5（判大）、热度 3.5
+	// 反向且热度判小球（#18）：历史 1 球、近期 6 球 → 期望 4.5（判大）、热度 3.5
 	//（判小），盘口 3.75。推荐跟热度=小球；实际 4 球打出大球 → 未命中。
 	matches := []statisticsMatch{
 		{ID: "1", Date: "2026-03-01", Home: "A", Guest: "B", HomeScore: 3, GuestScore: 1},
 		{ID: "2", Date: "2026-03-01", Home: "C", Guest: "D", HomeScore: 3, GuestScore: 1},
 	}
 	histories := map[string]map[string]interface{}{
-		"1": goalsHistory("A", "B", 1, 0, 3, 3),
-		"2": goalsHistory("C", "D", 5, 1, 1, 0),
+		"1": goalsHistory("A", "B", 5, 1, 1, 0),
+		"2": goalsHistory("C", "D", 1, 0, 3, 3),
 	}
 	pankous := map[string]map[string]interface{}{
 		"1": {"dxq_data": `[{"companyId":8,"pankou":"3.25"}]`},
@@ -157,8 +158,8 @@ func TestGoalsSplitFollowsHeatOnBothSides(t *testing.T) {
 		t.Fatalf("#17 数值 = %v, want 3.5（热度值）", overDetails[0].Value)
 	}
 	// 期望球数按 0.7/0.3 加权 = 2.50；这个数字直接体现用的是哪套权重。
-	if overDetails[0].ExpGoals != "判小球 2.50" || overDetails[0].HeatGoals != "判大球 3.50" {
-		t.Fatalf("#17 明细方向列 = %q / %q, want 判小球 2.50 / 判大球 3.50", overDetails[0].ExpGoals, overDetails[0].HeatGoals)
+	if overDetails[0].ExpGoals != "判小球 2.50" || overDetails[0].HeatGoals != "热度 判大球 3.50" {
+		t.Fatalf("#17 明细方向列 = %q / %q, want 判小球 2.50 / 热度 判大球 3.50", overDetails[0].ExpGoals, overDetails[0].HeatGoals)
 	}
 
 	under := statSignal(t, report, "goals_split_under")

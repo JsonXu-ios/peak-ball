@@ -19,7 +19,11 @@ interface MatchDetail {
   value: number
   /** 该场结算用的盘口线（仅盘口类信号有值） */
   line?: string
-  /** 期望球数 / 球数热度各自的方向+数值，如「判大球 3.73」（仅大小球方向组有值） */
+  /**
+   * 期望球数与对照信号各自的方向+数值（仅大小球方向组有值）。
+   * exp_goals 如「判大球 3.73」；heat_goals 带信号名前缀，如「热度 判小球 3.50」
+   *（#15~#18）或「倾向 判大球 4.00」（#19~#22），因为这一列的来源随信号而变。
+   */
   exp_goals?: string
   heat_goals?: string
 }
@@ -72,7 +76,7 @@ function timeText(row: MatchDetail): string {
           <th>状态</th>
           <th v-if="hasLine" class="text-right">盘口</th>
           <th v-if="hasGoalsDir">期望球数</th>
-          <th v-if="hasGoalsDir">球数热度</th>
+          <th v-if="hasGoalsDir">对照信号</th>
           <th v-if="showValue" class="text-right">数值</th>
           <th>推荐</th>
           <th>结果</th>

@@ -353,4 +353,3 @@ func buildLastDanceAwayCard(matches []statisticsMatch, histories, pankous, odds 
 		"buckets": rows,
 	}
 }
-

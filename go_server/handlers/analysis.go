@@ -475,10 +475,10 @@ func buildAnalysis(match models.Money, fetchSporttery bool) analysisMatchRespons
 	if recentSampleAvailable {
 		recentGoalAverage = roundedFloatPointer(recentTotalGoals)
 	}
-	// 期望球数综合均值：0.7×历史 + 0.3×近期（原为 0.45/0.55，2026-07 起改为历史权重更高）。
+	// 期望球数综合均值：0.3×历史 + 0.7×近期（原为 0.45/0.55，2026-07 起改为近期权重更高）。
 	combinedGoalAverage := weightedAveragePointer([]pfWeighted{
-		{floatOrNaN(historyGoalAverage), 0.7},
-		{floatOrNaN(recentGoalAverage), 0.3},
+		{floatOrNaN(historyGoalAverage), 0.3},
+		{floatOrNaN(recentGoalAverage), 0.7},
 	})
 	combinedHandicapAverage := roundedFloatPointer((historyGoalDiff + recentGoalDiff) / 2)
 

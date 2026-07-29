@@ -202,14 +202,13 @@ func buildFinaleGoalUpcoming() (int, []finaleGoalRow, error) {
 	if err := statisticsDB().Table("moneys").Select(statisticsMoneysColumns).Find(&rawMatches).Error; err != nil {
 		return 0, nil, err
 	}
-	today := time.Now().Format("2006-01-02")
-	horizon := time.Now().AddDate(0, 0, finaleHorizonDays).Format("2006-01-02")
+	today, horizon, cutoff := finaleUpcomingWindow()
 
 	upcoming := make([]statisticsMatch, 0, 64)
 	ids := make([]string, 0, 64)
 	for _, row := range rawMatches {
 		match := parseStatisticsMatch(row)
-		if match.ID == "" || match.Settled || match.Date < today || match.Date > horizon {
+		if !finaleIsUpcoming(match, today, horizon, cutoff) {
 			continue
 		}
 		upcoming = append(upcoming, match)
@@ -235,7 +234,7 @@ func buildFinaleGoalUpcoming() (int, []finaleGoalRow, error) {
 }
 
 // buildFinaleGoalRow 判断一场比赛是否命中两种组合之一。口径与「完赛基础统计」
-// #17/#18 完全一致：期望球数=0.7×历史场均+0.3×近期场均，热度方向=等权综合均值
+// #17/#18 完全一致：期望球数=0.3×历史场均+0.7×近期场均，热度方向=等权综合均值
 // 对盘口的方向，两者判到相反侧才算数；再按各自的盘口区间过滤。
 func buildFinaleGoalRow(match statisticsMatch, historyRow, pankouRow map[string]interface{}) (finaleGoalRow, bool) {
 	_, ouLine, hasOU := statisticsPankouLinePair(pankouRow, "bet365_dxq", "dxq_data")
@@ -246,7 +245,7 @@ func buildFinaleGoalRow(match statisticsMatch, historyRow, pankouRow map[string]
 	_, historyGoals, hasHistory := statisticsHeadToHead(match, against)
 	recentGoals, hasRecentGoals := statisticsRecentGoals(homeRecent, guestRecent)
 
-	// 两队没有交锋记录的比赛整场剔除：期望球数 0.7 的权重就压在交锋上，缺了它
+	// 两队没有交锋记录的比赛整场剔除：交锋虽只占 0.3 的权重，缺了它
 	// 算出来的不是同一个口径。近期样本缺失时用交锋单独顶上。
 	if !hasHistory {
 		return finaleGoalRow{}, false

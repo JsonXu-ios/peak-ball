@@ -774,10 +774,10 @@ func pfRecentGoalSampleValue(response *analysisMatchResponse, value interface{})
 	return pfNum(value)
 }
 
-// pfCombinedGoalAverage 期望球数综合均值：0.7×历史 + 0.3×近期，与 analysis.go 的
-// combinedGoalAverage 必须同权重（原为 0.45/0.55，2026-07 起改为历史权重更高）。
+// pfCombinedGoalAverage 期望球数综合均值：0.3×历史 + 0.7×近期，与 analysis.go 的
+// combinedGoalAverage 必须同权重（原为 0.45/0.55，2026-07 起改为近期权重更高）。
 func pfCombinedGoalAverage(history, recent float64) float64 {
-	return pfWeightedAverage([]pfWeighted{{history, 0.7}, {recent, 0.3}})
+	return pfWeightedAverage([]pfWeighted{{history, 0.3}, {recent, 0.7}})
 }
 
 func pfHistoryMatchOutcome(response *analysisMatchResponse) string {

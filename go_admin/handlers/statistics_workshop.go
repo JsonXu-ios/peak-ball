@@ -84,13 +84,13 @@ type workshopRow struct {
 }
 
 type workshopSnapshot struct {
-	GeneratedAt  time.Time     `json:"generated_at"`
-	SettledTotal int           `json:"settled_total"`
-	UpcomingTotal int          `json:"upcoming_total"`
-	TrainTotal   int           `json:"train_total"`
-	TestTotal    int           `json:"test_total"`
-	SplitDate    string        `json:"split_date"`
-	Rows         []workshopRow `json:"rows"`
+	GeneratedAt   time.Time     `json:"generated_at"`
+	SettledTotal  int           `json:"settled_total"`
+	UpcomingTotal int           `json:"upcoming_total"`
+	TrainTotal    int           `json:"train_total"`
+	TestTotal     int           `json:"test_total"`
+	SplitDate     string        `json:"split_date"`
+	Rows          []workshopRow `json:"rows"`
 }
 
 var (

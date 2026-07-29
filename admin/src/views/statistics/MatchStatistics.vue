@@ -96,9 +96,12 @@ function marketOf(signal: Signal): string {
   if (signal.market) return signal.market
   const map: Record<string, string> = {
     asian_heat: 'asian', line_discrepancy: 'asian',
-    goals_heat: 'dxq', goals_discrepancy: 'dxq', base_qiu: 'dxq',
+    goals_heat: 'dxq', qiu_heat: 'dxq', goals_discrepancy: 'dxq', base_qiu: 'dxq',
     goals_align_under: 'dxq', goals_align_over: 'dxq',
     goals_split_over: 'dxq', goals_split_under: 'dxq',
+    qiu_align_under: 'dxq', qiu_align_over: 'dxq',
+    qiu_split_over: 'dxq', qiu_split_under: 'dxq',
+    goals_rounded: 'dxq', goals_diff_band: 'dxq',
     history_goals: 'goals', recent_goals: 'goals', goals_composite: 'goals',
     pro_signal: 'spf', trade_comfort: 'spf', sim_trade_comfort: 'spf',
     history_handicap: 'spf', recent_handicap: 'spf', asian_composite: 'spf',

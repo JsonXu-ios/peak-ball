@@ -149,6 +149,28 @@ func firstError(errs ...error) string {
 
 // ---------- 待赛预测计算 ----------
 
+// finaleUpcomingWindow 返回待赛窗口的三个边界：今天、horizon 天后、当前时刻。
+func finaleUpcomingWindow() (today, horizon, cutoff string) {
+	now := time.Now()
+	return now.Format("2006-01-02"),
+		now.AddDate(0, 0, finaleHorizonDays).Format("2006-01-02"),
+		now.Format("2006-01-02 15:04")
+}
+
+// finaleIsUpcoming 判断一场比赛是否还算「待赛」。
+//
+// 除了日期窗口与未结算，还必须【尚未开赛】：库里的 settled 要等结果拉回来才置位，
+// 凌晨踢完、结果还没回填的比赛在此之前 settled 仍是 0，只按日期筛的话它会一直挂
+// 在待赛列表里，看着像还能下注的场次。开赛时间一过就必须从待赛里消失——存档那边
+// 本来就是按开赛时间冻结的，这里对齐同一条线。
+func finaleIsUpcoming(match statisticsMatch, today, horizon, cutoff string) bool {
+	if match.ID == "" || match.Settled || match.Date < today || match.Date > horizon {
+		return false
+	}
+	// match_time 为空时无法判开赛，保守放行，交给日期窗口兜底。
+	return match.MatchTime == "" || match.MatchTime > cutoff
+}
+
 // finaleRow 是一场待赛比赛算出来的全部信号：展示文本与结算所需的方向分开存放。
 type finaleRow struct {
 	match statisticsMatch
@@ -236,14 +258,13 @@ func buildFinaleUpcoming() (int, []finaleRow, error) {
 	if err := statisticsDB().Table("moneys").Select(statisticsMoneysColumns).Find(&rawMatches).Error; err != nil {
 		return 0, nil, err
 	}
-	today := time.Now().Format("2006-01-02")
-	horizon := time.Now().AddDate(0, 0, finaleHorizonDays).Format("2006-01-02")
+	today, horizon, cutoff := finaleUpcomingWindow()
 
 	upcoming := make([]statisticsMatch, 0, 64)
 	ids := make([]string, 0, 64)
 	for _, row := range rawMatches {
 		match := parseStatisticsMatch(row)
-		if match.ID == "" || match.Settled || match.Date < today || match.Date > horizon {
+		if !finaleIsUpcoming(match, today, horizon, cutoff) {
 			continue
 		}
 		upcoming = append(upcoming, match)
@@ -355,7 +376,7 @@ func buildFinaleRow(match statisticsMatch, historyRow, pankouRow, oddsRow map[st
 		row.ouPick = "判" + statisticsOverLabel(qiuDir == "over")
 	}
 
-	// —— H5 两个「综合均值」的判断（让球同「完赛基础统计」6b；球数为 0.7/0.3 加权）——
+	// —— H5 两个「综合均值」的判断（让球同「完赛基础统计」6b；球数为 0.3/0.7 加权）——
 	// 历史与近期缺任一样本即留空，不用 0 顶替。
 	recentDiff, hasRecentDiff := statisticsRecentDifference(
 		statisticsRecentForm(homeRecent, match.Home), statisticsRecentForm(guestRecent, match.Guest))
@@ -377,7 +398,7 @@ func buildFinaleRow(match statisticsMatch, historyRow, pankouRow, oddsRow map[st
 		row.goalPick = "买大球"
 	}
 	if hasOU && hasHistory && hasRecentGoals {
-		composite := historyGoals*0.7 + recentGoals*0.3
+		composite := historyGoals*0.3 + recentGoals*0.7
 		if math.Abs(composite-ouLine) >= statisticsPushEpsilon {
 			row.expOuDir = finaleOverDirection(composite > ouLine)
 			row.expOu = fmt.Sprintf("判%s %.2f", statisticsOverLabel(composite > ouLine), composite)

@@ -28,10 +28,10 @@ func TestFinaleGoalComboUnderHeatLineCeiling(t *testing.T) {
 	// 反向·热度判小球 = 热度在盘口下方、期望球数在盘口上方，所以盘口必须夹在
 	// 等权热度与加权期望之间。
 	//
-	// 入选样本：历史 4 球、近期 0 球 → 期望=0.7×4+0.3×0=2.8（判大），等权热度=2.0
-	//（判小），盘口 2.5 夹在中间且 < 3.25 → 入选。
+	// 入选样本：历史 0 球、近期 4 球 → 期望=0.3×0+0.7×4=2.8（判大），等权热度=2.0
+	//（判小），盘口 2.5 夹在中间且 < 3.75 → 入选。
 	match := statisticsMatch{ID: "1", Date: "2026-03-01", Home: "A", Guest: "B"}
-	row, ok := buildFinaleGoalRow(match, goalsHistory("A", "B", 4, 0, 0, 0), goalPankou("2.5"))
+	row, ok := buildFinaleGoalRow(match, goalsHistory("A", "B", 0, 0, 2, 2), goalPankou("2.5"))
 	if !ok || row.combo != finaleGoalComboUnderHeat {
 		t.Fatalf("盘口2.5 = %+v/%v, want 入选 split_under", row, ok)
 	}
@@ -39,10 +39,10 @@ func TestFinaleGoalComboUnderHeatLineCeiling(t *testing.T) {
 		t.Fatalf("展示列 = %q / %q, want 判大球 2.80 / 判小球 2.00", row.expGoals, row.heatGoals)
 	}
 
-	// 上限样本：历史 5 球、近期 1 球 → 期望=3.8（判大）、热度=3.0（判小），
-	// 盘口 3.5 与 3.75 都仍构成反向（都夹在 3.0 与 3.8 之间），但 3.75 触到上限
+	// 上限样本：历史 0 球、近期 6 球 → 期望=4.2（判大）、热度=3.0（判小），
+	// 盘口 3.5 与 3.75 都仍构成反向（都夹在 3.0 与 4.2 之间），但 3.75 触到上限
 	// 必须剔除、3.5 必须保留——上限是「< 3.75，3.75 本身也剔除」。
-	ceiling := goalsHistory("A", "B", 4, 1, 1, 0)
+	ceiling := goalsHistory("A", "B", 0, 0, 3, 3)
 	if _, ok := buildFinaleGoalRow(match, ceiling, goalPankou("3.5")); !ok {
 		t.Fatal("盘口3.5 应当入选：反向成立且未触到 3.75 上限")
 	}
@@ -52,9 +52,9 @@ func TestFinaleGoalComboUnderHeatLineCeiling(t *testing.T) {
 }
 
 func TestFinaleGoalComboOverHeatLineWindow(t *testing.T) {
-	// 反向·热度判大球：历史 1 球、近期 6 球 → 期望=0.7×1+0.3×6=2.5（判小），
+	// 反向·热度判大球：历史 6 球、近期 1 球 → 期望=0.3×6+0.7×1=2.5（判小），
 	// 等权热度=3.5（判大）。盘口落在 2.5~3.5 之间才构成反向。
-	history := goalsHistory("A", "B", 1, 0, 3, 3)
+	history := goalsHistory("A", "B", 5, 1, 1, 0)
 	match := statisticsMatch{ID: "1", Date: "2026-03-01", Home: "A", Guest: "B"}
 
 	row, ok := buildFinaleGoalRow(match, history, goalPankou("3"))
@@ -71,18 +71,18 @@ func TestFinaleGoalComboOverHeatLineWindow(t *testing.T) {
 		}
 	}
 
-	// 高盘口同样不限：历史 2 球、近期 10 球 → 期望=0.7×2+0.3×10=4.4（判小）、
+	// 高盘口同样不限：历史 10 球、近期 2 球 → 期望=0.3×10+0.7×2=4.4（判小）、
 	// 热度=6.0（判大），盘口 5 仍构成反向，本组合除 2.25 外不卡任何区间。
-	if _, ok := buildFinaleGoalRow(match, goalsHistory("A", "B", 2, 0, 5, 5), goalPankou("5")); !ok {
+	if _, ok := buildFinaleGoalRow(match, goalsHistory("A", "B", 5, 5, 1, 1), goalPankou("5")); !ok {
 		t.Fatal("盘口5 应当入选：本组合只剔 2.25，不卡上下限")
 	}
 }
 
 func TestFinaleGoalComboOverHeatExcludesOnlyTheExactLine(t *testing.T) {
 	// 本组合只挖掉 2.25 这一档，两侧相邻的盘口都要留下。
-	// 历史 0 球、近期 6 球 → 期望=0.3×6=1.8（判小），热度=3.0（判大），
+	// 历史 6 球、近期 0 球 → 期望=0.3×6=1.8（判小），热度=3.0（判大），
 	// 盘口 2 / 2.25 / 2.5 都夹在两者之间、都构成反向，差别只在这条剔除规则。
-	history := goalsHistory("A", "B", 0, 0, 3, 3)
+	history := goalsHistory("A", "B", 3, 3, 0, 0)
 	match := statisticsMatch{ID: "1", Date: "2026-03-01", Home: "A", Guest: "B"}
 
 	for _, line := range []string{"2", "2.5"} {
@@ -110,8 +110,8 @@ func TestFinaleGoalRequiresHeadToHeadHistory(t *testing.T) {
 			t.Fatalf("盘口%s：无交锋记录的比赛不该入选", line)
 		}
 	}
-	// 补上交锋（4 球）后同一个盘口就该入选，证明上面是被交锋缺失挡的。
-	if _, ok := buildFinaleGoalRow(match, goalsHistory("A", "B", 4, 0, 0, 0), goalPankou("2.5")); !ok {
+	// 补上交锋后同一个盘口就该入选，证明上面是被交锋缺失挡的。
+	if _, ok := buildFinaleGoalRow(match, goalsHistory("A", "B", 0, 0, 2, 2), goalPankou("2.5")); !ok {
 		t.Fatal("有交锋记录时应当入选")
 	}
 }
