@@ -22,7 +22,7 @@ interface Prediction {
   pick: string
   /** 主推提示：方向+概率文本，如「客胜 72.3%」，无数据为 '' */
   sig_base: string
-  /** 命中「大小球」选项卡两种反向组合之一时为「买大球」，否则 ''。仅展示，不在本页结算 */
+  /** 期望球数原值与截尾取整双双判大球时为「买大球」（盘口正好4球时反推「买小球」），否则 ''。仅展示 */
   goal_pick: string
   /** 亚盘/大小球即时盘口，无数据为 '' */
   ah_line: string
@@ -223,7 +223,7 @@ onMounted(() => fetchReport())
       <div>
         <div class="text-body-2 text-medium-emphasis mt-1">
           未来 {{ report?.horizon_days ?? 14 }} 天待赛比赛中命中「前端主推≥70%」信号的场次，赛前自动存档；比赛完赛后（拉回结果即可）自动逐列结算命中。
-          <span class="text-error font-weight-bold">红色=偏主队</span>、<span class="text-success font-weight-bold">绿色=偏客队</span>；主推概率、亚盘/大小球盘口与交易/模拟盈亏推荐仅随行展示，不参与预测。<b>大小球推荐</b>列命中「大小球」选项卡那两种反向组合时显示<b>买大球</b>，它的命中率在那个选项卡里单独统计，本页不结算。
+          <span class="text-error font-weight-bold">红色=偏主队</span>、<span class="text-success font-weight-bold">绿色=偏客队</span>；主推概率、亚盘/大小球盘口与交易/模拟盈亏推荐仅随行展示，不参与预测。<b>大小球推荐</b>列：期望球数的<b>原值</b>与<b>截尾取整</b>（抹掉小数、不四舍五入）双双高于大小球盘口时显示<b>买大球</b>；若盘口正好是 <b>4 球</b>，则反过来显示<b>买小球</b>。两队无交锋记录的比赛不推荐。本页只展示、不结算。
         </div>
       </div>
       <v-spacer />
@@ -476,7 +476,9 @@ onMounted(() => fetchReport())
                     <span v-else class="text-medium-emphasis">-</span>
                   </td>
                   <td class="text-no-wrap">
-                    <v-chip v-if="p.goal_pick" color="warning" size="small" variant="flat">{{ p.goal_pick }}</v-chip>
+                    <v-chip v-if="p.goal_pick" :color="p.goal_pick === '买小球' ? 'info' : 'warning'" size="small" variant="flat">
+                      {{ p.goal_pick }}
+                    </v-chip>
                     <span v-else class="text-medium-emphasis">-</span>
                   </td>
                   <td class="text-right text-no-wrap">

@@ -242,9 +242,9 @@ func buildPickSignals(matches []statisticsMatch, histories, pankous, odds map[st
 		}
 	}
 
-	base13Payload := base13.payload("base_spf", "7. 前端主推·胜平负（按主推概率分档）", "平均欧赔隐含概率最大方向（H5卡片中央的主推）；命中=该方向即赛果；ROI=按平均欧赔每场投1单位。分档回答“胜率高在哪”。")
+	base13Payload := base13.payload("base_spf", "8. 前端主推·胜平负（按主推概率分档）", "平均欧赔隐含概率最大方向（H5卡片中央的主推）；命中=该方向即赛果；ROI=按平均欧赔每场投1单位。分档回答“胜率高在哪”。")
 	base13Payload["buckets"] = pickBucketRows(base13Bands, pickBaseProbBandOrder, "base-spf")
-	qiu13Payload := qiu13.payload("base_qiu", "15. 前端球数倾向·大小球（按压力强度分档）", "近期场均总进球对当前盘口的压力方向；盘口球(压力差<5)不计入；ROI按bet365水位。")
+	qiu13Payload := qiu13.payload("base_qiu", "28. 前端球数倾向·大小球（按压力强度分档）", "近期场均总进球对当前盘口的压力方向；盘口球(压力差<5)不计入；ROI按bet365水位。")
 	qiu13Payload["buckets"] = pickBucketRows(qiu13Bands, pickQiuStrengthBandOrder, "base-qiu")
 
 	return []gin.H{base13Payload, qiu13Payload}

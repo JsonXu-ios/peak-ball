@@ -95,7 +95,7 @@ func evilCultMainExactDetail(m evilCultBridgeMatch) statisticsDetail {
 	return detail
 }
 
-const evilCultDimensionTitle = "18. 邪修一推/二推（大小球方向对 → 球数，由 go_server 结算）"
+const evilCultDimensionTitle = "31. 邪修一推/二推（大小球方向对 → 球数，由 go_server 结算）"
 
 const evilCultDimensionDefinition = "桥接 go_server /analysis/accuracy-stats 的邪修一推与二推(主推)，双组合只找对的：" +
 	"先按该推方向对大小球盘口线结算（推荐大球=总进球>线，推荐小球=<线），方向判对的场次才纳入；" +

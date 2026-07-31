@@ -185,8 +185,8 @@ type finaleRow struct {
 	ouText    string
 	tradePick string // 展示文本（主胜/客胜）
 	simPick   string
-	// goalPick 命中「大小球」选项卡那两种反向组合之一时为「买大球」，否则为空。
-	// 只展示，不在本页结算——命中率由大小球选项卡单独统计。
+	// goalPick 期望球数原值与截尾取整双双判大球时为「买大球」（盘口正好 4 球时
+	// 反推「买小球」），否则为空。只展示，不在本页结算。
 	goalPick string
 
 	baseDir   string
@@ -392,10 +392,23 @@ func buildFinaleRow(match statisticsMatch, historyRow, pankouRow, oddsRow map[st
 				statisticsCoverLabel(coverHome), composite, statisticsRound2(ahLine))
 		}
 	}
-	// 大小球推荐：命中「大小球」选项卡那两种反向组合之一就显示买大球，口径完全
-	// 复用同一个函数，避免两处判断走偏。只展示，不在本页结算。
-	if _, ok := buildFinaleGoalRow(match, historyRow, pankouRow); ok {
-		row.goalPick = "买大球"
+	// 大小球推荐：期望球数【原值】与【截尾取整】双双判大球才推荐。
+	//
+	// 注意两个条件里截尾那个更严，实际上单独成立就够了——截尾只会让数值变小，
+	// trunc(期望) > 盘口 必然推出 期望 > 盘口。这里仍把两条都写出来，是为了让
+	// 口径与页面说明一一对应，日后哪一条要单独调整也好改。
+	//
+	// 盘口正好 4 球时反过来推荐买小球：4 球盘已经把期望顶到很高的位置，此时
+	// 「还判大球」多半是期望值本身偏高，按经验反着买。
+	if hasOU && hasHistory {
+		if expected, ok := statisticsGoalsExpected(historyGoals, hasHistory, recentGoals, hasRecentGoals); ok {
+			if expected > ouLine && math.Trunc(expected) > ouLine {
+				row.goalPick = "买大球"
+				if math.Abs(ouLine-4) < statisticsPushEpsilon {
+					row.goalPick = "买小球"
+				}
+			}
+		}
 	}
 	if hasOU && hasHistory && hasRecentGoals {
 		composite := historyGoals*0.3 + recentGoals*0.7

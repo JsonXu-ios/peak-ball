@@ -30,8 +30,8 @@ type FinalePrediction struct {
 	OuLine    string `gorm:"size:16;comment:大小球列" json:"ou_line"`
 	TradePick string `gorm:"size:8;comment:交易盈亏提示方向文本" json:"trade_pick"`
 	SimPick   string `gorm:"size:8;comment:模拟盈亏提示方向文本" json:"sim_pick"`
-	// GoalPick 命中「终章·大小球」两种反向组合之一时为「买大球」，否则为空。
-	// 本页只展示，不结算——大小球的命中率由 FinaleGoalPrediction 单独跟踪。
+	// GoalPick 期望球数原值与截尾取整双双判大球时为「买大球」（大小球盘口正好
+	// 4 球时反推「买小球」），否则为空。本页只展示，不结算。
 	GoalPick string `gorm:"size:8;comment:大小球推荐文本" json:"goal_pick"`
 
 	// 结算依据。让球/大小球各列必须用快照时的盘口线结算——事后盘口会变。

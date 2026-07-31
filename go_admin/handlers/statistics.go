@@ -81,6 +81,7 @@ var signalMarketMap = map[string]string{
 	"asian_heat":         "asian",
 	"goals_heat":         "dxq",
 	"qiu_heat":           "dxq",
+	"base70_goals":       "dxq",
 	"pro_signal":         "spf",
 	"trade_comfort":      "spf",
 	"sim_trade_comfort":  "spf",
@@ -273,8 +274,10 @@ type statisticsTeamForm struct {
 // thresholds are easy to review and adjust without hunting through the logic.
 const (
 	statisticsHandicapBand    = 0.25 // |让球期望| ≤ 此值算平局，否则算主/客
-	statisticsGoalDiscrepancy = 0.75 // #7 / #11 期望与盘口的最小背离
+	statisticsGoalDiscrepancy = 0.75 // 亚盘/大小球背离两个维度的最小背离
 	statisticsPushEpsilon     = 0.001
+	// 前端主推的高概率门槛，与「终章」「最后一舞」用的是同一条线。
+	statisticsBaseProbThreshold = 70.0
 	// 期望球数综合均值的历史权重（近期权重=1-它）。必须与 go_server 的
 	// combinedGoalAverage / pfCombinedGoalAverage 一致，否则统计和 H5 对不上。
 	statisticsGoalsHistoryWeight = 0.3
@@ -394,6 +397,8 @@ func buildSignalStatistics(matches []statisticsMatch, histories, pankous, odds m
 	// 前端球数倾向同样分档：公式与热度一致，只是驱动值换成「只看近期」的均值。
 	qiuHeatOver := map[int]*statisticsSignal{}
 	qiuHeatUnder := map[int]*statisticsSignal{}
+	// 主推≥70% 的比赛，按【原始大小球盘口】分组，每组统计三种买法。
+	base70ByLine := map[string]*base70LineBets{}
 	for _, tier := range statisticsGoalsHeatTiers {
 		goalsHeatOver[tier] = &statisticsSignal{}
 		goalsHeatUnder[tier] = &statisticsSignal{}
@@ -497,6 +502,28 @@ func buildSignalStatistics(matches []statisticsMatch, histories, pankous, odds m
 						}
 					}
 				}
+			}
+		}
+
+		// 1d. 主推≥70% 的比赛，按【原始大小球盘口】分组，每组五种判断各自结算：
+		// 买小(原盘口)、买大(盘口+1)、买大(盘口+2)、跟期望球数方向、跟期望球数
+		// 截尾取整后的方向。五者针对同一场比赛，场次会重复、命中率各算各的，
+		// 绝不能相加。走盘不进分母。
+		if hasOU && len(probabilities) == 3 {
+			baseProb := math.Max(probabilities[0], math.Max(probabilities[1], probabilities[2]))
+			if baseProb >= statisticsBaseProbThreshold {
+				key := statisticsFormatLine(ouLine)
+				group := base70ByLine[key]
+				if group == nil {
+					group = newBase70LineBets(ouLine)
+					base70ByLine[key] = group
+				}
+				// 期望球数只在有交锋记录时才算，口径与其它期望球数维度一致。
+				expected, hasExpected := 0.0, false
+				if hasHistory {
+					expected, hasExpected = statisticsGoalsExpected(historyGoals, hasHistory, recentGoals, hasRecentGoals)
+				}
+				group.file(match, baseProb, expected, hasExpected)
 			}
 		}
 
@@ -689,15 +716,15 @@ func buildSignalStatistics(matches []statisticsMatch, histories, pankous, odds m
 	}
 
 	signals := []gin.H{
-		statisticsDirectionalHeatPayload("asian_heat", "8. 亚盘投注热度分档（档位×主客方向）", "热度=平衡点 + (主队胜负份额-50)×1.4 - 即时盘×8 - 盘口移动×1.5，与前端 pressurePair 完全一致，并按热度朝主队/朝客队方向拆分；盘口移动项是扩散到高档的主因。命中=热度方向赢盘。", statisticsHeatTiers, []statisticsHeatDirection{
+		statisticsDirectionalHeatPayload("asian_heat", "9. 亚盘投注热度分档（档位×主客方向）", "热度=平衡点 + (主队胜负份额-50)×1.4 - 即时盘×8 - 盘口移动×1.5，与前端 pressurePair 完全一致，并按热度朝主队/朝客队方向拆分；盘口移动项是扩散到高档的主因。命中=热度方向赢盘。", statisticsHeatTiers, []statisticsHeatDirection{
 			{suffix: "home", label: "朝主队", buckets: asianHeatHome},
 			{suffix: "guest", label: "朝客队", buckets: asianHeatGuest},
 		}),
-		statisticsDirectionalHeatPayload("goals_heat", "13. 大小球投注热度分档（档位×大小方向）", "按大小球投注热度(大/小压力较大值)分档并按判大球/判小球方向拆分；热度=50+(期望球数-盘口)×18，55档要求期望偏离盘口≥0.28球，60档≥0.56球；命中=大/小方向正确。", statisticsGoalsHeatTiers, []statisticsHeatDirection{
+		statisticsDirectionalHeatPayload("goals_heat", "14. 大小球投注热度分档（档位×大小方向）", "按大小球投注热度(大/小压力较大值)分档并按判大球/判小球方向拆分；热度=50+(期望球数-盘口)×18，55档要求期望偏离盘口≥0.28球，60档≥0.56球；命中=大/小方向正确。", statisticsGoalsHeatTiers, []statisticsHeatDirection{
 			{suffix: "over", label: "判大球", buckets: goalsHeatOver},
 			{suffix: "under", label: "判小球", buckets: goalsHeatUnder},
 		}),
-		statisticsDirectionalHeatPayload("qiu_heat", "13c. 前端球数倾向分档（档位×大小方向）", "与 #13 同一套公式：倾向值=clamp(50+(近期总进球均值-盘口)×18)，取大/小两侧较大值分档并按判大球/判小球拆分；命中=大/小方向正确。唯一差别是驱动值——本行只看【近期战绩】（主客各最近5场的进球+失球总平均），完全不含交锋历史，而 #13 用的是交锋与近期的等权均值。两行对照即可看出「掺不掺交锋」对大小球判断到底有没有帮助。注：原来的球数倾向以「压力差<5 就不表态」为门槛，换成分档后 55 档已要求偏离盘口≥0.28 球，比原门槛(≈0.14球)严一倍。", statisticsGoalsHeatTiers, []statisticsHeatDirection{
+		statisticsDirectionalHeatPayload("qiu_heat", "15. 前端球数倾向分档（档位×大小方向）", "与【大小球投注热度分档】同一套公式：倾向值=clamp(50+(近期总进球均值-盘口)×18)，取大/小两侧较大值分档并按判大球/判小球拆分；命中=大/小方向正确。唯一差别是驱动值——本行只看【近期战绩】（主客各最近5场的进球+失球总平均），完全不含交锋历史，而热度分档用的是交锋与近期的等权均值。两行对照即可看出「掺不掺交锋」对大小球判断到底有没有帮助。注：原来的球数倾向以「压力差<5 就不表态」为门槛，换成分档后 55 档已要求偏离盘口≥0.28 球，比原门槛(≈0.14球)严一倍。", statisticsGoalsHeatTiers, []statisticsHeatDirection{
 			{suffix: "over", label: "判大球", buckets: qiuHeatOver},
 			{suffix: "under", label: "判小球", buckets: qiuHeatUnder},
 		}),
@@ -707,63 +734,84 @@ func buildSignalStatistics(matches []statisticsMatch, histories, pankous, odds m
 		historyHandicap.payload("history_handicap", "4. 历史期望让球", "赛前3年内交锋净胜球期望；|期望|≤0.25判平，否则判主/客；命中=胜平负判断正确。"),
 		recentHandicap.payload("recent_handicap", "5. 近期状态让球", "两队各自最近5场净胜球差；判断口径同上。"),
 		asianComposite.payload("asian_composite", "6. 亚盘综合均值", "取【历史期望让球】【近期状态让球】【当前亚盘线】中有值者求平均；判断口径同上。"),
-		frontHandicapAvg.payload("front_handicap_avg", "6b. 前端期望让球·综合均值（不含亚盘线）", "与 H5【期望让球】区块显示的「综合均值」同口径：(历史期望让球 + 近期状态让球) / 2，不掺当前亚盘线——这是它与 #6 的唯一差别。两项样本缺任一则不纳入统计（H5 的显示值在缺样本时会拿0参与平均，此处不复刻该行为）。|期望|≤0.25判平，否则判主/客；命中=胜平负判断正确。"),
-		lineDiscrepancy.payload("line_discrepancy", "9. 亚盘即时盘背离≥0.75", "当前亚盘线较历史与近期期望同时背离≥0.75时纳入；盘口高估一方则站另一方赢盘。"),
-		historyGoalsSig.payload("history_goals", "10. 历史平均球数", "赛前3年内交锋场均总进球；与当前大小球线比较判大/小；命中=大小球判断正确。"),
-		recentGoalsSig.payload("recent_goals", "11. 近期平均球数", "两队最近5场场均总进球；判断口径同上。"),
-		goalsComposite.payload("goals_composite", "12. 球数综合均值", "取【历史平均球数】【近期平均球数】求平均(不含盘口线)；判断口径同上。"),
-		goalsDiscrepancy.payload("goals_discrepancy", "14. 期望球数高于大小球即时盘≥0.75", "球数综合均值高于当前大小球线≥0.75时纳入，判大球；命中=实际打出大球。"),
-		goalsAlignUnder.payload("goals_align_under", "15. 期望球数×球数热度同向·热度判小球", goalsDirCommon+
+		frontHandicapAvg.payload("front_handicap_avg", "7. 前端期望让球·综合均值（不含亚盘线）", "与 H5【期望让球】区块显示的「综合均值」同口径：(历史期望让球 + 近期状态让球) / 2，不掺当前亚盘线——这是它与【亚盘综合均值】的唯一差别。两项样本缺任一则不纳入统计（H5 的显示值在缺样本时会拿0参与平均，此处不复刻该行为）。|期望|≤0.25判平，否则判主/客；命中=胜平负判断正确。"),
+		lineDiscrepancy.payload("line_discrepancy", "10. 亚盘即时盘背离≥0.75", "当前亚盘线较历史与近期期望同时背离≥0.75时纳入；盘口高估一方则站另一方赢盘。"),
+		historyGoalsSig.payload("history_goals", "11. 历史平均球数", "赛前3年内交锋场均总进球；与当前大小球线比较判大/小；命中=大小球判断正确。"),
+		recentGoalsSig.payload("recent_goals", "12. 近期平均球数", "两队最近5场场均总进球；判断口径同上。"),
+		goalsComposite.payload("goals_composite", "13. 球数综合均值", "取【历史平均球数】【近期平均球数】求平均(不含盘口线)；判断口径同上。"),
+		goalsDiscrepancy.payload("goals_discrepancy", "16. 期望球数高于大小球即时盘≥0.75", "球数综合均值高于当前大小球线≥0.75时纳入，判大球；命中=实际打出大球。"),
+		goalsAlignUnder.payload("goals_align_under", "17. 期望球数×球数热度同向·热度判小球", goalsDirCommon+
 			"本行取两者同向、且热度判小球的场次。推荐即判小球，命中=实际打出小球。"+goalsDirPartition),
-		goalsAlignOver.payload("goals_align_over", "16. 期望球数×球数热度同向·热度判大球", goalsDirCommon+
-			"本行取两者同向、且热度判大球的场次。推荐即判大球，命中=实际打出大球。与 #15 对比即可看出同向时买大球和买小球哪边更稳。"+goalsDirPartition),
-		goalsSplitOver.payload("goals_split_over", "17. 期望球数×球数热度反向·热度判大球", goalsDirCommon+
+		goalsAlignOver.payload("goals_align_over", "18. 期望球数×球数热度同向·热度判大球", goalsDirCommon+
+			"本行取两者同向、且热度判大球的场次。推荐即判大球，命中=实际打出大球。与上一行【同向·热度判小球】对比即可看出同向时买大球和买小球哪边更稳。"+goalsDirPartition),
+		goalsSplitOver.payload("goals_split_over", "19. 期望球数×球数热度反向·热度判大球", goalsDirCommon+
 			"本行取两者判到相反侧、且热度判大球（即期望球数判小球）的场次。推荐跟热度即判大球，命中=实际打出大球。"+goalsDirSplitNote+goalsDirPartition),
-		goalsSplitUnder.payload("goals_split_under", "18. 期望球数×球数热度反向·热度判小球", goalsDirCommon+
+		goalsSplitUnder.payload("goals_split_under", "20. 期望球数×球数热度反向·热度判小球", goalsDirCommon+
 			"本行取两者判到相反侧、且热度判小球（即期望球数判大球）的场次。推荐跟热度即判小球，命中=实际打出小球。"+goalsDirSplitNote+goalsDirPartition),
-		qiuAlignUnder.payload("qiu_align_under", "19. 期望球数×前端球数倾向同向·倾向判小球", qiuDirCommon+
+		qiuAlignUnder.payload("qiu_align_under", "21. 期望球数×前端球数倾向同向·倾向判小球", qiuDirCommon+
 			"本行取两者同向、且倾向判小球的场次。推荐即判小球，命中=实际打出小球。"+qiuDirPartition),
-		qiuAlignOver.payload("qiu_align_over", "20. 期望球数×前端球数倾向同向·倾向判大球", qiuDirCommon+
+		qiuAlignOver.payload("qiu_align_over", "22. 期望球数×前端球数倾向同向·倾向判大球", qiuDirCommon+
 			"本行取两者同向、且倾向判大球的场次。推荐即判大球，命中=实际打出大球。"+qiuDirPartition),
-		qiuSplitOver.payload("qiu_split_over", "21. 期望球数×前端球数倾向反向·倾向判大球", qiuDirCommon+
+		qiuSplitOver.payload("qiu_split_over", "23. 期望球数×前端球数倾向反向·倾向判大球", qiuDirCommon+
 			"本行取两者判到相反侧、且倾向判大球（即期望球数判小球）的场次。推荐跟倾向即判大球，命中=实际打出大球。"+qiuDirPartition),
-		goalsRounded.payload("goals_rounded", "23. 期望球数取整（0~8球）对盘口",
+		qiuSplitUnder.payload("qiu_split_under", "24. 期望球数×前端球数倾向反向·倾向判小球", qiuDirCommon+
+			"本行取两者判到相反侧、且倾向判小球（即期望球数判大球）的场次。推荐跟倾向即判小球，命中=实际打出小球。"+qiuDirPartition),
+		goalsRounded.payload("goals_rounded", "25. 期望球数取整（0~8球）对盘口",
 			"期望球数=0.3×历史场均+0.7×近期场均，先四舍五入成一个真实的整数球数（夹在 0~8），再拿这个整数和大小球盘口比："+
 				"大于判大球，小于判小球，正好相等也判大球。命中=大小球方向正确，走盘（总进球正好等于盘口）不计入分母。"+
 				"明细里列出原始期望值、取整后的球数，以及差值——差值取【期望球数原值 − 盘口】，不是取整后的球数减盘口。"+
 				"因为取整会把 2.6 和 3.4 都压成 3 球，差值若也跟着取整就看不出这场到底贴不贴盘；用原值才能分清「勉强过线」和「稳稳高出」。"+
 				"上方的方向拆分表按 判大/判小 × 盘口线分组，可以直接看出哪些盘口档位靠谱。两队没有交锋记录的比赛整场剔除。"),
-		statisticsDiffBucketPayload("goals_diff_band", "24. 期望球数取整·按差值分档（每 0.1 球一档）",
-			"与 #23 完全同一批比赛、同一套判断（取整球数对盘口，相等判大球），这里只是把它们按【期望球数原值 − 盘口】的差值每 0.1 球一档拆开看命中率，只列出有场次的档。"+
+		statisticsDiffBucketPayload("goals_diff_band", "26. 期望球数取整·按差值分档（每 0.1 球一档）",
+			"与上一行【期望球数取整对盘口】完全同一批比赛、同一套判断（取整球数对盘口，相等判大球），这里只是把它们按【期望球数原值 − 盘口】的差值每 0.1 球一档拆开看命中率，只列出有场次的档。"+
 				"差值为正=期望高于盘口。注意判断用的是【取整后】的球数，所以差值为负的档里照样会有判大球的场次（如期望 2.70、盘口 3，取整成 3 与盘口相等即判大球），两者不是一回事。"+
 				"看这张表是为了找出「差值多大才靠得住」的那条线。⚠️ 单档场次少时命中率就是噪声，先看场次再看百分比；相邻几档合起来看比盯着某一档更稳。",
 			goalsDiffBuckets),
-		qiuSplitUnder.payload("qiu_split_under", "22. 期望球数×前端球数倾向反向·倾向判小球", qiuDirCommon+
-			"本行取两者判到相反侧、且倾向判小球（即期望球数判大球）的场次。推荐跟倾向即判小球，命中=实际打出小球。"+qiuDirPartition),
+		statisticsLineTablePayload("base70_goals", "27. 前端主推≥70%·按大小球盘口分档",
+			"先只留下前端主推概率≥70% 的比赛（主推=平均欧赔隐含概率最大的方向，不管它指向主/平/客），"+
+				"再按这些比赛【当时的大小球即时盘口】逐档分组（2.25、2.5、3.25、4 …），每档统计七种判断："+
+				"①按本档盘口买小球；②本档+1 买大球；③本档+2 买大球；"+
+				"④跟期望球数的方向——高于本档盘口判大球、低于判小球，正好等于盘口则没有方向、不统计；"+
+				"⑤跟期望球数【截尾取整】的方向——直接抹掉小数部分、不四舍五入（2.9→2、3.6→3），再拿这个整数和本档盘口比；"+
+				"⑥只看期望球数【判小球】的那部分场次买小球，即第④格判小的那一半；"+
+				"⑦只看截尾取整后【判小球】的那部分场次买小球，即第⑤格判小的那一半。"+
+				"④⑤⑥⑦结算对的都是本档原盘口。例：盘口 3.25 那一行的七格分别是 买小3.25 / 买大4.25 / 买大5.25 / 期望球数对3.25 / 截尾取整对3.25 / 期望球数判小球 / 截尾判小球。"+
+				"前三格是固定买法，后四格是让期望球数自己挑边——对照着看就知道「无脑买」和「跟期望球数」哪个强、"+
+				"「抹掉小数」是帮忙还是帮倒忙，以及这套判断是偏大球更准还是偏小球更准"+
+				"（第⑥格对第④格、第⑦格对第⑤格：④⑤是判大判小混着算，⑥⑦只算判小的那一半）。"+
+				"注意截尾天然偏小，所以第⑦格会比第⑥格多收一批「原值判大球、截尾后翻成判小球」的压线比赛，"+
+				"两格一比就知道这批压线场次是拖后腿还是帮了忙。"+
+				"每格只显示命中率，把鼠标停在上面可看该格实际结算的线与命中/场次；点一下展开逐场明细"+
+				"（前三格明细的「数值」列是主推概率，第④⑥格是该场的期望球数，第⑤⑦格是截尾后的整数）。"+
+				"⚠️ 同一行的七格是对同一批比赛的七种判断，彼此不排斥（⑥⊂④、⑦⊂⑤），所以整卡不给单一命中率——混在一起平均没有意义。"+
+				"「场次」列是该档的比赛数，各格分母可能更小：走盘（总进球正好等于该格结算的线）不计入，"+
+				"后四格还会再去掉无交锋记录、以及判断值正好压线的比赛，第⑥⑦格更只保留判小球的场次。单档场次少时命中率就是噪声，先看场次再看百分比。",
+			base70ByLine),
 	}
 	return gin.H{"settled_total": len(matches), "signals": signals}
 }
 
-// goalsDirCommon 是 #15/#16 共用的口径说明，两行各写一遍容易写歪。
+// goalsDirCommon 是「期望球数×球数热度」四行共用的口径说明，各写一遍容易写歪。
 const goalsDirCommon = "期望球数=0.3×历史场均+0.7×近期场均（两队没有交锋记录的比赛整场剔除；近期样本缺失时用交锋顶上，不按 0 顶替），高于盘口即判大球——3.6 对盘口 3.5 也算，不设最小偏离；" +
 	"球数热度方向=等权综合均值对盘口的方向（热度=50+(等权均值-盘口)×18，≥50 判大球），同样不要求进档。" +
 	"推荐方向一律跟球数热度，明细的数值列也是热度值，并另有两列并排显示期望球数与热度各自的方向。走盘不计。"
 
-// qiuDirCommon 是 #19~#22 共用的口径说明。与 #15~#18 只差一个对照信号：
-// 那边用球数热度（交锋与近期等权），这边用前端球数倾向（只看近期）。
+// qiuDirCommon 是「期望球数×前端球数倾向」四行共用的口径说明。与「×球数热度」
+// 那四行只差一个对照信号：那边用球数热度（交锋与近期等权），这边用前端球数倾向
+// （只看近期）。
 const qiuDirCommon = "期望球数=0.3×历史场均+0.7×近期场均（两队没有交锋记录的比赛整场剔除）；" +
 	"前端球数倾向=主客各最近5场的总进球均值对盘口的方向，完全不含交锋。" +
 	"两者高于盘口即判大球，不设最小偏离、也不要求进档；推荐一律跟倾向，明细的数值列是倾向值。命中=大/小方向正确，走盘不计。" +
-	"⚠️ 倾向与期望球数的差恒等于 0.3×|历史场均-近期场均|，比 #15~#18 那对（0.2×|历史-近期|）宽 1.5 倍，所以这四行的反向样本会略多于 #17/#18。"
+	"⚠️ 倾向与期望球数的差恒等于 0.3×|历史场均-近期场均|，比【×球数热度】那四行（0.2×|历史-近期|）宽 1.5 倍，所以这四行的反向样本会略多于那边。"
 
-// qiuDirPartition #19~#22 的关系说明。
-const qiuDirPartition = "（#19~#22 是同向/反向 × 判大/判小的四种组合，互不重叠，合起来就是全部可算的比赛，场次可以相加；它们与 #15~#18 是同一批比赛的两种切法，不能跨组相加。）"
+// qiuDirPartition「×前端球数倾向」四行的关系说明。
+const qiuDirPartition = "（【期望球数×前端球数倾向】这四行是同向/反向 × 判大/判小的四种组合，互不重叠，合起来就是全部可算的比赛，场次可以相加；它们与【×球数热度】那四行是同一批比赛的两种切法，不能跨组相加。）"
 
-// goalsDirSplitNote 反向两行(#17/#18)共用的样本量提醒。
+// goalsDirSplitNote 反向两行共用的样本量提醒。
 const goalsDirSplitNote = "反向只发生在盘口落进加权均值与等权均值之间的窄带，样本天然比同向两行少，先看场次再看命中率。"
 
 // goalsDirPartition 四行的关系说明：互斥且穷尽，场次可以相加。
-const goalsDirPartition = "（#15~#18 是同向/反向 × 判大/判小的四种组合，互不重叠，合起来就是全部历史+近期样本齐全且不走盘的比赛，场次可以相加。）"
+const goalsDirPartition = "（【期望球数×球数热度】这四行是同向/反向 × 判大/判小的四种组合，互不重叠，合起来就是全部历史+近期样本齐全且不走盘的比赛，场次可以相加。）"
 
 // statisticsGoalsExpected 期望球数综合均值：历史与近期按 statisticsGoalsHistoryWeight
 // 加权。缺一侧时不按 0 顶替，而是用另一侧单独顶上（按实际存在的权重归一化），口径与
@@ -1188,6 +1236,116 @@ func statisticsRecentForm(rows []statisticsHistoryMatch, team string) statistics
 		form.Matches++
 	}
 	return form
+}
+
+// base70LineBets 是「主推≥70%」的比赛在某一个大小球盘口档上的七种判断：三种固定
+// 买法（原盘口买小、+1 买大、+2 买大）、跟期望球数方向、跟截尾取整后的方向，以及
+// 这两者各自「只看判小球」的子集。七者针对同一批比赛，场次重复。
+type base70LineBets struct {
+	line                float64
+	total               int // 本档的比赛场次（去重，不是各格相加）
+	under, over1, over2 *statisticsSignal
+	expDir, expTrunc    *statisticsSignal
+	expUnder            *statisticsSignal
+	expTruncUnder       *statisticsSignal
+}
+
+func newBase70LineBets(line float64) *base70LineBets {
+	return &base70LineBets{
+		line:  line,
+		under: &statisticsSignal{}, over1: &statisticsSignal{}, over2: &statisticsSignal{},
+		expDir: &statisticsSignal{}, expTrunc: &statisticsSignal{}, expUnder: &statisticsSignal{},
+		expTruncUnder: &statisticsSignal{},
+	}
+}
+
+// file 把一场比赛按五种判断各结算一次。走盘（总进球正好等于该判断结算的线）不计入。
+func (b *base70LineBets) file(match statisticsMatch, baseProb, expected float64, hasExpected bool) {
+	b.total++
+	bet := func(sig *statisticsSignal, line float64, betOver bool, value float64) {
+		over, valid := statisticsOverOutcome(match, line)
+		if !valid {
+			return
+		}
+		detail := statisticsBaseDetail(match)
+		detail.Value = statisticsRound2(value)
+		detail.Line = statisticsFormatLine(line)
+		detail.Pick = statisticsOverLabel(betOver)
+		detail.Result = statisticsOverLabel(over)
+		detail.Hit = betOver == over
+		sig.add(detail)
+	}
+	// 三种固定买法：明细的数值列放主推概率。
+	bet(b.under, b.line, false, baseProb)
+	bet(b.over1, b.line+1, true, baseProb)
+	bet(b.over2, b.line+2, true, baseProb)
+	// 跟期望球数：高于盘口判大球、低于判小球，正好等于盘口没有方向可跟；
+	// 结算对的是本档原盘口。明细的数值列放期望球数本身，方便看它离盘口多远。
+	if hasExpected && math.Abs(expected-b.line) >= statisticsPushEpsilon {
+		bet(b.expDir, b.line, expected > b.line, expected)
+		// 只看期望球数【判小球】的那部分场次，即上一格的「判小」那一半。
+		// 单独拎出来是因为一格里把判大判小混着算，看不出这套判断偏哪边更准。
+		if expected < b.line {
+			bet(b.expUnder, b.line, false, expected)
+		}
+	}
+	// 跟期望球数【截尾取整】：直接抹掉小数部分，不四舍五入（2.9→2、3.6→3），
+	// 再拿这个整数和本档盘口比。截尾天然偏小，所以它比上一格更容易判小球——
+	// 两格并排就能看出「抹掉小数」这一步是帮忙还是帮倒忙。
+	if hasExpected {
+		truncated := math.Trunc(expected)
+		if math.Abs(truncated-b.line) >= statisticsPushEpsilon {
+			bet(b.expTrunc, b.line, truncated > b.line, truncated)
+			// 截尾取整判【小球】的那一半，与第⑥格同理。注意截尾天然偏小，判小球的
+			// 场次会比上一格多出一批「原值判大、截尾后翻成判小」的压线比赛。
+			if truncated < b.line {
+				bet(b.expTruncUnder, b.line, false, truncated)
+			}
+		}
+	}
+}
+
+// row 渲染这一档盘口的一行：三种买法横向并排。每格只显示命中率，实际结算的线与
+// 命中/场次放进 title 悬浮提示——摊在表面上太挤，反而看不清主干。
+func (b *base70LineBets) row() gin.H {
+	line := statisticsFormatLine(b.line)
+	prefix := "base70_goals-" + line
+	return gin.H{
+		"line":    line,
+		"matched": b.total,
+		"bets": []gin.H{
+			b.under.payload(prefix+"-under", "小 "+line, ""),
+			b.over1.payload(prefix+"-over1", "大 "+statisticsFormatLine(b.line+1), ""),
+			b.over2.payload(prefix+"-over2", "大 "+statisticsFormatLine(b.line+2), ""),
+			b.expDir.payload(prefix+"-exp", "期望球数对 "+line, ""),
+			b.expTrunc.payload(prefix+"-exptrunc", "期望球数截尾取整对 "+line, ""),
+			b.expUnder.payload(prefix+"-expunder", "期望球数判小球对 "+line, ""),
+			b.expTruncUnder.payload(prefix+"-exptruncunder", "期望球数截尾判小球对 "+line, ""),
+		},
+	}
+}
+
+// statisticsLineTablePayload 「按盘口一行、多种买法并排」的卡片。与 buckets 不同，
+// 这里一行里有多个互不排斥的买法，所以不给整卡一个命中率——多种买法的命中率平
+// 均起来没有意义，前端对这类信号也不显示顶部的命中率标签。
+func statisticsLineTablePayload(key, title, definition string, groups map[string]*base70LineBets) gin.H {
+	ordered := make([]*base70LineBets, 0, len(groups))
+	for _, group := range groups {
+		ordered = append(ordered, group)
+	}
+	sort.SliceStable(ordered, func(i, j int) bool { return ordered[i].line < ordered[j].line })
+
+	matched := 0
+	rows := make([]gin.H, 0, len(ordered))
+	for _, group := range ordered {
+		matched += group.total
+		rows = append(rows, group.row())
+	}
+	return gin.H{
+		"key": key, "title": title, "definition": definition,
+		"matched": matched, "hit": 0, "miss": 0, "accuracy": 0.0,
+		"line_rows": rows,
+	}
 }
 
 // statisticsRecentTotalGoals 前端「球数倾向」用的近期总进球均值：主客两队各取最近

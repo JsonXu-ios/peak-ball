@@ -32,6 +32,14 @@ interface HeatBucket {
   matches: MatchDetail[]
 }
 
+/** 「按盘口一行、多种买法并排」的一行：同一档盘口下几种互不排斥的买法 */
+interface LineRow {
+  line: string
+  /** 该档的比赛场次（去重）；各买法的分母可能更小，走盘不计 */
+  matched: number
+  bets: HeatBucket[]
+}
+
 interface Signal {
   key: string
   title: string
@@ -46,6 +54,8 @@ interface Signal {
   directions?: Array<{ pick: string; line?: string; matched: number; hit: number; miss: number; accuracy: number }>
   matches?: MatchDetail[]
   buckets?: HeatBucket[]
+  /** 有它就用横向表渲染：一行一个盘口，几种买法的命中率并排成列 */
+  line_rows?: LineRow[]
   /** 真实赔率回报（13a/13b） */
   roi?: number
   roiSample?: number
@@ -61,6 +71,17 @@ interface Report {
 }
 
 const DETAIL_CAP = 300
+
+/** 横向表的列名（按买法顺序）。每格实际结算的线放在悬浮提示里，不占表面空间 */
+const LINE_BET_LABELS = [
+  '买小（本档盘口）',
+  '买大（盘口+1）',
+  '买大（盘口+2）',
+  '跟期望球数（对本档盘口）',
+  '跟期望球数·截尾取整',
+  '期望球数判小球（只看判小的场次）',
+  '截尾取整判小球（只看判小的场次）',
+]
 
 // 维度分组（展示顺序 + 颜色）。target 说明该组信号的命中率结算于哪个赛果。
 const MARKETS: Array<{ key: string; label: string; color: string; target: string }> = [
@@ -96,7 +117,7 @@ function marketOf(signal: Signal): string {
   if (signal.market) return signal.market
   const map: Record<string, string> = {
     asian_heat: 'asian', line_discrepancy: 'asian',
-    goals_heat: 'dxq', qiu_heat: 'dxq', goals_discrepancy: 'dxq', base_qiu: 'dxq',
+    goals_heat: 'dxq', qiu_heat: 'dxq', base70_goals: 'dxq', goals_discrepancy: 'dxq', base_qiu: 'dxq',
     goals_align_under: 'dxq', goals_align_over: 'dxq',
     goals_split_over: 'dxq', goals_split_under: 'dxq',
     qiu_align_under: 'dxq', qiu_align_over: 'dxq',
@@ -270,10 +291,13 @@ onMounted(() => fetchReport(false))
           <v-card-title class="pt-5 d-flex align-center flex-wrap ga-2">
             <span>{{ signal.title }}</span>
             <v-chip color="primary" size="small" variant="tonal">符合 {{ signal.matched.toLocaleString() }} 场</v-chip>
-            <v-chip :color="accuracyColor(signal.accuracy, signal.matched)" size="small" variant="tonal">
-              命中率 {{ signal.matched ? signal.accuracy.toFixed(2) + '%' : '-' }}
-            </v-chip>
-            <v-chip size="small" variant="text">命中 {{ signal.hit }} / 未命中 {{ signal.miss }}</v-chip>
+            <!-- 横向表的一行里有多种互不排斥的买法，整卡没有单一命中率可言，不显示 -->
+            <template v-if="!signal.line_rows">
+              <v-chip :color="accuracyColor(signal.accuracy, signal.matched)" size="small" variant="tonal">
+                命中率 {{ signal.matched ? signal.accuracy.toFixed(2) + '%' : '-' }}
+              </v-chip>
+              <v-chip size="small" variant="text">命中 {{ signal.hit }} / 未命中 {{ signal.miss }}</v-chip>
+            </template>
             <v-chip v-if="typeof signal.roi === 'number'" size="small" variant="tonal" :color="signal.roi >= 100 ? 'success' : 'warning'">
               ROI {{ signal.roi.toFixed(1) }}%（{{ signal.roiSample }}注有赔率）
             </v-chip>
@@ -281,8 +305,54 @@ onMounted(() => fetchReport(false))
           <v-card-subtitle class="pb-2 text-wrap">{{ signal.definition }}</v-card-subtitle>
 
           <v-card-text>
+            <!-- 按盘口一行：几种买法的命中率并排成列。每格只放命中率，实际结算的线与
+                 命中/场次进悬浮提示；点一下展开该买法的逐场明细 -->
+            <template v-if="signal.line_rows">
+              <div v-if="!signal.line_rows.length" class="text-medium-emphasis py-4">暂无符合条件的比赛。</div>
+              <v-table v-else density="comfortable" class="stat-table">
+                <thead>
+                  <tr>
+                    <th>盘口</th>
+                    <th class="text-right">场次</th>
+                    <th v-for="(bet, index) in signal.line_rows[0].bets" :key="bet.key" class="text-center">
+                      {{ LINE_BET_LABELS[index] || bet.title }}
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <template v-for="row in signal.line_rows" :key="row.line">
+                    <tr>
+                      <td class="font-weight-bold">{{ row.line }}</td>
+                      <td class="text-right">{{ row.matched.toLocaleString() }}</td>
+                      <td v-for="bet in row.bets" :key="bet.key" class="text-center">
+                        <v-chip
+                          v-if="bet.matched"
+                          :color="accuracyColor(bet.accuracy, bet.matched)"
+                          :title="`${bet.title} · 命中 ${bet.hit}/${bet.matched}`"
+                          size="small"
+                          variant="tonal"
+                          class="cursor-pointer"
+                          @click="toggle(bet.key)"
+                        >
+                          {{ bet.accuracy.toFixed(2) }}%
+                        </v-chip>
+                        <span v-else class="text-medium-emphasis">-</span>
+                      </td>
+                    </tr>
+                    <tr v-for="bet in row.bets.filter((item) => expanded[item.key])" :key="`${bet.key}-detail`">
+                      <td :colspan="row.bets.length + 2" class="pa-0">
+                        <div class="detail-wrap">
+                          <MatchDetailTable :matches="cappedMatches(bet.matches)" :total="bet.matched" :cap="DETAIL_CAP" show-value />
+                        </div>
+                      </td>
+                    </tr>
+                  </template>
+                </tbody>
+              </v-table>
+            </template>
+
             <!-- Heat signals: bucket table, each bucket drills into its matches -->
-            <template v-if="signal.buckets">
+            <template v-else-if="signal.buckets">
               <v-table density="comfortable" class="stat-table">
                 <thead>
                   <tr>
@@ -391,5 +461,8 @@ onMounted(() => fetchReport(false))
   max-height: 460px;
   overflow: auto;
   background: rgba(var(--v-theme-surface-light), 0.4);
+}
+.cursor-pointer {
+  cursor: pointer;
 }
 </style>
