@@ -202,13 +202,13 @@ func buildFinaleGoalUpcoming() (int, []finaleGoalRow, error) {
 	if err := statisticsDB().Table("moneys").Select(statisticsMoneysColumns).Find(&rawMatches).Error; err != nil {
 		return 0, nil, err
 	}
-	today, horizon, cutoff := finaleUpcomingWindow()
+	today, horizon := finaleUpcomingWindow()
 
 	upcoming := make([]statisticsMatch, 0, 64)
 	ids := make([]string, 0, 64)
 	for _, row := range rawMatches {
 		match := parseStatisticsMatch(row)
-		if !finaleIsUpcoming(match, today, horizon, cutoff) {
+		if !finaleInWindow(match, today, horizon) {
 			continue
 		}
 		upcoming = append(upcoming, match)

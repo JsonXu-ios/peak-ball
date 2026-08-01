@@ -1,10 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { getFinalePredictions } from '@/api'
-import FinaleGoals from './FinaleGoals.vue'
-
-/** 选项卡：胜平负（本文件）/ 大小球（FinaleGoals.vue，两套预测互不相干） */
-const tab = ref<'spf' | 'goals'>('spf')
 
 /** 逐列命中：true=中、false=没中、null=不适用（信号为空/走盘），不计入命中率 */
 type Hit = boolean | null
@@ -22,8 +18,10 @@ interface Prediction {
   pick: string
   /** 主推提示：方向+概率文本，如「客胜 72.3%」，无数据为 '' */
   sig_base: string
-  /** 期望球数原值与截尾取整双双判大球时为「买大球」（盘口正好4球时反推「买小球」），否则 ''。仅展示 */
+  /** 买小球推荐·超出±0.75（口径同基础统计 #33）：'买小球' 或 ''。仅展示 */
   goal_pick: string
+  /** 买小球推荐·±0.75 带内（口径同基础统计 #32 常规段）。与上一列互斥 */
+  goal_pick_mid: string
   /** 亚盘/大小球即时盘口，无数据为 '' */
   ah_line: string
   ou_line: string
@@ -49,6 +47,11 @@ interface AccuracyColumn {
   accuracy: number
 }
 
+interface Accuracy {
+  settled_total: number
+  columns: AccuracyColumn[]
+}
+
 interface Report {
   generated_at: string
   horizon_days: number
@@ -58,9 +61,9 @@ interface Report {
   end: string
   predictions: Prediction[]
   /** 赛前存档的命中率（真前瞻实测） */
-  accuracy: { settled_total: number; columns: AccuracyColumn[] }
+  accuracy: Accuracy
   /** 事后回算的命中率，单独一套，绝不与 accuracy 合并 */
-  recompute_accuracy: { settled_total: number; columns: AccuracyColumn[] }
+  recompute_accuracy: Accuracy
   warning?: string
 }
 
@@ -121,12 +124,18 @@ const recomputeRows = computed(() => rows.value.filter((row) => row.source === '
 const accuracyColumns = computed(() => report.value?.accuracy?.columns ?? [])
 const recomputeColumns = computed(() => report.value?.recompute_accuracy?.columns ?? [])
 const recomputeTotal = computed(() => report.value?.recompute_accuracy?.settled_total ?? 0)
+
 /**
- * 表格总列数。固定 11 列：时间/联赛/主队/VS/客队/预测/主推/大小球推荐/亚盘/
- * 大小球/盈亏提示；历史模式再多「来源」「比分」两列。数错会让日期分组行的
- * 背景色在中途断掉，加减列时务必同步改这里。
+ * 有已完赛的场次就显示比分/赛果两列。未来待赛模式下今天的比赛也全留在列表里，
+ * 踢完的那些同样要能看到结果，所以这两列不能只挂在历史模式上。
  */
-const columnCount = computed(() => 11 + (isHistory.value ? 2 : 0))
+const showResultColumns = computed(() => isHistory.value || rows.value.some((row) => row.settled))
+/**
+ * 表格总列数。固定 12 列：时间/联赛/主队/VS/客队/预测/主推/大小球超出带/大小球带内/
+ * 亚盘/大小球/盈亏提示；历史模式多「来源」列，有完赛场次时再多「比分」「赛果」两列。
+ * 数错会让日期分组行的背景色在中途断掉，加减列时务必同步改这里。
+ */
+const columnCount = computed(() => 12 + (isHistory.value ? 1 : 0) + (showResultColumns.value ? 2 : 0))
 
 /** 按日期分组（接口已按开赛时间升序返回） */
 const groupedByDate = computed(() => {
@@ -179,6 +188,35 @@ function hitMarkClass(row: Prediction, key: string): string {
   return hitOf(row, key) ? 'text-success' : 'text-error'
 }
 
+function resultLabel(result?: string) {
+  if (result === 'home') return '主胜'
+  if (result === 'away') return '客胜'
+  if (result === 'draw') return '平局'
+  return ''
+}
+
+/**
+ * 赛果着色：预测错的那些单独用紫色实心，扫一眼就能挑出来。
+ * 本页红/绿已经被「偏主队/偏客队」占死，错判必须换个色，否则会跟方向混在一起。
+ */
+function resultChip(row: Prediction) {
+  return hitOf(row, 'pick') === false
+    ? { color: 'purple', variant: 'flat' as const }
+    : { color: 'success', variant: 'tonal' as const }
+}
+
+/**
+ * 大小球推荐着色：打出的用青色实心挑出来，没打出的压成灰色；还没结算的按方向上色
+ *（判大球=橙、判小球=蓝，与明细表、H5 的大小球配色一致）。
+ * 这一列不进逐列命中率表（本页对它只展示不结算），颜色只是让历史里一眼看出准不准。
+ */
+function goalPickChip(row: Prediction, key: 'goal_pick' | 'goal_pick_mid') {
+  const hit = hitOf(row, key)
+  if (hit === true) return { color: 'teal', variant: 'flat' as const }
+  if (hit === false) return { color: 'grey', variant: 'tonal' as const }
+  return { color: row[key] === '买大球' ? 'warning' : 'info', variant: 'flat' as const }
+}
+
 function accuracyColor(accuracy: number, matched: number) {
   if (!matched) return 'default'
   if (accuracy >= 60) return 'success'
@@ -210,20 +248,14 @@ onMounted(() => fetchReport())
 
 <template>
   <div>
-    <h2 class="text-h5 font-weight-bold mb-2">终章 · 比赛预测与前瞻实测</h2>
-    <v-tabs v-model="tab" color="primary" density="comfortable" class="mb-4">
-      <v-tab value="spf">胜平负</v-tab>
-      <v-tab value="goals">大小球</v-tab>
-    </v-tabs>
+    <h2 class="text-h5 font-weight-bold mb-4">终章 · 比赛预测与前瞻实测</h2>
 
-    <FinaleGoals v-if="tab === 'goals'" />
-
-    <template v-else>
     <div class="d-flex flex-wrap align-center mb-4 ga-3">
       <div>
         <div class="text-body-2 text-medium-emphasis mt-1">
-          未来 {{ report?.horizon_days ?? 14 }} 天待赛比赛中命中「前端主推≥70%」信号的场次，赛前自动存档；比赛完赛后（拉回结果即可）自动逐列结算命中。
-          <span class="text-error font-weight-bold">红色=偏主队</span>、<span class="text-success font-weight-bold">绿色=偏客队</span>；主推概率、亚盘/大小球盘口与交易/模拟盈亏推荐仅随行展示，不参与预测。<b>大小球推荐</b>列：期望球数的<b>原值</b>与<b>截尾取整</b>（抹掉小数、不四舍五入）双双高于大小球盘口时显示<b>买大球</b>；若盘口正好是 <b>4 球</b>，则反过来显示<b>买小球</b>。两队无交锋记录的比赛不推荐。本页只展示、不结算。
+          今天起 {{ report?.horizon_days ?? 14 }} 天内命中「前端主推≥70%」信号的场次，赛前自动存档；比赛完赛后（拉回结果即可）自动逐列结算命中。
+          <b>今天的比赛全部保留</b>，已开赛/已完赛的照样列出并显示比分与对错，不会踢一场少一场（存档仍严格按开赛时间冻结，前瞻实测不受影响）。
+          <span class="text-error font-weight-bold">红色=偏主队</span>、<span class="text-success font-weight-bold">绿色=偏客队</span>；主推概率、亚盘/大小球盘口与交易/模拟盈亏推荐仅随行展示，不参与预测。两列<b>买小球</b>用同一个差值 =<b> 大小球盘口 − 球数综合均值</b>（历史场均与近期场均等权），按差值落在哪一段分开显示、<b>互斥</b>，一场比赛最多填一列，<b>只推小球——判到大球的场次两列都留空</b>：<b>超出±0.75</b> 列走【完赛基础统计】#33 的反向判断（差值 ≤−0.75，即均值高出盘口 0.75 球以上）；<b>±0.75内</b> 列走 #32 的常规判断（差值为正，即均值低于盘口）。本页只展示、不计入命中率。历史模式下：<b>赛果</b>列预测错的用<span class="text-purple font-weight-bold">紫色</span>标出；大小球推荐<b>打出</b>的用<span class="text-teal font-weight-bold">青色</span>、没打出的压成灰色，未结算的按方向上色（<span class="text-warning font-weight-bold">橙=买大</span>、<span class="text-info font-weight-bold">蓝=买小</span>）。
         </div>
       </div>
       <v-spacer />
@@ -278,12 +310,15 @@ onMounted(() => fetchReport())
         <v-col cols="12" md="3">
           <v-card color="primary" variant="tonal">
             <v-card-text>
-              <div class="text-body-2">{{ isHistory ? '区间内存档场次' : `待赛场次（${report.horizon_days}天内）` }}</div>
+              <div class="text-body-2">{{ isHistory ? '区间内存档场次' : `窗口内比赛（今天起${report.horizon_days}天）` }}</div>
               <div class="text-h4 font-weight-bold mt-1">
                 {{ (isHistory ? rows.length : report.upcoming_total).toLocaleString() }}
               </div>
               <div v-if="isHistory" class="text-caption text-medium-emphasis">
                 已结算 {{ settledRows.length }} 场 · 存档 {{ archiveRows.length }} / 回算 {{ recomputeRows.length }}
+              </div>
+              <div v-else class="text-caption text-medium-emphasis">
+                其中有预测 {{ rows.length }} 场（已完赛 {{ settledRows.length }}）
               </div>
             </v-card-text>
           </v-card>
@@ -409,10 +444,12 @@ onMounted(() => fetchReport())
                 <th>主队</th>
                 <th class="text-center">VS</th>
                 <th>客队</th>
-                <th v-if="isHistory" class="text-center">比分</th>
+                <th v-if="showResultColumns" class="text-center">比分</th>
                 <th class="text-center">预测</th>
+                <th v-if="showResultColumns" class="text-center">赛果</th>
                 <th>主推</th>
-                <th>大小球推荐</th>
+                <th>买小球·超出±0.75</th>
+                <th>买小球·±0.75内</th>
                 <th class="text-right">亚盘</th>
                 <th class="text-right">大小球</th>
                 <th>盈亏提示</th>
@@ -460,7 +497,7 @@ onMounted(() => fetchReport())
                       {{ p.guest }}
                     </span>
                   </td>
-                  <td v-if="isHistory" class="text-center text-no-wrap font-weight-bold">
+                  <td v-if="showResultColumns" class="text-center text-no-wrap font-weight-bold">
                     <span v-if="p.settled">{{ p.home_score }} - {{ p.guest_score }}</span>
                     <span v-else class="text-medium-emphasis font-weight-regular">未开赛</span>
                   </td>
@@ -469,15 +506,32 @@ onMounted(() => fetchReport())
                       {{ pickLabel(p.pick) }}
                     </v-chip>
                     <span v-else class="text-medium-emphasis">-</span>
-                    <span v-if="hitMark(p, 'pick')" class="ml-1 font-weight-bold" :class="hitMarkClass(p, 'pick')">{{ hitMark(p, 'pick') }}</span>
                   </td>
-                  <td class="text-no-wrap" :class="sigClass(p.sig_base)">
-                    <span v-if="p.sig_base">{{ p.sig_base }}</span>
+                  <td v-if="showResultColumns" class="text-center text-no-wrap">
+                    <v-chip
+                      v-if="p.settled && resultLabel(p.result)"
+                      v-bind="resultChip(p)"
+                      size="small"
+                      class="font-weight-bold"
+                      :title="hitOf(p, 'pick') === false ? '预测错了' : ''"
+                    >
+                      {{ resultLabel(p.result) }}
+                    </v-chip>
                     <span v-else class="text-medium-emphasis">-</span>
                   </td>
                   <td class="text-no-wrap">
-                    <v-chip v-if="p.goal_pick" :color="p.goal_pick === '买小球' ? 'info' : 'warning'" size="small" variant="flat">
+                    <span v-if="p.sig_base" :class="sigClass(p.sig_base)">{{ p.sig_base }}</span>
+                    <span v-else class="text-medium-emphasis">-</span>
+                  </td>
+                  <td class="text-no-wrap">
+                    <v-chip v-if="p.goal_pick" v-bind="goalPickChip(p, 'goal_pick')" size="small">
                       {{ p.goal_pick }}
+                    </v-chip>
+                    <span v-else class="text-medium-emphasis">-</span>
+                  </td>
+                  <td class="text-no-wrap">
+                    <v-chip v-if="p.goal_pick_mid" v-bind="goalPickChip(p, 'goal_pick_mid')" size="small">
+                      {{ p.goal_pick_mid }}
                     </v-chip>
                     <span v-else class="text-medium-emphasis">-</span>
                   </td>
@@ -507,7 +561,6 @@ onMounted(() => fetchReport())
           </v-table>
         </v-card-text>
       </v-card>
-    </template>
     </template>
   </div>
 </template>

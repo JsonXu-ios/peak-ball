@@ -110,6 +110,9 @@ const REMOVED_SIGNALS = new Set([
   'goals_split_w64', 'goals_split_w64_base65', 'goals_split_w64_base70',
   'goals_align_w64_hot_over', 'goals_align_w64_hot_under',
   'goals_split_w64_hot_over', 'goals_split_w64_hot_under',
+  // #32 的常规/反向分界从 ±1 改成 ±0.75 时换了 key。旧快照里那一行是按 ±1 算的，
+  // 留着会和新行并排显示成两个「32.」，重算一次就没了。
+  'goals_composite_gap1',
 ])
 
 // 快照缓存里的旧数据可能没有 market 字段：按信号 key 兜底归类，保证分组不塌成一堆。
@@ -123,6 +126,7 @@ function marketOf(signal: Signal): string {
     qiu_align_under: 'dxq', qiu_align_over: 'dxq',
     qiu_split_over: 'dxq', qiu_split_under: 'dxq',
     goals_rounded: 'dxq', goals_diff_band: 'dxq',
+    goals_composite_gap: 'dxq', goals_composite_gap_outer: 'dxq',
     history_goals: 'goals', recent_goals: 'goals', goals_composite: 'goals',
     pro_signal: 'spf', trade_comfort: 'spf', sim_trade_comfort: 'spf',
     history_handicap: 'spf', recent_handicap: 'spf', asian_composite: 'spf',

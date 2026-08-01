@@ -57,6 +57,7 @@ const menuItems = computed(() => [
     icon: 'mdi-chart-box-outline',
     children: [
       { title: '完赛基础统计', icon: 'mdi-chart-bar', to: '/statistics/matches' },
+      { title: '小球王', icon: 'mdi-crown', to: '/statistics/underking' },
       { title: '信号命中率总台', icon: 'mdi-target', to: '/statistics/cross' },
       { title: '最后一舞', icon: 'mdi-dance-ballroom', to: '/statistics/lastdance' },
       { title: '终章', icon: 'mdi-flag-checkered', to: '/statistics/finale' },

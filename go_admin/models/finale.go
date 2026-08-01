@@ -20,19 +20,27 @@ type FinalePrediction struct {
 	GuestLogo string `gorm:"size:255" json:"guest_logo"`
 
 	// 页面各列的展示文本，历史行用同一套模板原样渲染。
-	Pick      string `gorm:"size:8;comment:预测方向 home/away" json:"pick"`
-	SigBase   string `gorm:"size:32;comment:主推列" json:"sig_base"`
-	OuHeat    string `gorm:"size:32;comment:大小球热度列" json:"ou_heat"`
-	OuPick    string `gorm:"size:16;comment:球数倾向列" json:"ou_pick"`
-	ExpAh     string `gorm:"size:32;comment:期望让球列" json:"exp_ah"`
-	ExpOu     string `gorm:"size:32;comment:期望球数列" json:"exp_ou"`
-	AhLine    string `gorm:"size:16;comment:亚盘列" json:"ah_line"`
-	OuLine    string `gorm:"size:16;comment:大小球列" json:"ou_line"`
-	TradePick string `gorm:"size:8;comment:交易盈亏提示方向文本" json:"trade_pick"`
-	SimPick   string `gorm:"size:8;comment:模拟盈亏提示方向文本" json:"sim_pick"`
-	// GoalPick 期望球数原值与截尾取整双双判大球时为「买大球」（大小球盘口正好
-	// 4 球时反推「买小球」），否则为空。本页只展示，不结算。
-	GoalPick string `gorm:"size:8;comment:大小球推荐文本" json:"goal_pick"`
+	Pick    string `gorm:"size:8;comment:预测方向 home/away" json:"pick"`
+	SigBase string `gorm:"size:32;comment:主推列" json:"sig_base"`
+	// BaseProb 赛前那一刻的主推概率数值。SigBase 里本来就带这个数（「客胜 72.3%」），
+	// 单开一列是为了留个不用解析文本的原始值备查——页面目前不读它，但概率是赛前
+	// 冻结下来最有分析价值的一项，照常写入。
+	BaseProb  float64 `gorm:"comment:主推概率(%)" json:"base_prob"`
+	OuHeat    string  `gorm:"size:32;comment:大小球热度列" json:"ou_heat"`
+	OuPick    string  `gorm:"size:16;comment:球数倾向列" json:"ou_pick"`
+	ExpAh     string  `gorm:"size:32;comment:期望让球列" json:"exp_ah"`
+	ExpOu     string  `gorm:"size:32;comment:期望球数列" json:"exp_ou"`
+	AhLine    string  `gorm:"size:16;comment:亚盘列" json:"ah_line"`
+	OuLine    string  `gorm:"size:16;comment:大小球列" json:"ou_line"`
+	TradePick string  `gorm:"size:8;comment:交易盈亏提示方向文本" json:"trade_pick"`
+	SimPick   string  `gorm:"size:8;comment:模拟盈亏提示方向文本" json:"sim_pick"`
+	// 大小球推荐拆成互斥的两列（差值=盘口−球数综合均值，口径同「完赛基础统计」）：
+	//   GoalPick    |差值| ≥ 0.75 的超出段（#33 反向判断）
+	//   GoalPickMid |差值| < 0.75 的带内（#32 常规判断）
+	// 只推小球，取值为「买小球」或空。只展示，不进逐列命中率表。
+	//（旧存档里可能还留着按更早口径写下的「买大球」。）
+	GoalPick    string `gorm:"size:8;comment:买小球推荐(超出带)" json:"goal_pick"`
+	GoalPickMid string `gorm:"size:8;comment:买小球推荐(带内)" json:"goal_pick_mid"`
 
 	// 结算依据。让球/大小球各列必须用快照时的盘口线结算——事后盘口会变。
 	BaseDir     string   `gorm:"size:8;comment:主推方向 home/draw/away" json:"-"`
@@ -62,6 +70,10 @@ type FinalePrediction struct {
 	HitExpOu  *bool `gorm:"comment:期望球数列命中" json:"hit_exp_ou"`
 	HitTrade  *bool `gorm:"comment:交易盈亏反买命中" json:"hit_trade"`
 	HitSim    *bool `gorm:"comment:模拟盈亏反买命中" json:"hit_sim"`
+	// 两列大小球推荐各自是否打出。只用来给列表里的推荐上色，不进逐列命中率表
+	// （那张表按「本页只展示、不结算」的口径不收这两列）。
+	HitGoalPick    *bool `gorm:"comment:大小球推荐(超出带)命中" json:"hit_goal_pick"`
+	HitGoalPickMid *bool `gorm:"comment:大小球推荐(带内)命中" json:"hit_goal_pick_mid"`
 
 	CreatedAt time.Time `json:"-"`
 	UpdatedAt time.Time `json:"-"`

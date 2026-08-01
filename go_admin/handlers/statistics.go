@@ -78,37 +78,39 @@ func computeMatchStatistics(start, end string) (gin.H, error) {
 // 的玩法。#4/#5/#6 名字带“让球”，但命中=胜平负判断正确，所以归 spf；#8/#9/#10
 // 由交锋/近况球数期望驱动归 goals，而按盘口热度/背离结算的大小球信号归 dxq。
 var signalMarketMap = map[string]string{
-	"asian_heat":         "asian",
-	"goals_heat":         "dxq",
-	"qiu_heat":           "dxq",
-	"base70_goals":       "dxq",
-	"pro_signal":         "spf",
-	"trade_comfort":      "spf",
-	"sim_trade_comfort":  "spf",
-	"history_handicap":   "spf",
-	"recent_handicap":    "spf",
-	"asian_composite":    "spf",
-	"front_handicap_avg": "spf",
-	"line_discrepancy":   "asian",
-	"history_goals":      "goals",
-	"recent_goals":       "goals",
-	"goals_composite":    "goals",
-	"goals_discrepancy":  "dxq",
-	"warning_signals":    "mixed",
-	"deviation_signals":  "mixed",
-	"evil_cult":          "mixed",
-	"base_spf":           "spf",
-	"base_qiu":           "dxq",
-	"goals_align_under":  "dxq",
-	"goals_align_over":   "dxq",
-	"goals_split_over":   "dxq",
-	"goals_split_under":  "dxq",
-	"qiu_align_under":    "dxq",
-	"qiu_align_over":     "dxq",
-	"qiu_split_over":     "dxq",
-	"qiu_split_under":    "dxq",
-	"goals_rounded":      "dxq",
-	"goals_diff_band":    "dxq",
+	"asian_heat":                "asian",
+	"goals_heat":                "dxq",
+	"qiu_heat":                  "dxq",
+	"base70_goals":              "dxq",
+	"pro_signal":                "spf",
+	"trade_comfort":             "spf",
+	"sim_trade_comfort":         "spf",
+	"history_handicap":          "spf",
+	"recent_handicap":           "spf",
+	"asian_composite":           "spf",
+	"front_handicap_avg":        "spf",
+	"line_discrepancy":          "asian",
+	"history_goals":             "goals",
+	"recent_goals":              "goals",
+	"goals_composite":           "goals",
+	"goals_discrepancy":         "dxq",
+	"warning_signals":           "mixed",
+	"deviation_signals":         "mixed",
+	"evil_cult":                 "mixed",
+	"base_spf":                  "spf",
+	"base_qiu":                  "dxq",
+	"goals_align_under":         "dxq",
+	"goals_align_over":          "dxq",
+	"goals_split_over":          "dxq",
+	"goals_split_under":         "dxq",
+	"qiu_align_under":           "dxq",
+	"qiu_align_over":            "dxq",
+	"qiu_split_over":            "dxq",
+	"qiu_split_under":           "dxq",
+	"goals_rounded":             "dxq",
+	"goals_diff_band":           "dxq",
+	"goals_composite_gap":       "dxq",
+	"goals_composite_gap_outer": "dxq",
 }
 
 // annotateSignalMarkets 给每个信号贴上 market（命中赛果分类）字段，并按赛前方向
@@ -417,6 +419,11 @@ func buildSignalStatistics(matches []statisticsMatch, histories, pankous, odds m
 	recentGoalsSig := &statisticsSignal{}
 	goalsComposite := &statisticsSignal{}
 	goalsDiscrepancy := &statisticsSignal{}
+	// #32：拿【盘口 − 球数综合均值】这个差值当唯一依据，分常规段与反向段判方向。
+	goalsCompositeGap := &statisticsSignal{}
+	// #33：同一套判断，但把差值落在中间带（±statisticsCompositeGapBand 以内）的
+	// 比赛整场剔除，只留超出的那部分——就是 #32 的反向段单独拎出来看。
+	goalsCompositeGapOuter := &statisticsSignal{}
 	// #15~#18：期望球数与球数热度的方向关系，同向/反向 × 热度判大/判小四种组合各
 	// 一行。四行互斥且穷尽，合起来就是全部样本齐全且不走盘的比赛。
 	goalsAlignUnder := &statisticsSignal{} // 同向且热度判小球
@@ -700,6 +707,32 @@ func buildSignalStatistics(matches []statisticsMatch, histories, pankous, odds m
 			}
 			if composite, ok := statisticsAverage(historyGoals, hasHistory, recentGoals, hasRecentGoals); ok {
 				statisticsGoalSignal(goalsComposite, match, composite, ouLine)
+				// 32. 只看【盘口 − 球数综合均值】这一个差值，分两段判：
+				// 差值在 ±statisticsCompositeGapBand 以内走常规（均值低于盘口判小球、
+				// 高于判大球）；达到或超过就反过来——盘口比共识高出这么多，直觉该买小，
+				// 但 #30 的回测显示那种局面买小只有 25% 命中，所以反着跟市场买大。
+				if over, valid := statisticsOverOutcome(match, ouLine); valid {
+					gap := ouLine - composite
+					if pickOver, ok := statisticsCompositeGapPick(gap); ok {
+						detail := statisticsBaseDetail(match)
+						detail.Value = statisticsRound2(gap)
+						detail.Line = statisticsFormatLine(ouLine)
+						detail.Pick = statisticsOverLabel(pickOver)
+						detail.Result = statisticsOverLabel(over)
+						detail.Hit = pickOver == over
+						detail.ExpGoals = fmt.Sprintf("综合均值 %.2f", composite)
+						mode := "常规"
+						if math.Abs(gap) >= statisticsCompositeGapBand {
+							mode = "反向"
+						}
+						detail.HeatGoals = fmt.Sprintf("盘口−均值 %+.2f（%s）", gap, mode)
+						goalsCompositeGap.add(detail)
+						// 33. 同一条明细，只有超出中间带的才另记一份。
+						if mode == "反向" {
+							goalsCompositeGapOuter.add(detail)
+						}
+					}
+				}
 				if composite-ouLine >= statisticsGoalDiscrepancy {
 					if over, valid := statisticsOverOutcome(match, ouLine); valid {
 						detail := statisticsBaseDetail(match)
@@ -740,6 +773,29 @@ func buildSignalStatistics(matches []statisticsMatch, histories, pankous, odds m
 		recentGoalsSig.payload("recent_goals", "12. 近期平均球数", "两队最近5场场均总进球；判断口径同上。"),
 		goalsComposite.payload("goals_composite", "13. 球数综合均值", "取【历史平均球数】【近期平均球数】求平均(不含盘口线)；判断口径同上。"),
 		goalsDiscrepancy.payload("goals_discrepancy", "16. 期望球数高于大小球即时盘≥0.75", "球数综合均值高于当前大小球线≥0.75时纳入，判大球；命中=实际打出大球。"),
+		goalsCompositeGap.payload("goals_composite_gap",
+			fmt.Sprintf("32. 球数综合均值±%g（±%g 以内常规比较，超出则反向）",
+				statisticsCompositeGapBand, statisticsCompositeGapBand),
+			fmt.Sprintf("只看【当前大小球盘口 − 球数综合均值】这一个差值，分两段判："+
+				"①差值在 ±%g 以内 → 常规比较：均值低于盘口判小球、高于盘口判大球；"+
+				"②差值绝对值≥%g → 反过来：盘口比共识高出≥%g球判大球，盘口比共识低≥%g球判小球。"+
+				"例：盘口 2.5、均值 2.25 → 差值 +0.25 走常规 → 判小球；同样盘口 2.5、均值 1.75 → 差值 +0.75 进入反向段 → 判大球。"+
+				"球数综合均值=【历史平均球数】与【近期平均球数】的等权平均，不含盘口线，口径与 #13 完全相同。"+
+				"反向段的依据是 #30 的回测：盘口明显高出共识时买小只有 25%% 命中，所以那一段改成跟市场买大。"+
+				"命中=大小球方向正确，走盘（总进球正好等于盘口）与均值正好压在盘口上的比赛都不计入分母。"+
+				"上方的方向拆分表按 判大/判小 × 盘口线分组；明细里另列出该场的综合均值、差值，以及这场走的是常规段还是反向段。",
+				statisticsCompositeGapBand, statisticsCompositeGapBand,
+				statisticsCompositeGapBand, statisticsCompositeGapBand)),
+		goalsCompositeGapOuter.payload("goals_composite_gap_outer",
+			fmt.Sprintf("33. 球数综合均值±%g·只看超出段（剔除中间带）", statisticsCompositeGapBand),
+			fmt.Sprintf("与上一行同一个差值【当前大小球盘口 − 球数综合均值】、同一套判断，唯一区别是"+
+				"把差值落在 −%g ~ +%g 之间的比赛【整场剔除】，只统计超出这条带子的场次："+
+				"差值≥+%g（盘口比共识高出这么多）判大球，差值≤−%g（盘口比共识低这么多）判小球。"+
+				"也就是把上一行的「反向段」单独拎出来看——中间那批贴着盘口、方向本来就没什么把握的比赛不再稀释命中率。"+
+				"球数综合均值=【历史平均球数】与【近期平均球数】的等权平均，不含盘口线，口径与 #13 相同。"+
+				"命中=大小球方向正确，走盘不计入分母。⚠️ 本行的场次是上一行的子集，两行不能相加。",
+				statisticsCompositeGapBand, statisticsCompositeGapBand,
+				statisticsCompositeGapBand, statisticsCompositeGapBand)),
 		goalsAlignUnder.payload("goals_align_under", "17. 期望球数×球数热度同向·热度判小球", goalsDirCommon+
 			"本行取两者同向、且热度判小球的场次。推荐即判小球，命中=实际打出小球。"+goalsDirPartition),
 		goalsAlignOver.payload("goals_align_over", "18. 期望球数×球数热度同向·热度判大球", goalsDirCommon+
@@ -883,6 +939,31 @@ func statisticsDiffBucketPayload(key, title, definition string, buckets map[int]
 
 // statisticsGoalsDirText 把一个球数期望渲染成「判大球 3.73」，供明细里并排展示
 // 期望球数与球数热度各自的方向。
+// statisticsCompositeGapBand 是 #32 常规段与反向段的分界：差值落在 ±此值以内走
+// 常规比较，达到或超过就反过来判。调这一个数即可整体收紧/放宽。
+const statisticsCompositeGapBand = 0.75
+
+// statisticsCompositeGapPick 按【盘口 − 球数综合均值】的差值判大小球方向（#32）。
+//
+//	|差值| < 0.75：常规比较。均值低于盘口（差值为正）判小球，高于盘口判大球。
+//	|差值| ≥ 0.75：反过来。盘口比共识高出≥0.75球判大球，低≥0.75球判小球。
+//
+// 例：盘口 2.5、均值 2.25 → 差值 +0.25，常规 → 小球；均值 1.75 → 差值 +0.75，
+// 已到反向段 → 大球。均值正好压在盘口上时没有方向，返回 ok=false。
+func statisticsCompositeGapPick(gap float64) (pickOver, ok bool) {
+	switch {
+	case gap >= statisticsCompositeGapBand:
+		return true, true
+	case gap <= -statisticsCompositeGapBand:
+		return false, true
+	case gap > statisticsPushEpsilon:
+		return false, true
+	case gap < -statisticsPushEpsilon:
+		return true, true
+	}
+	return false, false
+}
+
 func statisticsGoalsDirText(value float64, over bool) string {
 	return "判" + statisticsOverLabel(over) + " " + strconv.FormatFloat(statisticsRound2(value), 'f', 2, 64)
 }

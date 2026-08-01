@@ -141,6 +141,11 @@ export const getDashboardStats = () =>
 export const getMatchStatistics = (params?: { start_date?: string; end_date?: string; refresh?: number }) =>
   api.get('/admin/statistics/matches', { params, timeout: 300000 })
 
+// ---- 小球王：完赛基础统计里所有大小球维度，只保留判小球方向的那部分 ----
+// 与完赛基础统计共用同一份快照，refresh=1 会同时刷新两个页面的数据。
+export const getUnderKingStatistics = (params?: { start_date?: string; end_date?: string; refresh?: number }) =>
+  api.get('/admin/statistics/underking', { params, timeout: 300000 })
+
 
 // ---- Cross Statistics（交叉信号分析）----
 export const getCrossStatistics = (params?: { days?: number; refresh?: number }) =>
@@ -154,7 +159,3 @@ export const getLastDanceStatistics = (params?: { refresh?: number }) =>
 // 默认 = 未来待赛；mode=history（可带 start/end）= 历史存档。
 export const getFinalePredictions = (params?: { mode?: string; start?: string; end?: string }) =>
   api.get('/admin/statistics/finale', { params, timeout: 120000 })
-
-// 终章的「大小球」选项卡：期望球数与球数热度反向的两种组合，都买大球。
-export const getFinaleGoalPredictions = (params?: { mode?: string; start?: string; end?: string }) =>
-  api.get('/admin/statistics/finale-goals', { params, timeout: 120000 })

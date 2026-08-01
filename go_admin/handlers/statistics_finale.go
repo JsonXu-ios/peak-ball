@@ -1,12 +1,13 @@
 // Package handlers: statistics_finale.go —「终章」比赛预测与前瞻实测存档。
 //
-// 扫描未来 finaleHorizonDays 天内的待赛比赛，输出前端主推≥70% 的场次（信号口径
-// 与「最后一舞」客胜命中率卡片完全一致）。主推方向+概率（sig_base）、大小球投注
-// 热度分档（ou_heat）、前端球数倾向（ou_pick）、期望让球综合均值（exp_ah）、期望
-// 球数综合均值（exp_ou）、亚盘/大小球盘口，以及交易盈亏/模拟盈亏（舒服项映射）的
-// 推荐，都只随行展示，不参与预测。信号取值照搬「完赛基础统计」的 13 / 15 / 6b /
-// 12b 维度，但 exp_ah 的结算改成对亚盘线判赢盘：期望让球是个让球数，2.70 的期望
-// 碰上 3.25 的盘口，主队赢球也照样输盘，按胜平负结算会把这一列判反。
+// 扫描今天起 finaleHorizonDays 天内的比赛（今天的全要，不管开没开赛、完没完赛），
+// 输出前端主推≥70% 的场次（信号口径与「最后一舞」客胜命中率卡片完全一致）。
+// 主推方向+概率（sig_base）、大小球投注热度分档（ou_heat）、前端球数倾向（ou_pick）、
+// 期望让球综合均值（exp_ah）、期望球数综合均值（exp_ou）、亚盘/大小球盘口、两列买
+// 小球推荐，以及交易盈亏/模拟盈亏（舒服项映射）的推荐，都只随行展示，不参与预测。
+// 信号取值照搬「完赛基础统计」的 13 / 15 / 6b / 12b / 32 / 33 维度，但 exp_ah 的结算
+// 改成对亚盘线判赢盘：期望让球是个让球数，2.70 的期望碰上 3.25 的盘口，主队赢球也
+// 照样输盘，按胜平负结算会把这一列判反。
 //
 // 每次请求顺带做两件事，不需要手动触发：
 //
@@ -14,7 +15,8 @@
 //     已开赛的行不再覆盖，赛前信号值就此冻结。
 //  2. 扫存档里 settled=0 且已完赛的行，用存档里的盘口线逐列判命中并写死。
 //
-// 待赛列表实时计算、不读存档；存档表只服务历史区间查询与命中率汇总。
+// 窗口列表的信号实时计算；只有已完赛的那些会去读一眼存档，有赛前快照就用快照渲染
+// （同一场比赛在本页和历史页看到的数字必须一致）。命中率汇总只认存档表。
 package handlers
 
 import (
@@ -33,6 +35,13 @@ import (
 // finaleHorizonDays 预测向前看的天数窗口。
 const finaleHorizonDays = 14
 
+// finaleProbThreshold 胜平负入选的最小主推概率。数值与「最后一舞」相同，但特意
+// 分开写：两页的门槛是各自的选择，改一边不该牵动另一边。
+//
+// 曾经放宽到 65% 试过一段，回算显示 65~70% 那一档只有 65.6%，远低于 ≥70% 的
+// 85.4%，已经改回来；那一档不再入选，也不再单独统计。
+const finaleProbThreshold = 70.0
+
 // finaleColumn 描述一个参与命中率统计的信号列：展示名，以及从存档行里取出该列
 // 命中结果的方法。
 type finaleColumn struct {
@@ -41,9 +50,8 @@ type finaleColumn struct {
 	Hit   func(models.FinalePrediction) *bool
 }
 
-// 大小球热度/期望让球/期望球数三列已从页面撤下，命中率也不再统计（大小球那套
-// 判断改由「大小球」选项卡专门跟踪）。它们的值仍照常算并写进存档，数据不断档，
-// 日后想恢复只要把对应行加回这里、并把列加回表格即可。
+// 大小球热度/期望让球/期望球数三列已从页面撤下，命中率也不再统计。它们的值仍照常
+// 算并写进存档，数据不断档，日后想恢复只要把对应行加回这里、并把列加回表格即可。
 var finaleColumns = []finaleColumn{
 	{"pick", "预测（主推≥70%）", func(p models.FinalePrediction) *bool { return p.HitPick }},
 	{"trade", "交易盈亏·反买", func(p models.FinalePrediction) *bool { return p.HitTrade }},
@@ -111,9 +119,7 @@ func GetFinaleStatistics(c *gin.Context) {
 		accuracy = finaleAccuracyOf(archived)
 		recomputeAccuracy = finaleAccuracyOf(recomputed)
 	} else {
-		for _, row := range rows {
-			predictions = append(predictions, row.payload())
-		}
+		predictions = finaleWindowRows(rows)
 		// 待赛模式下顶部卡片统计全部已结算存档。
 		var err error
 		accuracy, err = buildFinaleAccuracy("", "")
@@ -149,33 +155,30 @@ func firstError(errs ...error) string {
 
 // ---------- 待赛预测计算 ----------
 
-// finaleUpcomingWindow 返回待赛窗口的三个边界：今天、horizon 天后、当前时刻。
-func finaleUpcomingWindow() (today, horizon, cutoff string) {
+// finaleUpcomingWindow 返回窗口的两个边界：今天、horizon 天后。
+func finaleUpcomingWindow() (today, horizon string) {
 	now := time.Now()
-	return now.Format("2006-01-02"),
-		now.AddDate(0, 0, finaleHorizonDays).Format("2006-01-02"),
-		now.Format("2006-01-02 15:04")
+	return now.Format("2006-01-02"), now.AddDate(0, 0, finaleHorizonDays).Format("2006-01-02")
 }
 
-// finaleIsUpcoming 判断一场比赛是否还算「待赛」。
+// finaleInWindow 判断一场比赛是否落在窗口内：只看日期，不看开赛与否。
 //
-// 除了日期窗口与未结算，还必须【尚未开赛】：库里的 settled 要等结果拉回来才置位，
-// 凌晨踢完、结果还没回填的比赛在此之前 settled 仍是 0，只按日期筛的话它会一直挂
-// 在待赛列表里，看着像还能下注的场次。开赛时间一过就必须从待赛里消失——存档那边
-// 本来就是按开赛时间冻结的，这里对齐同一条线。
-func finaleIsUpcoming(match statisticsMatch, today, horizon, cutoff string) bool {
-	if match.ID == "" || match.Settled || match.Date < today || match.Date > horizon {
-		return false
-	}
-	// match_time 为空时无法判开赛，保守放行，交给日期窗口兜底。
-	return match.MatchTime == "" || match.MatchTime > cutoff
+// 早先这里还会剔掉「已开赛」和「已完赛」的场次，结果就是今天的比赛踢一场少一场，
+// 到了晚上列表基本清空。今天的就是今天的：全部留下，已经踢完的照常显示比分与对错，
+// 想只看还能下注的场次用页面上的筛选。
+//
+// 注意这只影响【显示】。存档那边（archiveFinalePredictions）仍严格按开赛时间冻结，
+// 已开赛的场次绝不会被写成赛前快照，前瞻实测的可信度不受影响。
+func finaleInWindow(match statisticsMatch, today, horizon string) bool {
+	return match.ID != "" && match.Date >= today && match.Date <= horizon
 }
 
 // finaleRow 是一场待赛比赛算出来的全部信号：展示文本与结算所需的方向分开存放。
 type finaleRow struct {
 	match statisticsMatch
 
-	pick      string // home/away，空=主推未达门槛
+	pick      string  // home/away，空=主推未达门槛
+	baseProb  float64 // 主推概率，随行存档备查
 	sigBase   string
 	ouHeat    string
 	ouPick    string
@@ -185,9 +188,12 @@ type finaleRow struct {
 	ouText    string
 	tradePick string // 展示文本（主胜/客胜）
 	simPick   string
-	// goalPick 期望球数原值与截尾取整双双判大球时为「买大球」（盘口正好 4 球时
-	// 反推「买小球」），否则为空。只展示，不在本页结算。
-	goalPick string
+	// 大小球推荐拆成互斥的两列，同一场比赛最多落进其中一列：
+	//   goalPick    差值超出 ±statisticsCompositeGapBand（#33 的反向段）
+	//   goalPickMid 差值落在带内（#32 的常规段）
+	// 本页只推小球，所以取值只有「买小球」或空。只展示，不进逐列命中率。
+	goalPick    string
+	goalPickMid string
 
 	baseDir   string
 	ouHeatDir string
@@ -205,26 +211,27 @@ type finaleRow struct {
 
 func (r finaleRow) payload() gin.H {
 	return gin.H{
-		"match_id":   r.match.ID,
-		"date":       r.match.Date,
-		"match_time": r.match.MatchTime,
-		"league":     r.match.League,
-		"home":       r.match.Home,
-		"guest":      r.match.Guest,
-		"home_logo":  r.match.HomeLogo,
-		"guest_logo": r.match.GuestLogo,
-		"pick":       r.pick,
-		"sig_base":   r.sigBase,
-		"ou_heat":    r.ouHeat,
-		"ou_pick":    r.ouPick,
-		"exp_ah":     r.expAh,
-		"exp_ou":     r.expOu,
-		"ah_line":    r.ahText,
-		"ou_line":    r.ouText,
-		"trade_pick": r.tradePick,
-		"sim_pick":   r.simPick,
-		"goal_pick":  r.goalPick,
-		"settled":    false,
+		"match_id":      r.match.ID,
+		"date":          r.match.Date,
+		"match_time":    r.match.MatchTime,
+		"league":        r.match.League,
+		"home":          r.match.Home,
+		"guest":         r.match.Guest,
+		"home_logo":     r.match.HomeLogo,
+		"guest_logo":    r.match.GuestLogo,
+		"pick":          r.pick,
+		"sig_base":      r.sigBase,
+		"ou_heat":       r.ouHeat,
+		"ou_pick":       r.ouPick,
+		"exp_ah":        r.expAh,
+		"exp_ou":        r.expOu,
+		"ah_line":       r.ahText,
+		"ou_line":       r.ouText,
+		"trade_pick":    r.tradePick,
+		"sim_pick":      r.simPick,
+		"goal_pick":     r.goalPick,
+		"goal_pick_mid": r.goalPickMid,
+		"settled":       false,
 	}
 }
 
@@ -233,9 +240,10 @@ func (r finaleRow) record(now time.Time) models.FinalePrediction {
 		MatchID: r.match.ID, Date: r.match.Date, MatchTime: r.match.MatchTime,
 		League: r.match.League, Home: r.match.Home, Guest: r.match.Guest,
 		HomeLogo: r.match.HomeLogo, GuestLogo: r.match.GuestLogo,
-		Pick: r.pick, SigBase: r.sigBase, OuHeat: r.ouHeat, OuPick: r.ouPick,
+		Pick: r.pick, BaseProb: statisticsRound2(r.baseProb), SigBase: r.sigBase, OuHeat: r.ouHeat, OuPick: r.ouPick,
 		ExpAh: r.expAh, ExpOu: r.expOu, AhLine: r.ahText, OuLine: r.ouText,
-		TradePick: r.tradePick, SimPick: r.simPick, GoalPick: r.goalPick,
+		TradePick: r.tradePick, SimPick: r.simPick,
+		GoalPick: r.goalPick, GoalPickMid: r.goalPickMid,
 		BaseDir: r.baseDir, OuHeatDir: r.ouHeatDir, OuPickDir: r.ouPickDir,
 		ExpAhDir: r.expAhDir, ExpOuDir: r.expOuDir, TradeDir: r.tradeDir, SimDir: r.simDir,
 		SnapshotAt: now,
@@ -251,20 +259,20 @@ func (r finaleRow) record(now time.Time) models.FinalePrediction {
 	return record
 }
 
-// buildFinaleUpcoming 计算未来窗口内每场待赛比赛的信号，返回待赛总场次与有预测
-// 的行（按开赛时间升序）。
+// buildFinaleUpcoming 计算窗口内每场比赛的信号，返回窗口内总场次与有预测的行
+// （按开赛时间升序）。窗口只按日期划，已开赛/已完赛的场次照样在内。
 func buildFinaleUpcoming() (int, []finaleRow, error) {
 	var rawMatches []map[string]interface{}
 	if err := statisticsDB().Table("moneys").Select(statisticsMoneysColumns).Find(&rawMatches).Error; err != nil {
 		return 0, nil, err
 	}
-	today, horizon, cutoff := finaleUpcomingWindow()
+	today, horizon := finaleUpcomingWindow()
 
 	upcoming := make([]statisticsMatch, 0, 64)
 	ids := make([]string, 0, 64)
 	for _, row := range rawMatches {
 		match := parseStatisticsMatch(row)
-		if !finaleIsUpcoming(match, today, horizon, cutoff) {
+		if !finaleInWindow(match, today, horizon) {
 			continue
 		}
 		upcoming = append(upcoming, match)
@@ -292,6 +300,49 @@ func buildFinaleUpcoming() (int, []finaleRow, error) {
 	return len(upcoming), rows, nil
 }
 
+// finaleWindowRows 把窗口内的行渲染成前端要的 payload。今天已经踢完的场次也留在
+// 列表里，得把比分与对错一并带上：
+//
+//   - 有赛前存档（且已结算）→ 直接用存档行。信号是赛前冻结的，比事后重算可信，
+//     而且与历史页看到的是同一份数据，不会两个页面数字打架。
+//   - 没有存档但已完赛 → 用当前值即时结算一份，只为了显示，不写库。
+//   - 尚未开赛 → 原样输出，没有比分也没有命中。
+func finaleWindowRows(rows []finaleRow) []gin.H {
+	archived := map[string]models.FinalePrediction{}
+	if ids := finaleRowIDs(rows); len(ids) > 0 {
+		var records []models.FinalePrediction
+		if err := statisticsDB().Where("match_id IN ?", ids).Find(&records).Error; err == nil {
+			for _, record := range records {
+				archived[record.MatchID] = record
+			}
+		}
+	}
+	now := time.Now()
+	payloads := make([]gin.H, 0, len(rows))
+	for _, row := range rows {
+		if record, ok := archived[row.match.ID]; ok && record.Settled {
+			payloads = append(payloads, finaleArchiveRow(record, "archive"))
+			continue
+		}
+		if row.match.Settled {
+			record := row.record(now)
+			settleFinaleRecord(&record, row.match, now)
+			payloads = append(payloads, finaleArchiveRow(record, "recompute"))
+			continue
+		}
+		payloads = append(payloads, row.payload())
+	}
+	return payloads
+}
+
+func finaleRowIDs(rows []finaleRow) []string {
+	ids := make([]string, 0, len(rows))
+	for _, row := range rows {
+		ids = append(ids, row.match.ID)
+	}
+	return ids
+}
+
 // buildFinaleRow 算出一场比赛的全部信号列。
 func buildFinaleRow(match statisticsMatch, historyRow, pankouRow, oddsRow map[string]interface{}) finaleRow {
 	row := finaleRow{match: match}
@@ -307,12 +358,12 @@ func buildFinaleRow(match statisticsMatch, historyRow, pankouRow, oddsRow map[st
 			baseDir, baseProb = "away", probabilities[2]
 		}
 	}
-	row.baseDir = baseDir
+	row.baseDir, row.baseProb = baseDir, baseProb
 	if baseDir != "" {
 		row.sigBase = fmt.Sprintf("%s %.1f%%", statisticsOutcomeLabel(baseDir), baseProb)
 	}
 	// 入选信号：前端主推≥70%，方向为平不预测。
-	if baseProb >= lastDanceProbThreshold && (baseDir == "home" || baseDir == "away") {
+	if baseProb >= finaleProbThreshold && (baseDir == "home" || baseDir == "away") {
 		row.pick = baseDir
 	}
 
@@ -392,20 +443,23 @@ func buildFinaleRow(match statisticsMatch, historyRow, pankouRow, oddsRow map[st
 				statisticsCoverLabel(coverHome), composite, statisticsRound2(ahLine))
 		}
 	}
-	// 大小球推荐：期望球数【原值】与【截尾取整】双双判大球才推荐。
+	// 大小球推荐：口径与「完赛基础统计」#32/#33 完全一致，按差值落在哪一段拆成两列，
+	// 且【只留买小球】——判到大球的场次两列都不填，本页不做大球推荐。
 	//
-	// 注意两个条件里截尾那个更严，实际上单独成立就够了——截尾只会让数值变小，
-	// trunc(期望) > 盘口 必然推出 期望 > 盘口。这里仍把两条都写出来，是为了让
-	// 口径与页面说明一一对应，日后哪一条要单独调整也好改。
-	//
-	// 盘口正好 4 球时反过来推荐买小球：4 球盘已经把期望顶到很高的位置，此时
-	// 「还判大球」多半是期望值本身偏高，按经验反着买。
-	if hasOU && hasHistory {
-		if expected, ok := statisticsGoalsExpected(historyGoals, hasHistory, recentGoals, hasRecentGoals); ok {
-			if expected > ouLine && math.Trunc(expected) > ouLine {
-				row.goalPick = "买大球"
-				if math.Abs(ouLine-4) < statisticsPushEpsilon {
+	// 差值 = 当前大小球盘口 − 球数综合均值（历史场均与近期场均的等权平均，不含盘口线）。
+	//   |差值| ≥ statisticsCompositeGapBand → 超出段（#33）：反着来。差值≤−0.75
+	//                                        （均值高出盘口这么多）才是买小球。
+	//   |差值| < statisticsCompositeGapBand → 带内（#32 常规段）：均值低于盘口
+	//                                        （差值为正）即买小球。
+	// 两段互斥，一场比赛最多填一列；判大球或均值正好压在盘口上时两列都空。
+	if hasOU {
+		if composite, ok := statisticsAverage(historyGoals, hasHistory, recentGoals, hasRecentGoals); ok {
+			gap := ouLine - composite
+			if pickOver, ok := statisticsCompositeGapPick(gap); ok && !pickOver {
+				if math.Abs(gap) >= statisticsCompositeGapBand {
 					row.goalPick = "买小球"
+				} else {
+					row.goalPickMid = "买小球"
 				}
 			}
 		}
@@ -481,8 +535,8 @@ func archiveFinalePredictions(rows []finaleRow) error {
 		Columns: []clause.Column{{Name: "match_id"}},
 		DoUpdates: clause.AssignmentColumns([]string{
 			"date", "match_time", "league", "home", "guest", "home_logo", "guest_logo",
-			"pick", "sig_base", "ou_heat", "ou_pick", "exp_ah", "exp_ou", "ah_line", "ou_line",
-			"trade_pick", "sim_pick", "goal_pick",
+			"pick", "base_prob", "sig_base", "ou_heat", "ou_pick", "exp_ah", "exp_ou", "ah_line", "ou_line",
+			"trade_pick", "sim_pick", "goal_pick", "goal_pick_mid",
 			"base_dir", "ou_heat_dir", "ou_pick_dir", "exp_ah_dir", "exp_ou_dir",
 			"trade_dir", "sim_dir", "ah_line_value", "ou_line_value", "snapshot_at", "updated_at",
 		}),
@@ -560,21 +614,26 @@ func settleFinaleRecord(record *models.FinalePrediction, match statisticsMatch, 
 	record.HitOuHeat = finaleOverHit(record.OuHeatDir, over, valid)
 	record.HitOuPick = finaleOverHit(record.OuPickDir, over, valid)
 	record.HitExpOu = finaleOverHit(record.ExpOuDir, over, valid)
+	// 大小球推荐单独结算一份，只为了在列表里把打出的和没打出的分开上色。
+	record.HitGoalPick = finaleOverHit(finaleGoalPickDirection(record.GoalPick), over, valid)
+	record.HitGoalPickMid = finaleOverHit(finaleGoalPickDirection(record.GoalPickMid), over, valid)
 
 	return map[string]interface{}{
-		"settled":     record.Settled,
-		"settled_at":  record.SettledAt,
-		"home_score":  record.HomeScore,
-		"guest_score": record.GuestScore,
-		"result":      record.Result,
-		"hit_pick":    record.HitPick,
-		"hit_base":    record.HitBase,
-		"hit_exp_ah":  record.HitExpAh,
-		"hit_trade":   record.HitTrade,
-		"hit_sim":     record.HitSim,
-		"hit_ou_heat": record.HitOuHeat,
-		"hit_ou_pick": record.HitOuPick,
-		"hit_exp_ou":  record.HitExpOu,
+		"settled":           record.Settled,
+		"settled_at":        record.SettledAt,
+		"home_score":        record.HomeScore,
+		"guest_score":       record.GuestScore,
+		"result":            record.Result,
+		"hit_pick":          record.HitPick,
+		"hit_base":          record.HitBase,
+		"hit_exp_ah":        record.HitExpAh,
+		"hit_trade":         record.HitTrade,
+		"hit_sim":           record.HitSim,
+		"hit_ou_heat":       record.HitOuHeat,
+		"hit_ou_pick":       record.HitOuPick,
+		"hit_exp_ou":        record.HitExpOu,
+		"hit_goal_pick":     record.HitGoalPick,
+		"hit_goal_pick_mid": record.HitGoalPickMid,
 	}
 }
 
@@ -584,6 +643,17 @@ func finaleOutcomeHit(direction, outcome string) *bool {
 	}
 	hit := direction == outcome
 	return &hit
+}
+
+// finaleGoalPickDirection 从大小球推荐文本反推方向，两列共用。
+func finaleGoalPickDirection(pick string) string {
+	switch pick {
+	case "买小球":
+		return "under"
+	case "买大球":
+		return "over"
+	}
+	return ""
 }
 
 func finaleOverHit(direction string, over, valid bool) *bool {
@@ -710,40 +780,43 @@ func finaleApplyOuHeatGate(record *models.FinalePrediction) {
 func finaleArchiveRow(record models.FinalePrediction, source string) gin.H {
 	finaleApplyOuHeatGate(&record)
 	return gin.H{
-		"source":      source,
-		"match_id":    record.MatchID,
-		"date":        record.Date,
-		"match_time":  record.MatchTime,
-		"league":      record.League,
-		"home":        record.Home,
-		"guest":       record.Guest,
-		"home_logo":   record.HomeLogo,
-		"guest_logo":  record.GuestLogo,
-		"pick":        record.Pick,
-		"sig_base":    record.SigBase,
-		"ou_heat":     record.OuHeat,
-		"ou_pick":     record.OuPick,
-		"exp_ah":      record.ExpAh,
-		"exp_ou":      record.ExpOu,
-		"ah_line":     record.AhLine,
-		"ou_line":     record.OuLine,
-		"trade_pick":  record.TradePick,
-		"sim_pick":    record.SimPick,
-		"goal_pick":   record.GoalPick,
-		"settled":     record.Settled,
-		"home_score":  record.HomeScore,
-		"guest_score": record.GuestScore,
-		"result":      record.Result,
-		"snapshot_at": record.SnapshotAt.Format("2006-01-02 15:04"),
+		"source":        source,
+		"match_id":      record.MatchID,
+		"date":          record.Date,
+		"match_time":    record.MatchTime,
+		"league":        record.League,
+		"home":          record.Home,
+		"guest":         record.Guest,
+		"home_logo":     record.HomeLogo,
+		"guest_logo":    record.GuestLogo,
+		"pick":          record.Pick,
+		"sig_base":      record.SigBase,
+		"ou_heat":       record.OuHeat,
+		"ou_pick":       record.OuPick,
+		"exp_ah":        record.ExpAh,
+		"exp_ou":        record.ExpOu,
+		"ah_line":       record.AhLine,
+		"ou_line":       record.OuLine,
+		"trade_pick":    record.TradePick,
+		"sim_pick":      record.SimPick,
+		"goal_pick":     record.GoalPick,
+		"goal_pick_mid": record.GoalPickMid,
+		"settled":       record.Settled,
+		"home_score":    record.HomeScore,
+		"guest_score":   record.GuestScore,
+		"result":        record.Result,
+		"snapshot_at":   record.SnapshotAt.Format("2006-01-02 15:04"),
 		"hits": gin.H{
-			"pick":     record.HitPick,
-			"sig_base": record.HitBase,
-			"ou_heat":  record.HitOuHeat,
-			"ou_pick":  record.HitOuPick,
-			"exp_ah":   record.HitExpAh,
-			"exp_ou":   record.HitExpOu,
-			"trade":    record.HitTrade,
-			"sim":      record.HitSim,
+			"pick":          record.HitPick,
+			"sig_base":      record.HitBase,
+			"ou_heat":       record.HitOuHeat,
+			"ou_pick":       record.HitOuPick,
+			"exp_ah":        record.HitExpAh,
+			"exp_ou":        record.HitExpOu,
+			"trade":         record.HitTrade,
+			"sim":           record.HitSim,
+			"goal_pick":     record.HitGoalPick,
+			"goal_pick_mid": record.HitGoalPickMid,
 		},
 	}
 }
