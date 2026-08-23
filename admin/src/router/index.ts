@@ -107,6 +107,12 @@ const routes: RouteRecordRaw[] = [
         component: () => import('@/views/statistics/Finale.vue'),
         meta: { title: '终章', icon: 'mdi-flag-checkered' },
       },
+      {
+        path: 'statistics/trend',
+        name: 'TrendBall',
+        component: () => import('@/views/statistics/TrendBall.vue'),
+        meta: { title: '趋势球', icon: 'mdi-chart-line' },
+      },
     ],
   },
   {

@@ -155,6 +155,11 @@ export const getCrossStatistics = (params?: { days?: number; refresh?: number })
 export const getLastDanceStatistics = (params?: { refresh?: number }) =>
   api.get('/admin/statistics/lastdance', { params, timeout: 300000 })
 
+// ---- Trend（趋势球·两队最近 N 场进球/丢球走势）----
+// mode=upcoming（默认）= 未开赛；mode=history（可带 start/end）= 已完赛回测。实时计算，不走快照。
+export const getTrendStatistics = (params?: { mode?: string; start_date?: string; end_date?: string; n?: number }) =>
+  api.get('/admin/statistics/trend', { params, timeout: 120000 })
+
 // ---- Finale（终章·未来比赛预测 + 前瞻实测存档）----
 // 默认 = 未来待赛；mode=history（可带 start/end）= 历史存档。
 export const getFinalePredictions = (params?: { mode?: string; start?: string; end?: string }) =>

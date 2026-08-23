@@ -82,4 +82,5 @@ func SetupProtectedRoutes(r *gin.RouterGroup) {
 	r.GET("/statistics/lastdance", handlers.GetLastDanceStatistics)
 	r.GET("/statistics/finale", handlers.GetFinaleStatistics)
 	r.GET("/statistics/finale-goals", handlers.GetFinaleGoalStatistics)
+	r.GET("/statistics/trend", handlers.GetTrendStatistics)
 }
