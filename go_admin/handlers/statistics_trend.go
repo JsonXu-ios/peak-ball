@@ -1,8 +1,8 @@
 // Package handlers: statistics_trend.go 趋势球——两队各自最近 N 场的进球/丢球走势。
 //
-// 数据来源优先级：history_moneys.recent_*_list（采集器给的近期战绩，固定 10 场）；
-// 该字段自 2026-05-27 之后基本为空，因此缺失时退回用 moneys 表里本库已完赛的
-// 比赛按球队自拼。两种来源都只取开赛时间之前的比赛，避免把未来信息算进走势。
+// 数据来源优先级：history_moneys.recent_*_list（采集器给的近期战绩，固定 10 场，
+// 由 crawler.go 的 upsertCrawlerHistory 拆列写入）；缺失时退回用 moneys 表里
+// 本库已完赛的比赛按球队自拼。两种来源都只取开赛时间之前的比赛，避免把未来信息算进走势。
 package handlers
 
 import (
@@ -69,14 +69,17 @@ type trendTeam struct {
 }
 
 type trendMatchReport struct {
-	MatchID     string    `json:"match_id"`
-	Date        string    `json:"date"`
-	MatchTime   string    `json:"match_time"`
-	League      string    `json:"league"`
-	State       string    `json:"state"`
-	Settled     bool      `json:"settled"`
-	Home        trendTeam `json:"home"`
-	Guest       trendTeam `json:"guest"`
+	MatchID   string    `json:"match_id"`
+	Date      string    `json:"date"`
+	MatchTime string    `json:"match_time"`
+	League    string    `json:"league"`
+	State     string    `json:"state"`
+	Settled   bool      `json:"settled"`
+	Home      trendTeam `json:"home"`
+	Guest     trendTeam `json:"guest"`
+	// 两队历史交锋（against_list），分别按主队/客队视角换算进球丢球，供明细区画走势
+	HomeAgainst  trendTeam `json:"home_against"`
+	GuestAgainst trendTeam `json:"guest_against"`
 	CombinedAvg float64   `json:"combined_avg"` // 两队近期场均总球数的均值
 	Tag         string    `json:"tag"`          // 大球倾向/小球倾向/中性/样本不足
 	Sufficient  bool      `json:"sufficient"`   // 两队样本都达到 N
@@ -327,6 +330,17 @@ func trendBuildTeam(teamID int64, name, logo string, historyList interface{}, in
 	return team
 }
 
+// trendAgainstTeam 把两队历史交锋记录换算成 teamID 视角的走势；只取开赛前的交锋，最多 trendMaxN 场。
+func trendAgainstTeam(teamID int64, name, logo string, againstRaw interface{}, before string) trendTeam {
+	team := trendTeam{TeamID: teamID, Name: name, Logo: logo, Want: trendMaxN, Source: "none", List: []trendRecord{}}
+	if list := trendLastN(trendHistoryRecords(againstRaw, teamID, name), before, trendMaxN); len(list) > 0 {
+		team.List, team.Source = list, "history"
+	}
+	team.Sample = len(team.List)
+	team.Summary = trendSummarize(team.List)
+	return team
+}
+
 func trendTag(home, guest trendTeam, n int) (float64, string, bool) {
 	sufficient := home.Sample >= n && guest.Sample >= n
 	if home.Sample == 0 || guest.Sample == 0 {
@@ -345,11 +359,16 @@ func trendTag(home, guest trendTeam, n int) (float64, string, bool) {
 	return combined, "中性", true
 }
 
-// buildTrendReport 对 targets 中每场比赛生成两队走势。
+// buildTrendReport 对 targets 中每场比赛生成两队走势；
+// 两队没有历史交锋记录（against_list 为空）的比赛直接剔除。
 func buildTrendReport(targets []trendMatch, index map[int64][]trendRecord, historyByMatch map[string]map[string]interface{}, n int) []trendMatchReport {
 	reports := make([]trendMatchReport, 0, len(targets))
 	for _, match := range targets {
 		history := historyByMatch[match.ID]
+		againstRaw := statisticsValue(history, "against_list", "againstList")
+		if len(statisticsHistoryList(againstRaw)) == 0 {
+			continue
+		}
 		var homeHist, guestHist interface{}
 		if history != nil {
 			homeHist = statisticsValue(history, "recent_home_list", "recentHomeList")
@@ -361,6 +380,8 @@ func buildTrendReport(targets []trendMatch, index map[int64][]trendRecord, histo
 		report := trendMatchReport{
 			MatchID: match.ID, Date: match.Date, MatchTime: match.MatchTime, League: match.League, State: match.State, Settled: match.Settled,
 			Home: home, Guest: guest, CombinedAvg: combined, Tag: tag, Sufficient: sufficient,
+			HomeAgainst:  trendAgainstTeam(match.HomeTeamID, match.Home, match.HomeLogo, againstRaw, match.SortKey),
+			GuestAgainst: trendAgainstTeam(match.GuestTeamID, match.Guest, match.GuestLogo, againstRaw, match.SortKey),
 		}
 		if match.Settled {
 			report.HomeScore, report.GuestScore = match.HomeScore, match.GuestScore
@@ -429,7 +450,7 @@ func computeTrendStatistics(mode, start, end string, n int) (gin.H, error) {
 		targets = append(targets, match)
 		ids = append(ids, match.ID)
 	}
-	historyByMatch := loadStatisticsRows("history_moneys", "match_id, recent_home_list, recent_guest_list", ids)
+	historyByMatch := loadStatisticsRows("history_moneys", "match_id, against_list, recent_home_list, recent_guest_list", ids)
 	reports := buildTrendReport(targets, index, historyByMatch, n)
 
 	summary := gin.H{

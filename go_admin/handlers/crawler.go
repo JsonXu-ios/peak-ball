@@ -845,7 +845,7 @@ func crawlHistory(ctx *crawlContext, matchID string) error {
 		return err
 	}
 
-	if err := upsertCrawlerJSON("history_moneys", "league_stat", matchID, string(body)); err != nil {
+	if err := upsertCrawlerHistory(matchID, string(body)); err != nil {
 		ctx.markFailed(matchID, err)
 		return err
 	}
@@ -1275,9 +1275,16 @@ func historyRankColumn() (string, error) {
 
 func databaseColumnExists(tableName string, columnName string) bool {
 	allowed := map[string]map[string]bool{
-		"history_moneys": {"against": true, "date": true, "future": true, "league_stat": true, "rank": true, "rank_data": true, "recent": true},
-		"odds_moneys":    {"data": true, "date": true, "sporttery_trade": true},
-		"pankou_moneys":  {"asia_data": true, "date": true},
+		"history_moneys": {
+			"against": true, "date": true, "future": true, "league_stat": true, "rank": true, "rank_data": true, "recent": true,
+			// history 接口拆列写入的各节（见 upsertCrawlerHistory）
+			"against_summary": true, "against_list": true,
+			"recent_home_summary": true, "recent_home_list": true,
+			"recent_guest_summary": true, "recent_guest_list": true,
+			"league_summary": true, "future_home": true, "future_guest": true,
+		},
+		"odds_moneys":   {"data": true, "date": true, "sporttery_trade": true},
+		"pankou_moneys": {"asia_data": true, "date": true},
 		"moneys": {
 			"created_at":    true,
 			"date":          true,
@@ -1315,6 +1322,83 @@ func databaseColumnExists(tableName string, columnName string) bool {
 		columnName,
 	).Scan(&count)
 	return count > 0
+}
+
+// crawlerHistoryResponse 是 history 接口返回体里需要拆列入库的各节，
+// 与 go_crawler 的 ConvertHistoryToHistoryMoney 保持同一列映射；
+// rank 节不在此入库，rank_data 列由 crawlRank（/rank 接口）负责。
+type crawlerHistoryResponse struct {
+	LeagueStat json.RawMessage `json:"leagueStat"`
+	Against    struct {
+		Summary json.RawMessage `json:"summary"`
+		List    json.RawMessage `json:"list"`
+	} `json:"against"`
+	Recent struct {
+		Home  crawlerHistoryRecent `json:"home"`
+		Guest crawlerHistoryRecent `json:"guest"`
+	} `json:"recent"`
+	Future struct {
+		Home  json.RawMessage `json:"home"`
+		Guest json.RawMessage `json:"guest"`
+	} `json:"future"`
+	LeagueSummary json.RawMessage `json:"leagueSummary"`
+}
+
+type crawlerHistoryRecent struct {
+	Summary json.RawMessage `json:"summary"`
+	List    json.RawMessage `json:"list"`
+}
+
+func crawlerJSONSectionEmpty(raw json.RawMessage) bool {
+	text := strings.TrimSpace(string(raw))
+	return text == "" || text == "null" || text == "{}" || text == "[]"
+}
+
+// upsertCrawlerHistory 把 history 接口返回体按节拆列写入 history_moneys：
+// recent_*_list / against_list 等列是趋势球及各统计页的第一优先数据源，
+// league_stat 只存 leagueStat 节。返回体解析失败时退回旧行为（整包存进
+// league_stat），至少保住 hasExistingCrawlerData 的已采集标记和 blob 兜底读取。
+func upsertCrawlerHistory(matchID string, body string) error {
+	var parsed crawlerHistoryResponse
+	if err := json.Unmarshal([]byte(body), &parsed); err != nil {
+		return upsertCrawlerJSON("history_moneys", "league_stat", matchID, body)
+	}
+
+	sections := map[string]json.RawMessage{
+		"league_stat":          parsed.LeagueStat,
+		"against_summary":      parsed.Against.Summary,
+		"against_list":         parsed.Against.List,
+		"recent_home_summary":  parsed.Recent.Home.Summary,
+		"recent_home_list":     parsed.Recent.Home.List,
+		"recent_guest_summary": parsed.Recent.Guest.Summary,
+		"recent_guest_list":    parsed.Recent.Guest.List,
+		"league_summary":       parsed.LeagueSummary,
+		"future_home":          parsed.Future.Home,
+		"future_guest":         parsed.Future.Guest,
+	}
+	updates := map[string]interface{}{}
+	for column, raw := range sections {
+		if crawlerJSONSectionEmpty(raw) || !databaseColumnExists("history_moneys", column) {
+			continue
+		}
+		updates[column] = string(raw)
+	}
+	if updates["league_stat"] == nil || len(updates) == 1 {
+		// leagueStat 节缺失，或其它节一列都没能写入（列不存在/未放行）时整包兜底，
+		// 保证 against/recent 数据不丢，blob 读取方仍可回退解析。
+		updates["league_stat"] = body
+	}
+
+	var count int64
+	database.DB.Table("history_moneys").Where("match_id = ?", matchID).Count(&count)
+	if count == 0 {
+		updates["match_id"] = matchID
+		if databaseColumnExists("history_moneys", "date") {
+			updates["date"] = crawlerMatchDate(matchID)
+		}
+		return database.DB.Table("history_moneys").Create(updates).Error
+	}
+	return database.DB.Table("history_moneys").Where("match_id = ?", matchID).Updates(updates).Error
 }
 
 func upsertCrawlerJSON(tableName string, columnName string, matchID string, body string) error {

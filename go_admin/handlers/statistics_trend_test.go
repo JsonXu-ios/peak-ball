@@ -84,6 +84,22 @@ func TestTrendHistorySourcePreferred(t *testing.T) {
 	}
 }
 
+func TestTrendSkipsMatchesWithoutHeadToHead(t *testing.T) {
+	targets := []trendMatch{
+		parseTrendMatch(trendRow("1", "2026-08-01", "2026-08-01 20:00", 10, 20, 0, 0, 0, 0, false)),
+		parseTrendMatch(trendRow("2", "2026-08-01", "2026-08-01 21:00", 30, 40, 0, 0, 0, 0, false)),
+		parseTrendMatch(trendRow("3", "2026-08-01", "2026-08-01 22:00", 50, 60, 0, 0, 0, 0, false)),
+	}
+	historyByMatch := map[string]map[string]interface{}{
+		"1": {"against_list": `[{"matchTime":"2026-06-01 19:00","home":"H1","guest":"G1","goal":[1,0]}]`},
+		"2": {"against_list": `[]`}, // 有行但交锋为空，同样剔除
+	}
+	reports := buildTrendReport(targets, map[int64][]trendRecord{}, historyByMatch, 5)
+	if len(reports) != 1 || reports[0].MatchID != "1" {
+		t.Fatalf("expected only match 1 kept, got %+v", reports)
+	}
+}
+
 func TestTrendTagAndHit(t *testing.T) {
 	mk := func(totals ...int) trendTeam {
 		list := make([]trendRecord, 0, len(totals))

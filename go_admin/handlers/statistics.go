@@ -1917,6 +1917,9 @@ func statisticsText(value interface{}) string {
 		return string(typed)
 	case time.Time:
 		return typed.Format("2006-01-02")
+	case float64:
+		// JSON 里的数字型 id（如 matchId）解出来是 float64，避免 fmt.Sprint 输出科学计数法
+		return strconv.FormatFloat(typed, 'f', -1, 64)
 	}
 	return strings.TrimSpace(fmt.Sprint(value))
 }
