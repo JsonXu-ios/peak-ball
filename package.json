@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "vite",
-    "tunnel": "npm run build && vite preview --host 0.0.0.0 --port 5173 --strictPort",
+    "tunnel": "npm run build && vite preview --host 0.0.0.0 --port 25173 --strictPort",
     "build": "vue-tsc && vite build",
     "preview": "vite preview"
   },

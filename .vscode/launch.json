@@ -23,7 +23,8 @@
       "program": "${workspaceFolder}/go_server",
       "cwd": "${workspaceFolder}/go_server",
       "env": {
-        "GO_SERVER_ADDR": ":18080",
+        "GO_SERVER_ADDR": ":28080",
+        "DB_AUTO_MIGRATE": "false",
         "GO_SERVER_DSN": "root:123456@tcp(127.0.0.1:3306)/football_data?charset=utf8mb4&parseTime=True&loc=Local",
         "FOOTBALL_IMG_DIR": "${workspaceFolder}/public/footballimg"
       }
@@ -36,7 +37,9 @@
       "program": "${workspaceFolder}/go_admin",
       "cwd": "${workspaceFolder}/go_admin",
       "env": {
-        "ADMIN_SERVER_ADDR": ":8081",
+        "ADMIN_SERVER_ADDR": ":28081",
+        "DB_AUTO_MIGRATE": "false",
+        "ANALYSIS_API_BASE_URL": "http://127.0.0.1:28080/api",
         "DB_HOST": "127.0.0.1",
         "DB_PORT": "3306",
         "DB_USER": "root",

@@ -3,11 +3,13 @@ package config
 
 import (
 	"os"
+	"strconv"
+	"strings"
 )
 
 var (
 	// ServerAddr is the address the server will listen on
-	ServerAddr = getEnv("ADMIN_SERVER_ADDR", ":8081")
+	ServerAddr = getEnv("ADMIN_SERVER_ADDR", ":28081")
 
 	// DBHost is the database host
 	DBHost = getEnv("DB_HOST", "127.0.0.1")
@@ -24,6 +26,9 @@ var (
 	// DBName is the database name
 	DBName = getEnv("DB_NAME", "football_data")
 
+	// AutoMigrateEnabled requires explicit opt-in before changing schemas.
+	AutoMigrateEnabled = getBoolEnv("DB_AUTO_MIGRATE")
+
 	// JWTSecret is the secret key for JWT token
 	JWTSecret = getEnv("JWT_SECRET", "admin_secret_key_change_in_production")
 
@@ -34,7 +39,7 @@ var (
 	AnalysisRuleSnapshotPath = getEnv("ANALYSIS_RULE_SNAPSHOT_PATH", "../go_server/data/analysis_rule_snapshot.json")
 
 	// AnalysisAPIBaseURL points to the public analysis API used for rule snapshot generation.
-	AnalysisAPIBaseURL = getEnv("ANALYSIS_API_BASE_URL", "http://127.0.0.1:18080/api")
+	AnalysisAPIBaseURL = getEnv("ANALYSIS_API_BASE_URL", "http://127.0.0.1:28080/api")
 )
 
 func getEnv(key, defaultValue string) string {
@@ -42,4 +47,9 @@ func getEnv(key, defaultValue string) string {
 		return value
 	}
 	return defaultValue
+}
+
+func getBoolEnv(key string) bool {
+	value, err := strconv.ParseBool(strings.TrimSpace(os.Getenv(key)))
+	return err == nil && value
 }

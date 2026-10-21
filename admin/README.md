@@ -2,13 +2,17 @@
 
 基于 **Vue 3 + Vuetify 3 + Pinia** (前端) 和 **Go Gin + GORM + MySQL** (后端) 的完整管理后台系统。
 
+当前原始数据位于 Docker 容器 `Mysql` 的 `football_data`，连接配置统一为 `127.0.0.1:3306`。Windows MySQL 已关闭，端口保持 `3306`。默认 `DB_AUTO_MIGRATE=false`，不执行自动建表或改表；现有原库不按下文的新库初始化步骤导入种子数据。
+
+历史排查时，Windows 与 Docker 曾分别响应 IPv4 `127.0.0.1:3306` 和 IPv6 `[::1]:3306`，造成数据源混淆；这是当时的监听状态，当前默认连接不再使用 IPv6。
+
 ## 系统架构
 
 ```
-admin/          → 前端 Vue 3 + Vuetify 3 管理后台 (端口 5174)
-go_admin/       → 后端 Go Gin Admin API 服务 (端口 8081)
+admin/          → 前端 Vue 3 + Vuetify 3 管理后台 (端口 25174)
+go_admin/       → 后端 Go Gin Admin API 服务 (端口 28081)
 go_crawler/     → 数据爬虫 (已有)
-go_server/      → 前台 API 服务 (已有, 端口 8080)
+go_server/      → 前台 API 服务 (已有, 端口 28080)
 ```
 
 ## 功能模块
@@ -58,7 +62,7 @@ go mod tidy
 go run main.go
 ```
 
-服务器将在 `http://localhost:8081` 启动，首次运行会自动创建表结构。
+服务器将在 `http://localhost:28081` 启动，首次运行会自动创建表结构。
 
 ### 3. 导入初始数据
 
@@ -74,7 +78,7 @@ npm install
 npm run dev
 ```
 
-访问 `http://localhost:5174`
+访问 `http://localhost:25174`
 
 ### 5. 默认登录
 
@@ -84,7 +88,7 @@ npm run dev
 | editor | admin123 | 内容管理员 |
 | viewer | admin123 | 只读用户 |
 
-> ⚠️ **注意**: 首次使用 seed.sql 前需要先启动一次 go_admin 服务让 GORM 自动建表，然后再导入 seed.sql。
+> 上述初始化内容仅供另外的新建空白环境参考。当前 Docker 原库保留现有表和数据，`DB_AUTO_MIGRATE=false`，不执行自动建表或种子导入。
 
 ## 技术栈
 

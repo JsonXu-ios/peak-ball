@@ -14,13 +14,13 @@ export default defineConfig({
     },
   },
   server: {
-    port: 5174,
+    port: 25174,
     strictPort: true,
     host: true,
     allowedHosts: ['zq1283fj623.vicp.fun', '.lazyperson.top'],
     proxy: {
       '/api': {
-        target: 'http://localhost:8081',
+        target: 'http://localhost:28081',
         changeOrigin: true,
         // 摘掉浏览器的 Origin 头：经代理的请求对后端而言就是同源请求，
         // 后端 CORS 白名单不再参与，换任何访问域名/IP 都不会再 403。
@@ -29,13 +29,18 @@ export default defineConfig({
         },
       },
       '/footballimg': {
-        target: 'http://localhost:18080',
+        target: 'http://localhost:28080',
         changeOrigin: true,
       },
       '/images': {
-        target: 'http://localhost:18080',
+        target: 'http://localhost:28080',
         changeOrigin: true,
       },
     },
+  },
+  preview: {
+    port: 25174,
+    strictPort: true,
+    host: true,
   },
 })

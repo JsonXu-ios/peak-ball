@@ -76,6 +76,7 @@ type HistoryMoney struct {
 	RankData           datatypes.JSON `gorm:"type:json" json:"rankData"`
 	FutureHome         datatypes.JSON `gorm:"type:json" json:"futureHome"`
 	FutureGuest        datatypes.JSON `gorm:"type:json" json:"futureGuest"`
+	CapturedAt         *time.Time     `gorm:"type:datetime(3)" json:"capturedAt"`
 	CreatedAt          time.Time      `json:"createdAt"`
 	UpdatedAt          time.Time      `json:"updatedAt"`
 }
@@ -93,6 +94,7 @@ type OddsMoney struct {
 	Pinnacle       datatypes.JSON `gorm:"type:json" json:"pinnacle"`
 	SportteryTrade datatypes.JSON `gorm:"type:json" json:"sportteryTrade"`
 	CompanyCount   int            `json:"companyCount"`
+	CapturedAt     *time.Time     `gorm:"type:datetime(3)" json:"capturedAt"`
 	CreatedAt      time.Time      `json:"createdAt"`
 	UpdatedAt      time.Time      `json:"updatedAt"`
 }
@@ -108,6 +110,7 @@ type PankouMoney struct {
 	Bet365Dxq  datatypes.JSON `gorm:"type:json" json:"bet365Dxq"`
 	AsiaCount  int            `json:"asiaCount"`
 	DxqCount   int            `json:"dxqCount"`
+	CapturedAt *time.Time     `gorm:"type:datetime(3)" json:"capturedAt"`
 	CreatedAt  time.Time      `json:"createdAt"`
 	UpdatedAt  time.Time      `json:"updatedAt"`
 }

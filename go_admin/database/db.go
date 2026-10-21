@@ -4,6 +4,7 @@ package database
 import (
 	"fmt"
 	"log"
+	"net"
 	"os"
 	"time"
 
@@ -20,11 +21,10 @@ var DB *gorm.DB
 
 // Init initializes the database connection
 func Init() error {
-	dsn := fmt.Sprintf("%s:%s@tcp(%s:%s)/%s?charset=utf8mb4&parseTime=True&loc=Local",
+	dsn := fmt.Sprintf("%s:%s@tcp(%s)/%s?charset=utf8mb4&parseTime=True&loc=Local",
 		config.DBUser,
 		config.DBPassword,
-		config.DBHost,
-		config.DBPort,
+		net.JoinHostPort(config.DBHost, config.DBPort),
 		config.DBName,
 	)
 
@@ -46,7 +46,16 @@ func Init() error {
 	}
 
 	DB = db
-	log.Println("Database connection established")
+	var identity struct {
+		DatabaseName string
+		Version      string
+		Hostname     string
+		Port         string
+	}
+	if err := DB.Raw("SELECT DATABASE() AS database_name, VERSION() AS version, @@hostname AS hostname, @@port AS port").Scan(&identity).Error; err != nil {
+		return fmt.Errorf("reading database identity: %w", err)
+	}
+	log.Printf("Database connected: database=%s version=%s hostname=%s port=%s", identity.DatabaseName, identity.Version, identity.Hostname, identity.Port)
 	return nil
 }
 

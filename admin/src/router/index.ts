@@ -84,6 +84,18 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '统计分析', icon: 'mdi-chart-box-outline' },
       },
       {
+        path: 'statistics/draw',
+        name: 'DrawAnalysis',
+        component: () => import('@/views/statistics/DrawAnalysis.vue'),
+        meta: { title: '平局模型验证', icon: 'mdi-scale-balance' },
+      },
+      {
+        path: 'statistics/draw-history',
+        name: 'DrawHistory',
+        component: () => import('@/views/statistics/DrawHistory.vue'),
+        meta: { title: '平局比赛观察', icon: 'mdi-soccer-field' },
+      },
+      {
         path: 'statistics/underking',
         name: 'UnderKing',
         component: () => import('@/views/statistics/UnderKing.vue'),

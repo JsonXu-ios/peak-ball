@@ -23,7 +23,7 @@ func main() {
 
 	// CORS middleware
 	r.Use(cors.New(cors.Config{
-		AllowOrigins:     []string{"http://localhost:5173", "http://localhost:3000"},
+		AllowOrigins:     []string{"http://localhost:25173", "http://127.0.0.1:25173", "http://localhost:25174", "http://127.0.0.1:25174"},
 		AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
 		AllowHeaders:     []string{"Origin", "Content-Type", "Authorization"},
 		AllowCredentials: true,
@@ -50,6 +50,16 @@ func main() {
 		api.GET("/match/:id/insight", handlers.GetMatchInsight)
 		api.POST("/analysis/rule-snapshot/generate", handlers.GenerateAnalysisRuleSnapshot)
 		api.GET("/analysis/match/:id", handlers.GetAnalysisDetail)
+
+		// Independent draw model: pre-match previews, immutable predictions and evaluation.
+		api.GET("/draw/matches", handlers.GetDrawMatches)
+		api.POST("/draw/generate", handlers.GenerateDrawPredictions)
+		api.GET("/draw/stats", handlers.GetDrawStats)
+		api.POST("/draw/train", handlers.TrainDrawModel)
+		api.GET("/draw/history", handlers.GetDrawHistory)
+		api.GET("/draw/observations", handlers.GetDrawObservations)
+		api.POST("/draw/history/rebuild", handlers.RebuildDrawHistory)
+		api.POST("/draw/history/calibrate", handlers.CalibrateDrawHistory)
 
 		// Owner pick recording (blind backfill: entry rows hide real results)
 		api.GET("/picks/entry", handlers.GetPickEntryMatches)

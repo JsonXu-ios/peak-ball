@@ -1277,14 +1277,15 @@ func databaseColumnExists(tableName string, columnName string) bool {
 	allowed := map[string]map[string]bool{
 		"history_moneys": {
 			"against": true, "date": true, "future": true, "league_stat": true, "rank": true, "rank_data": true, "recent": true,
+			"captured_at": true, "created_at": true, "updated_at": true,
 			// history 接口拆列写入的各节（见 upsertCrawlerHistory）
 			"against_summary": true, "against_list": true,
 			"recent_home_summary": true, "recent_home_list": true,
 			"recent_guest_summary": true, "recent_guest_list": true,
 			"league_summary": true, "future_home": true, "future_guest": true,
 		},
-		"odds_moneys":   {"data": true, "date": true, "sporttery_trade": true},
-		"pankou_moneys": {"asia_data": true, "date": true},
+		"odds_moneys":   {"data": true, "date": true, "sporttery_trade": true, "captured_at": true, "created_at": true, "updated_at": true},
+		"pankou_moneys": {"asia_data": true, "date": true, "captured_at": true, "created_at": true, "updated_at": true},
 		"moneys": {
 			"created_at":    true,
 			"date":          true,
@@ -1390,7 +1391,10 @@ func upsertCrawlerHistory(matchID string, body string) error {
 	}
 
 	var count int64
-	database.DB.Table("history_moneys").Where("match_id = ?", matchID).Count(&count)
+	if err := database.DB.Table("history_moneys").Where("match_id = ?", matchID).Count(&count).Error; err != nil {
+		return err
+	}
+	applyCrawlerPayloadMetadata(updates, "history_moneys", "league_stat", count == 0)
 	if count == 0 {
 		updates["match_id"] = matchID
 		if databaseColumnExists("history_moneys", "date") {
@@ -1415,8 +1419,11 @@ func upsertCrawlerJSON(tableName string, columnName string, matchID string, body
 	}
 
 	var count int64
-	database.DB.Table(tableName).Where("match_id = ?", matchID).Count(&count)
+	if err := database.DB.Table(tableName).Where("match_id = ?", matchID).Count(&count).Error; err != nil {
+		return err
+	}
 	updates := map[string]interface{}{columnName: body}
+	applyCrawlerPayloadMetadata(updates, tableName, columnName, count == 0)
 	if count == 0 {
 		updates["match_id"] = matchID
 		if databaseColumnExists(tableName, "date") {
@@ -1425,6 +1432,31 @@ func upsertCrawlerJSON(tableName string, columnName string, matchID string, body
 		return database.DB.Table(tableName).Create(updates).Error
 	}
 	return database.DB.Table(tableName).Where("match_id = ?", matchID).Updates(updates).Error
+}
+
+// crawlerPayloadMetadata distinguishes fetching an original history/quote body
+// from editing an auxiliary field on the same row. In particular a trade/rank
+// refresh must never advance the age of the stored odds/history payload.
+func crawlerPayloadMetadata(tableName, columnName string, insert bool, now time.Time) map[string]interface{} {
+	metadata := map[string]interface{}{"updated_at": now}
+	if insert {
+		metadata["created_at"] = now
+	}
+	if (tableName == "history_moneys" && columnName == "league_stat") ||
+		(tableName == "odds_moneys" && columnName == "data") ||
+		(tableName == "pankou_moneys" && columnName == "asia_data") {
+		metadata["captured_at"] = now
+	}
+	return metadata
+}
+
+func applyCrawlerPayloadMetadata(updates map[string]interface{}, tableName, columnName string, insert bool) {
+	now := time.Now().UTC().Truncate(time.Millisecond)
+	for column, value := range crawlerPayloadMetadata(tableName, columnName, insert, now) {
+		if databaseColumnExists(tableName, column) {
+			updates[column] = value
+		}
+	}
 }
 
 func crawlerMatchDate(matchID string) string {

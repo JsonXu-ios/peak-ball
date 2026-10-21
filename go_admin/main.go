@@ -22,16 +22,20 @@ func main() {
 	}
 	log.Println("Database initialized successfully.")
 
-	// Run auto migration
-	if err := database.AutoMigrate(); err != nil {
-		log.Fatalf("Failed to auto migrate: %v", err)
+	// Schema changes are opt-in, so an existing source database stays intact.
+	if config.AutoMigrateEnabled {
+		if err := database.AutoMigrate(); err != nil {
+			log.Fatalf("Failed to auto migrate: %v", err)
+		}
+		log.Println("Database migration completed.")
+	} else {
+		log.Println("Automatic schema migration disabled (DB_AUTO_MIGRATE=false)")
 	}
-	log.Println("Database migration completed.")
 
 	r := gin.Default()
 
 	// CORS middleware: allow localhost and private-LAN origins (dev/内网访问，
-	// e.g. http://192.168.x.x:5174), so the admin panel works from any machine
+	// e.g. http://192.168.x.x:25174), so the admin panel works from any machine
 	// on the LAN without maintaining an IP whitelist.
 	r.Use(cors.New(cors.Config{
 		AllowOriginFunc: func(origin string) bool {

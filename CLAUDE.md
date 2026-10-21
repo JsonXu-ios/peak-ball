@@ -8,10 +8,10 @@
 
 ## 项目结构
 
-- 前台 H5：Vue 3 + Vite，目录 `src/`，端口 `5173`
-- 管理后台：Vue 3 + Vuetify + Vite，目录 `admin/src/`，端口 `5174`
-- 前台 API：Go + Gin，目录 `go_server/`，端口 `18080`
-- 管理 API：Go + Gin，目录 `go_admin/`，端口 `8081`（含数据采集调度、完赛统计等 handler）
+- 前台 H5：Vue 3 + Vite，目录 `src/`，端口 `25173`
+- 管理后台：Vue 3 + Vuetify + Vite，目录 `admin/src/`，端口 `25174`
+- 前台 API：Go + Gin，目录 `go_server/`，端口 `28080`
+- 管理 API：Go + Gin，目录 `go_admin/`，端口 `28081`（含数据采集调度、完赛统计等 handler）
 - 独立采集器：Go，目录 `go_crawler/`
 - 数据库：MySQL 8，库名 `football_data`，默认连接 `root:123456@127.0.0.1:3306`
 

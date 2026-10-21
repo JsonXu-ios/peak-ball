@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, reactive } from 'vue'
+import { isAxiosError } from 'axios'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/store/auth'
 
@@ -29,8 +30,22 @@ async function handleLogin() {
     await authStore.fetchUserInfo()
     router.push('/dashboard')
   } catch (err: unknown) {
-    const error = err as { response?: { data?: { error?: string } } }
-    errorMsg.value = error.response?.data?.error || '登录失败，请检查用户名和密码'
+    if (isAxiosError(err)) {
+      const status = err.response?.status
+      if (err.code === 'ECONNABORTED' || err.code === 'ETIMEDOUT') {
+        errorMsg.value = '登录请求超时，请检查后台服务后重试'
+      } else if (!err.response || (status && status >= 500)) {
+        errorMsg.value = '后台服务暂不可用，请检查管理 API（28081）和数据库是否已启动'
+      } else if (status === 401) {
+        errorMsg.value = '用户名或密码错误'
+      } else if (status === 403) {
+        errorMsg.value = '登录被拒绝，请检查账号是否被禁用或访问是否受限'
+      } else {
+        errorMsg.value = err.response.data?.error || '登录失败，请稍后重试'
+      }
+    } else {
+      errorMsg.value = '登录失败，请稍后重试'
+    }
   } finally {
     loading.value = false
   }

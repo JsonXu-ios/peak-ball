@@ -83,4 +83,11 @@ func SetupProtectedRoutes(r *gin.RouterGroup) {
 	r.GET("/statistics/finale", handlers.GetFinaleStatistics)
 	r.GET("/statistics/finale-goals", handlers.GetFinaleGoalStatistics)
 	r.GET("/statistics/trend", handlers.GetTrendStatistics)
+	r.GET("/statistics/draw/history", handlers.GetDrawHistoryAdmin)
+	r.GET("/statistics/draw/observations", handlers.GetDrawObservationsAdmin)
+	r.POST("/statistics/draw/rebuild", handlers.RebuildDrawHistoryAdmin)
+	r.POST("/statistics/draw/calibrate", handlers.CalibrateDrawHistoryAdmin)
+	r.GET("/statistics/draw/matches", handlers.GetDrawMatchesAdmin)
+	r.POST("/statistics/draw/generate", handlers.GenerateDrawPredictionsAdmin)
+	r.GET("/statistics/draw/stats", handlers.GetDrawStatsAdmin)
 }

@@ -17,15 +17,15 @@ const allowedHosts = Array.from(
 
 const proxy = {
   '/api': {
-    target: 'http://localhost:18080',
+    target: 'http://localhost:28080',
     changeOrigin: true,
   },
   '/footballimg': {
-    target: 'http://localhost:18080',
+    target: 'http://localhost:28080',
     changeOrigin: true,
   },
   '/images': {
-    target: 'http://localhost:18080',
+    target: 'http://localhost:28080',
     changeOrigin: true,
   },
 }
@@ -41,14 +41,14 @@ export default defineConfig({
     },
   },
   server: {
-    port: 5173,
+    port: 25173,
     strictPort: true,
     host: true,
     allowedHosts,
     proxy,
   },
   preview: {
-    port: 5173,
+    port: 25173,
     strictPort: true,
     host: true,
     allowedHosts,
