@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import drawApi from '@/api/draw'
+import { beijingToday, formatBeijingDateTime } from '@/utils/date'
 import type { DrawForm, DrawHistoryQuery, DrawHistoryReport, DrawHistoryRow, DrawJobProgress, DrawUpcomingReport } from '@/types/draw'
 
 const tab = ref('history')
@@ -9,8 +10,8 @@ const action = ref('')
 const error = ref('')
 const message = ref('')
 const report = ref<DrawHistoryReport | null>(null)
-const startDate = ref('')
-const endDate = ref('')
+const date = ref(beijingToday())
+const loadedDate = ref('')
 const search = ref('')
 const league = ref('')
 const outcome = ref('all')
@@ -27,8 +28,7 @@ const autoRefresh = ref(true)
 let pollTimer: ReturnType<typeof setTimeout> | undefined
 const upcoming = ref<DrawUpcomingReport | null>(null)
 const upcomingLoading = ref(false)
-const today = new Date()
-const scheduleDate = ref(`${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`)
+const scheduleDate = ref(beijingToday())
 let requestSequence = 0
 
 const busy = computed(() => loading.value || !!action.value || running.value)
@@ -47,10 +47,7 @@ const detailFormRows = computed(() => {
 })
 const thresholdLabel = computed(() => threshold.value === null ? '校准建议' : `≥ ${percentage(threshold.value, 2)}`)
 const pages = computed(() => Math.max(1, Math.ceil((report.value?.total || 0) / pageSize.value)))
-const sourceRange = computed(() => {
-  const range = report.value?.range
-  return range?.start || range?.end ? `${range.start || '最早'} 至 ${range.end || '最新'}` : '全部历史完赛比赛'
-})
+const sourceDate = computed(() => loadedDate.value || date.value)
 const outcomeItems = [
   { title: '全部比赛', value: 'all' },
   { title: '选平命中', value: 'hit' },
@@ -89,15 +86,7 @@ function number(value: number | undefined) {
 }
 
 function dateTime(value: string | undefined) {
-  if (!value) return '—'
-  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return value
-  const date = new Date(value)
-  if (!Number.isFinite(date.getTime())) return value
-  return new Intl.DateTimeFormat('zh-CN', {
-    year: 'numeric', month: '2-digit', day: '2-digit',
-    hour: '2-digit', minute: '2-digit', second: '2-digit',
-    hourCycle: 'h23', timeZoneName: 'short',
-  }).format(date)
+  return formatBeijingDateTime(value)
 }
 
 function splitLabel(value: string) {
@@ -122,8 +111,8 @@ function errorText(err: unknown) {
 
 function query(): DrawHistoryQuery {
   return {
-    start_date: startDate.value || undefined,
-    end_date: endDate.value || undefined,
+    start_date: date.value,
+    end_date: date.value,
     league: league.value || undefined,
     search: search.value.trim() || undefined,
     outcome: outcome.value,
@@ -147,10 +136,11 @@ function toggleAutoRefresh() {
 
 async function fetchHistory(resetPage = false, quiet = false) {
   if (resetPage) page.value = 1
-  if (startDate.value && endDate.value && startDate.value > endDate.value) {
-    error.value = '开始日期不能晚于结束日期'
+  if (!date.value) {
+    error.value = '请选择日期'
     return
   }
+  const requestedDate = date.value
   const sequence = ++requestSequence
   if (!quiet) loading.value = true
   error.value = ''
@@ -158,6 +148,7 @@ async function fetchHistory(resetPage = false, quiet = false) {
     const { data } = await drawApi.history(query())
     if (sequence === requestSequence) {
       report.value = data
+      loadedDate.value = requestedDate
       if (!thresholdExploring.value || threshold.value === null) threshold.value = data.threshold ?? data.model?.recommendedThreshold ?? null
       running.value = !!data.running
       progress.value = data.progress || null
@@ -174,8 +165,7 @@ async function fetchHistory(resetPage = false, quiet = false) {
 }
 
 function resetFilters() {
-  startDate.value = ''
-  endDate.value = ''
+  date.value = beijingToday()
   search.value = ''
   league.value = ''
   outcome.value = 'all'
@@ -195,6 +185,10 @@ function restoreRecommendedThreshold() {
 }
 
 async function runAction(kind: 'rebuild' | 'calibrate') {
+  if (!date.value) {
+    error.value = '请选择日期'
+    return
+  }
   action.value = kind
   error.value = ''
   message.value = ''
@@ -219,6 +213,10 @@ function showDetails(row: DrawHistoryRow) {
 }
 
 async function fetchUpcoming() {
+  if (!scheduleDate.value) {
+    error.value = '请选择赛程日期'
+    return
+  }
   upcomingLoading.value = true
   error.value = ''
   try {
@@ -231,6 +229,10 @@ async function fetchUpcoming() {
 }
 
 async function freezeUpcoming() {
+  if (!scheduleDate.value) {
+    error.value = '请选择赛程日期'
+    return
+  }
   action.value = 'generate'
   error.value = ''
   try {
@@ -242,6 +244,11 @@ async function freezeUpcoming() {
   } finally {
     action.value = ''
   }
+}
+
+function resetUpcomingDate() {
+  scheduleDate.value = beijingToday()
+  fetchUpcoming()
 }
 
 function changeTab(value: unknown) {
@@ -261,7 +268,7 @@ onBeforeUnmount(() => { clearTimeout(pollTimer); requestSequence++ })
       </div>
       <v-spacer />
       <v-chip v-if="report" size="small" variant="tonal" color="primary">{{ report.modelVersion }}</v-chip>
-      <v-btn variant="outlined" prepend-icon="mdi-refresh" :disabled="loading || !!action" @click="fetchHistory()">刷新</v-btn>
+      <v-btn variant="outlined" prepend-icon="mdi-refresh" :disabled="loading || !!action" @click="tab === 'upcoming' ? fetchUpcoming() : fetchHistory()">刷新</v-btn>
       <v-btn color="warning" prepend-icon="mdi-database-sync" :loading="action === 'rebuild'" :disabled="busy && action !== 'rebuild'" @click="runAction('rebuild')">重建全量历史</v-btn>
       <v-btn color="primary" prepend-icon="mdi-tune" :loading="action === 'calibrate'" :disabled="busy || !report || report.model?.canCalibrate === false" @click="runAction('calibrate')">用历史样本校准</v-btn>
     </div>
@@ -285,12 +292,11 @@ onBeforeUnmount(() => { clearTimeout(pollTimer); requestSequence++ })
       <v-card class="mb-4">
         <v-card-text>
           <div class="d-flex flex-wrap align-center ga-3">
-            <v-text-field v-model="startDate" type="date" label="开始日期（不限）" density="compact" variant="outlined" hide-details class="filter-date" />
-            <v-text-field v-model="endDate" type="date" label="结束日期（不限）" density="compact" variant="outlined" hide-details class="filter-date" />
+            <v-text-field v-model="date" type="date" label="日期（北京时间）" density="compact" variant="outlined" hide-details class="filter-date" />
             <v-autocomplete v-model="league" :items="report?.leagues || []" label="全部联赛" clearable density="compact" variant="outlined" hide-details class="filter-select" />
             <v-text-field v-model="search" label="球队 / 比赛 ID" prepend-inner-icon="mdi-magnify" density="compact" variant="outlined" hide-details class="filter-search" @keyup.enter="fetchHistory(true)" />
             <v-btn color="primary" :loading="loading" :disabled="!!action" @click="fetchHistory(true)">查询</v-btn>
-            <v-btn variant="text" :disabled="busy" @click="resetFilters">全部历史</v-btn>
+            <v-btn variant="text" :disabled="busy" @click="resetFilters">今天</v-btn>
           </div>
           <div class="d-flex flex-wrap align-center ga-3 mt-4">
             <v-select v-model="split" :items="splitItems" label="验证分区" density="compact" variant="outlined" hide-details class="filter-select" @update:model-value="fetchHistory(true)" />
@@ -302,7 +308,7 @@ onBeforeUnmount(() => { clearTimeout(pollTimer); requestSequence++ })
             <v-btn size="small" variant="text" color="primary" :disabled="busy" @click="restoreRecommendedThreshold">采用校准建议阈值</v-btn>
           </div>
           <div class="text-caption text-medium-emphasis mt-2">默认阈值仅由校准区计算，不使用测试赛果。手动调节属于阈值探索；查看测试结果后再调参的结果，不能作为独立验证结论。<span v-if="report?.model?.recommendedThreshold !== undefined"> 校准建议：{{ percentage(report.model.recommendedThreshold, 2) }}。</span></div>
-          <div class="text-caption text-medium-emphasis mt-3">范围：{{ sourceRange }} · 更新于 {{ dateTime(report?.generatedAt) }} · 下方历史对照与分箱按当前全部筛选条件计算；独立测试卡片不受明细结果和分区筛选影响。</div>
+          <div class="text-caption text-medium-emphasis mt-3">日期：{{ sourceDate }} · 更新于 {{ dateTime(report?.generatedAt) }} · 下方历史对照与分箱按当前全部筛选条件计算；独立测试卡片不受明细结果和分区筛选影响。</div>
         </v-card-text>
       </v-card>
 
@@ -412,7 +418,7 @@ onBeforeUnmount(() => { clearTimeout(pollTimer); requestSequence++ })
 
     <template v-else>
       <v-alert type="info" variant="tonal" density="compact" class="mb-4">未来赛程使用当前模型生成概率。赛前冻结记录用于后续真实检验，与历史探索回算分开统计。</v-alert>
-      <v-card class="mb-4"><v-card-text class="d-flex flex-wrap align-center ga-3"><v-text-field v-model="scheduleDate" type="date" label="赛程日期" density="compact" variant="outlined" hide-details class="filter-date" /><v-btn color="primary" :loading="upcomingLoading" @click="fetchUpcoming">加载赛程</v-btn><v-btn variant="outlined" :loading="action === 'generate'" :disabled="!!action || upcomingLoading" prepend-icon="mdi-lock-outline" @click="freezeUpcoming">冻结未开赛预测</v-btn><v-spacer /><span v-if="upcoming" class="text-body-2 text-medium-emphasis">{{ upcoming.summary.total }} 场 · 候选 {{ upcoming.summary.candidates }} · 已冻结 {{ upcoming.summary.frozen }} · 赛程时区 {{ upcoming.scheduleTimezone }}</span></v-card-text></v-card>
+      <v-card class="mb-4"><v-card-text class="d-flex flex-wrap align-center ga-3"><v-text-field v-model="scheduleDate" type="date" label="赛程日期（北京时间）" density="compact" variant="outlined" hide-details class="filter-date" /><v-btn color="primary" :loading="upcomingLoading" @click="fetchUpcoming">加载赛程</v-btn><v-btn variant="text" :disabled="upcomingLoading" @click="resetUpcomingDate">今天</v-btn><v-btn variant="outlined" :loading="action === 'generate'" :disabled="!!action || upcomingLoading" prepend-icon="mdi-lock-outline" @click="freezeUpcoming">冻结未开赛预测</v-btn><v-spacer /><span v-if="upcoming" class="text-body-2 text-medium-emphasis">{{ upcoming.summary.total }} 场 · 候选 {{ upcoming.summary.candidates }} · 已冻结 {{ upcoming.summary.frozen }} · 赛程时区 {{ upcoming.scheduleTimezone }}</span></v-card-text></v-card>
       <v-card><v-table density="comfortable"><thead><tr><th>开赛时间 / 联赛</th><th>比赛</th><th>当前概率</th><th>进球模型</th><th>市场概率</th><th>筛选 / 状态</th><th>依据和限制</th></tr></thead><tbody><tr v-for="match in upcoming?.items || []" :key="match.matchId"><td>{{ dateTime(match.matchTime) }}<div class="text-caption text-medium-emphasis">{{ match.league }}</div></td><td>{{ match.home }}<div class="text-medium-emphasis">{{ match.guest }}</div></td><td class="font-weight-bold">{{ percentage(match.probability) }}</td><td>{{ percentage(match.modelProbability) }}</td><td>{{ percentage(match.marketProbability) }}</td><td><v-chip :color="match.candidate ? 'primary' : 'default'" size="small" variant="tonal">{{ match.candidate ? '候选' : match.probability === null ? '数据不足' : '未入选' }}</v-chip><div class="text-caption mt-1">{{ match.frozen ? '已冻结' : match.status }}</div></td><td class="wrap-cell text-caption"><div>{{ (match.reasons || []).join('；') }}</div><div class="text-warning">{{ (match.warnings || []).join('；') }}</div></td></tr><tr v-if="!upcoming?.items?.length"><td colspan="7" class="text-center text-medium-emphasis py-12">{{ upcomingLoading ? '正在加载赛程…' : '该日期暂无比赛' }}</td></tr></tbody></v-table></v-card>
     </template>
 

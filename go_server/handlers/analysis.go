@@ -23,6 +23,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/datatypes"
+	"gorm.io/gorm"
 )
 
 const sportteryTradeAPIURL = "https://www.vipc.cn/i/match/jczq/lr/%s"
@@ -375,8 +376,17 @@ func buildAnalysis(match models.Money, fetchSporttery bool) analysisMatchRespons
 	var pankou models.PankouMoney
 	database.DB.Where("match_id = ?", match.MatchId).Limit(1).Find(&pankou)
 
-	avgOdd, oddsRows, warnings := resolveAverageOdds(odds)
 	sportteryTrade := resolveSportteryTrade(match, &odds, fetchSporttery)
+	response := buildAnalysisFromData(match, history, odds, pankou, sportteryTrade)
+	response.TeamProfiles = resolveTeamProfiles(match, firstNonEmptyString(match.League, match.LeagueName), fetchSporttery)
+	return response
+}
+
+// buildAnalysisFromData is the existing frontend calculation with already
+// loaded inputs. It performs no database, network or cache writes. Callers
+// choose whether to resolve external data before invoking this pure function.
+func buildAnalysisFromData(match models.Money, history models.HistoryMoney, odds models.OddsMoney, pankou models.PankouMoney, sportteryTrade sportteryTradeData) analysisMatchResponse {
+	avgOdd, oddsRows, warnings := resolveAverageOdds(odds)
 	sportteryOdd := sportteryOdds(sportteryTrade)
 	bookmakerOdds := bookmakerOddsSources(oddsRows, sportteryOdd)
 	probabilities := probabilitiesFromOdds(avgOdd)
@@ -528,8 +538,6 @@ func buildAnalysis(match models.Money, fetchSporttery bool) analysisMatchRespons
 		Test23:  tags,
 	}
 
-	teamProfiles := resolveTeamProfiles(match, firstNonEmptyString(match.League, match.LeagueName), fetchSporttery)
-
 	var predictionHit *bool
 	if strings.Contains(match.DisplayState, "完") || match.Status >= 4 {
 		hit := prediction == []string{"主胜", "平局", "客胜"}[actualOutcomeIndex(match.HomeScore, match.GuestScore)]
@@ -601,7 +609,6 @@ func buildAnalysis(match models.Money, fetchSporttery bool) analysisMatchRespons
 		sportteryTrade:   sportteryTrade,
 		averageOdds:      avgOdd,
 		averageFirstOdds: resolveAverageFirstOdds(odds, oddsRows),
-		TeamProfiles:     teamProfiles,
 		GoddessWoman:     &goddessWoman,
 	}
 }
@@ -1287,10 +1294,7 @@ func openingProbabilityLabels(rows []analysisEuroOdd, fallback []string) []strin
 	return fallback
 }
 
-func kellyResult(odds models.OddsMoney, avgOdds []float64, rows []analysisEuroOdd) []string {
-	if len(avgOdds) < 3 {
-		return nil
-	}
+func kellySource(odds models.OddsMoney, rows []analysisEuroOdd) analysisEuroOdd {
 	source := jsonValue[analysisEuroOdd](odds.Pinnacle)
 	if len(source.Odds) < 3 {
 		source = findEuroOdd(rows, "16", "")
@@ -1301,6 +1305,14 @@ func kellyResult(odds models.OddsMoney, avgOdds []float64, rows []analysisEuroOd
 	if len(source.Odds) < 3 {
 		source = findEuroOdd(rows, "281", "")
 	}
+	return source
+}
+
+func kellyResult(odds models.OddsMoney, avgOdds []float64, rows []analysisEuroOdd) []string {
+	if len(avgOdds) < 3 {
+		return nil
+	}
+	source := kellySource(odds, rows)
 	if len(source.Odds) < 3 {
 		return nil
 	}
@@ -1351,15 +1363,15 @@ func ticaiResult(rows []analysisEuroOdd, avgOdds []float64, sportteryOdd []float
 
 func sportteryTradeFromJSON(raw datatypes.JSON) sportteryTradeData {
 	payload := jsonValue[sportteryTradePayload](raw)
-	if sportteryTradeHasData(payload.Data) {
-		return payload.Data
+	data := payload.Data
+	if !sportteryTradeHasData(data) {
+		direct := jsonValue[sportteryTradeData](raw)
+		if sportteryTradeHasData(direct) {
+			data = direct
+		}
 	}
-
-	data := jsonValue[sportteryTradeData](raw)
-	if sportteryTradeHasData(data) {
-		return data
-	}
-	return payload.Data
+	data.OddsRecord = sportteryRecordedBody(raw)
+	return data
 }
 
 func resolveSportteryTrade(match models.Money, odds *models.OddsMoney, fetchSporttery bool) sportteryTradeData {
@@ -1376,7 +1388,7 @@ func resolveSportteryTrade(match models.Money, odds *models.OddsMoney, fetchSpor
 		return trade
 	}
 	if len(raw) > 0 && odds.MatchId != "" {
-		database.DB.Model(&models.OddsMoney{}).Where("match_id = ?", odds.MatchId).Update("sporttery_trade", datatypes.JSON(raw))
+		database.DB.Model(&models.OddsMoney{}).Where("match_id = ?", odds.MatchId).Update("sporttery_trade", gorm.Expr("JSON_MERGE_PATCH(CASE WHEN JSON_TYPE(sporttery_trade) = 'OBJECT' THEN sporttery_trade ELSE JSON_OBJECT() END, CAST(? AS JSON))", string(raw)))
 	}
 	return fetchedTrade
 }
@@ -1424,6 +1436,20 @@ func sportteryTradeHasData(trade sportteryTradeData) bool {
 }
 
 func sportteryOdds(trade sportteryTradeData) []float64 {
+	if _, latest, present := sportteryRecordedPrices(trade.OddsRecord); present {
+		values := make([]float64, 3)
+		for i, raw := range latest {
+			if raw == nil {
+				return nil
+			}
+			value := parseFloat(*raw)
+			if value <= 0 || math.IsNaN(value) || math.IsInf(value, 0) {
+				return nil
+			}
+			values[i] = value
+		}
+		return values
+	}
 	odds := []float64{trade.Tzbl.H, trade.Tzbl.D, trade.Tzbl.A}
 	if odds[0] > 0 && odds[1] > 0 && odds[2] > 0 {
 		return odds
@@ -1475,7 +1501,7 @@ func firstEuroOdd(rows []analysisEuroOdd) analysisEuroOdd {
 }
 
 // labelsForSmallestDiffs 只出一个值：取差值最小的方向；打平取靠后的
-//（胜平→平，胜负/平负→负）。
+// （胜平→平，胜负/平负→负）。
 func labelsForSmallestDiffs(diffs []float64, _ float64) []string {
 	if len(diffs) < 3 {
 		return nil

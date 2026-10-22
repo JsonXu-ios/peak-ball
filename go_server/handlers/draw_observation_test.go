@@ -55,7 +55,7 @@ func TestDrawObservationsRecentUsesOnlyPreMatchCompletedGames(t *testing.T) {
 	incomplete := drawObservationGame("incomplete", "H", "A", kickoff.Add(-48*time.Hour), 0, 0)
 	incomplete.Game.Completed = false
 	games = append(games, incomplete)
-	response := buildDrawObservations(drawObservationData{Targets: []drawObservationTarget{drawObservationMain(target)}, History: games}, drawObservationQuery{mode: "history", page: 1, size: 50, search: "target"})
+	response := buildDrawObservations(drawObservationData{Targets: []drawObservationTarget{drawObservationMain(target)}, History: games}, drawObservationQuery{mode: "history", date: drawObservationDate(drawObservationMain(target).Match), page: 1, size: 50, search: "target"})
 	if response.Total != 1 || len(response.Items) != 1 {
 		t.Fatalf("expected target only: %+v", response)
 	}
@@ -149,18 +149,18 @@ func TestDrawObservationsFiltersDoNotChangeSummaryOrHideEmptyHistory(t *testing.
 	data := drawObservationData{Targets: []drawObservationTarget{drawObservationMain(third), drawObservationMain(first), drawObservationMain(nonDraw), drawObservationMain(second)}, Pankou: map[string]models.PankouMoney{
 		"second": {Bet365Asia: datatypes.JSON(`{"firstPankou":"0","pankou":"0.5"}`), Bet365Dxq: datatypes.JSON(`{"pankou":"2.5"}`)},
 	}}
-	all := buildDrawObservations(data, drawObservationQuery{mode: "history", page: 2, size: 1})
+	all := buildDrawObservations(data, drawObservationQuery{mode: "history", start: "2026-01-01", page: 2, size: 1})
 	if all.Total != 3 || len(all.Items) != 1 || all.Items[0].MatchID != "second" || all.Summary.HistoricalMatches != 4 || all.Summary.DrawMatches != 3 || all.Summary.AsianMatches != 1 || all.Summary.TotalMatches != 1 {
 		t.Fatalf("wrong draw-only ordering/pagination/global summary: %+v", all)
 	}
 	filtered := buildDrawObservations(data, drawObservationQuery{mode: "history", start: "2026-10-20", end: "2026-10-20", search: "H", league: "League", page: 1, size: 50})
-	if filtered.Total != 1 || filtered.Items[0].MatchID != "first" || !reflect.DeepEqual(filtered.Summary, all.Summary) || filtered.Items[0].Date != "2026-10-20" || filtered.Items[0].HomeRecent.Sample != 0 || filtered.Items[0].HomeRecent.Matches == nil {
+	if filtered.Total != 1 || filtered.Items[0].MatchID != "first" || filtered.Summary.HistoricalMatches != all.Summary.HistoricalMatches || filtered.Summary.DrawMatches != all.Summary.DrawMatches || filtered.Summary.AsianMatches != 0 || filtered.Items[0].Date != "2026-10-20" || filtered.Items[0].HomeRecent.Sample != 0 || filtered.Items[0].HomeRecent.Matches == nil {
 		t.Fatalf("filters changed the source summary or discarded empty histories: %+v", filtered)
 	}
 	if filtered.Items[0].AsianHandicap.Source != "missing" || filtered.Items[0].AsianHandicap.Historical != nil {
 		t.Fatal("ambiguous nested letGoal was mislabeled as an Asian line")
 	}
-	empty := buildDrawObservations(data, drawObservationQuery{mode: "history", page: int(^uint(0) >> 1), size: 200})
+	empty := buildDrawObservations(data, drawObservationQuery{mode: "history", start: "2026-01-01", page: int(^uint(0) >> 1), size: 200})
 	if empty.Items == nil || len(empty.Items) != 0 || empty.Total != 3 {
 		t.Fatalf("large out-of-range page overflowed or hid total: %+v", empty)
 	}
@@ -184,7 +184,7 @@ func TestDrawObservationsRejectInvalidQueryBeforeDatabaseRead(t *testing.T) {
 	context, _ := gin.CreateTestContext(httptest.NewRecorder())
 	context.Request = httptest.NewRequest("GET", "/api/draw/observations?page=-1&page_size=999", nil)
 	query, err := parseDrawObservationQuery(context)
-	if err != nil || query.page != 1 || query.size != 200 || query.mode != "today" || query.date != time.Now().UTC().Format("2006-01-02") {
+	if err != nil || query.page != 1 || query.size != 200 || query.mode != "today" || query.date != time.Now().In(drawSourceLocation).Format("2006-01-02") {
 		t.Fatalf("pagination normalization failed: %+v error=%v", query, err)
 	}
 }
@@ -212,7 +212,7 @@ func TestDrawObservationsMainTablesDefineTargetsAndTodayIncludesUnsettled(t *tes
 	if today.Items[0].MatchID != "scheduled" || today.Items[0].Settled || today.Items[0].DisplayState != "未开赛" || today.Items[0].Date != "2026-10-21" {
 		t.Fatalf("unfinished schedule was hidden or marked as a draw: %+v", today.Items[0])
 	}
-	history := buildDrawObservations(data, drawObservationQuery{mode: "history", page: 1, size: 50})
+	history := buildDrawObservations(data, drawObservationQuery{mode: "history", date: "2026-10-21", page: 1, size: 50})
 	if history.Total != 1 || history.Items[0].MatchID != "legacy-draw" || !history.Items[0].Settled || history.Items[0].HomeRecent.Sample != 1 {
 		t.Fatalf("embedded history became a target or stopped being a recent input: %+v", history)
 	}
@@ -261,5 +261,149 @@ func TestDrawObservationsNewCombinedMarketsOverrideStaleDedicatedColumns(t *test
 	odds.Data = datatypes.JSON(`{"odds":[]}`)
 	if drawObservationEuro(odds).Source != "missing" {
 		t.Fatal("explicitly empty three-way payload was filled from stale preferred odds")
+	}
+}
+
+func TestDrawObservationsHeadToHeadIsAllPriorMeetingsFromHomeTeamPerspective(t *testing.T) {
+	kickoff := time.Date(2026, 10, 21, 12, 0, 0, 0, time.UTC)
+	target := drawObservationGame("target", "1", "2", kickoff, 1, 1)
+	history := []drawHistoricalGame{target}
+	for i := 0; i < 12; i++ {
+		game := drawObservationGame(fmt.Sprintf("meeting-%d", i), "1", "2", kickoff.Add(-time.Duration(i+1)*24*time.Hour), 1, 1)
+		if i%2 == 1 {
+			game = drawObservationGame(fmt.Sprintf("meeting-%d", i), "2", "1", game.Game.Kickoff, 2, 0)
+			game.Game.LeagueName = "Cup"
+		}
+		history = append(history, game)
+	}
+	history = append(history,
+		drawObservationGame("latest-away-win", "2", "1", kickoff.Add(-3*time.Hour), 0, 3),
+		drawObservationGame("same-time", "1", "2", kickoff, 0, 0),
+		drawObservationGame("future", "1", "2", kickoff.Add(24*time.Hour), 0, 0),
+		drawObservationGame("still-playing", "1", "2", kickoff.Add(-time.Hour), 0, 0),
+		drawObservationGame("target", "1", "2", kickoff.Add(-24*time.Hour), 0, 0),
+		history[1], // Same match repeated by multiple history documents.
+	)
+	incomplete := drawObservationGame("unfinished", "1", "2", kickoff.Add(-24*time.Hour), 0, 0)
+	incomplete.Game.Completed = false
+	history = append(history, incomplete)
+	window, _ := indexDrawObservations(history).headToHead(target.Game)
+	if window.Sample != 13 || window.Draws != 6 || len(window.Matches) != 13 {
+		t.Fatalf("all prior meetings were truncated, duplicated or polluted: %+v", window)
+	}
+	if window.Matches[0].MatchID != "latest-away-win" || window.Matches[0].Venue != "away" || window.Matches[0].Result != "win" || window.Matches[2].Venue != "away" || window.Matches[2].Result != "loss" {
+		t.Fatalf("swapped-home/away result is not from the target home team: %+v", window.Matches[:3])
+	}
+	for _, record := range window.Matches {
+		if !record.MatchTime.Before(kickoff) || record.MatchID == "target" || record.MatchID == "still-playing" || record.MatchID == "unfinished" {
+			t.Fatalf("unavailable result entered H2H: %+v", record)
+		}
+	}
+}
+
+func TestDrawObservationsHeadToHeadRejectsKnownIDConflictsAndAmbiguousNames(t *testing.T) {
+	kickoff := time.Date(2026, 10, 21, 12, 0, 0, 0, time.UTC)
+	target := drawObservationGame("target", "1", "2", kickoff, 1, 1)
+	target.Game.HomeTeamName, target.Game.AwayTeamName = "United", "City"
+	good := drawObservationGame("id-alias", "1", "2", kickoff.Add(-24*time.Hour), 0, 0)
+	good.Game.HomeTeamName, good.Game.AwayTeamName = "Old United Name", "Old City Name"
+	wrong := drawObservationGame("wrong-team", "3", "2", kickoff.Add(-48*time.Hour), 0, 0)
+	wrong.Game.HomeTeamName, wrong.Game.AwayTeamName = "United", "City"
+	unknown := drawObservationGame("ambiguous-id", "", "2", kickoff.Add(-72*time.Hour), 0, 0)
+	unknown.Game.HomeTeamName, unknown.Game.AwayTeamName = "United", "City"
+	missingAway := drawObservationGame("unambiguous-away", "1", "", kickoff.Add(-96*time.Hour), 1, 1)
+	missingAway.Game.HomeTeamName, missingAway.Game.AwayTeamName = "United", " city "
+	idx := indexDrawObservations([]drawHistoricalGame{target, good, wrong, unknown, missingAway})
+	window, warnings := idx.headToHead(target.Game)
+	if window.Sample != 2 || window.Matches[0].MatchID != "id-alias" || window.Matches[1].MatchID != "unambiguous-away" || len(warnings) == 0 {
+		t.Fatalf("H2H identity rules merged distinct clubs or lost valid aliases: %+v warnings=%v", window, warnings)
+	}
+	target.Game.HomeTeamID = ""
+	window, _ = idx.headToHead(target.Game)
+	if window.Sample != 0 {
+		t.Fatalf("ambiguous missing target ID silently selected a club: %+v", window)
+	}
+}
+
+func TestDrawObservationsTodayKnownIDRejectsConflictingUniqueNameFallback(t *testing.T) {
+	kickoff := time.Date(2026, 10, 21, 12, 0, 0, 0, time.UTC)
+	target := drawObservationGame("not-in-history", "1", "2", kickoff, 0, 0)
+	target.Game.HomeTeamName, target.Game.AwayTeamName = "United", "City"
+	wrong := drawObservationGame("other-club-same-name", "9", "2", kickoff.Add(-24*time.Hour), 0, 0)
+	wrong.Game.HomeTeamName, wrong.Game.AwayTeamName = "United", "City"
+	unknown := drawObservationGame("missing-id-copy", "", "2", kickoff.Add(-48*time.Hour), 0, 0)
+	unknown.Game.HomeTeamName, unknown.Game.AwayTeamName = "United", "City"
+	// The current upcoming match is not part of completed History. United's
+	// only known historical ID is 9, so its missing-ID copy cannot be club 1.
+	idx := indexDrawObservations([]drawHistoricalGame{wrong, unknown})
+	recent, rw := idx.recent(target.Game, target.Game.HomeTeamID, target.Game.HomeTeamName)
+	h2h, hw := idx.headToHead(target.Game)
+	if recent.Sample != 0 || h2h.Sample != 0 || len(rw) == 0 || len(hw) == 0 {
+		t.Fatalf("unique but conflicting historical ID was used as today's team: recent=%+v h2h=%+v", recent, h2h)
+	}
+}
+
+func TestDrawObservationsCountRangesApplyBeforePaginationWithANDAndKeepSummary(t *testing.T) {
+	kickoff := time.Date(2026, 10, 21, 12, 0, 0, 0, time.UTC)
+	targets := []drawObservationTarget{}
+	for i, pair := range []struct{ id, home, away string }{{"no-records", "7", "8"}, {"wrong-count", "5", "6"}, {"good-first", "1", "2"}, {"good-second", "3", "4"}} {
+		targets = append(targets, drawObservationMain(drawObservationGame(pair.id, pair.home, pair.away, kickoff.Add(-time.Duration(i)*time.Hour), 1, 1)))
+	}
+	data := drawObservationData{Targets: targets, History: []drawHistoricalGame{
+		drawObservationGame("one-two", "1", "2", kickoff.Add(-10*24*time.Hour), 2, 0),
+		drawObservationGame("three-four", "4", "3", kickoff.Add(-10*24*time.Hour), 0, 1),
+		drawObservationGame("five-six", "5", "6", kickoff.Add(-10*24*time.Hour), 1, 1),
+	}, Pankou: map[string]models.PankouMoney{"wrong-count": {Bet365Asia: datatypes.JSON(`{"pankou":"0"}`)}}}
+	all := buildDrawObservations(data, drawObservationQuery{mode: "history", date: "2026-10-21", page: 1, size: 50})
+	if all.Total != 4 || all.Items[0].HeadToHead.Sample != 0 || all.Items[0].HeadToHead.Matches == nil {
+		t.Fatal("unfiltered mode lost empty H2H rows")
+	}
+	zero := drawObservationRange{min: drawTestPtr(0), max: drawTestPtr(0)}
+	q := drawObservationQuery{mode: "history", date: "2026-10-21", page: 1, size: 1, homeDraws: zero, awayDraws: zero, h2hDraws: zero}
+	first := buildDrawObservations(data, q)
+	q.page = 2
+	second := buildDrawObservations(data, q)
+	if first.Total != 2 || len(first.Items) != 1 || first.Items[0].MatchID != "good-first" || second.Total != 2 || len(second.Items) != 1 || second.Items[0].MatchID != "good-second" {
+		t.Fatalf("count filter ran after pagination or counted no-records as zero draws: first=%+v second=%+v", first, second)
+	}
+	if !reflect.DeepEqual(first.Summary, all.Summary) || first.Summary.AsianMatches != 1 || first.Summary.HistoricalMatches != 4 {
+		t.Fatal("count ranges changed the original global summary")
+	}
+	q.page, q.h2hDraws = 1, drawObservationRange{min: drawTestPtr(1)}
+	if got := buildDrawObservations(data, q); got.Total != 0 {
+		t.Fatalf("range groups were ORed instead of ANDed: %+v", got)
+	}
+	// Inclusive upper/lower bounds and unilateral ranges remain independent.
+	q.homeDraws, q.awayDraws, q.h2hDraws = drawObservationRange{max: drawTestPtr(1)}, drawObservationRange{}, drawObservationRange{min: drawTestPtr(1), max: drawTestPtr(1)}
+	if got := buildDrawObservations(data, q); got.Total != 1 || got.Items[0].MatchID != "wrong-count" {
+		t.Fatalf("inclusive range boundary was lost: %+v", got)
+	}
+	for _, window := range []drawObservationRecent{{}, {Sample: 0, Draws: 0}} {
+		if zero.matches(window) {
+			t.Fatal("an enabled zero range accepted an absent history")
+		}
+	}
+	if !zero.matches(drawObservationRecent{Sample: 1, Draws: 0}) || !(drawObservationRange{}).matches(drawObservationRecent{}) {
+		t.Fatal("valid zero or unlimited range was rejected")
+	}
+}
+
+func TestDrawObservationsCountRangesRejectInvalidParametersBeforeAnyRead(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	invalid := []string{"home_draws_min=-1", "home_draws_max=11", "away_draws_min=11", "away_draws_max=1.5", "h2h_draws_min=-1", "h2h_draws_max=NaN", "home_draws_min=%2B1", "away_draws_min=%201%20", "h2h_draws_max=1e2", "home_draws_min=3&home_draws_max=2", "away_draws_min=3&away_draws_max=2", "h2h_draws_min=3&h2h_draws_max=2", "h2h_draws_max=999999999999999999999999999"}
+	for _, query := range invalid {
+		writer := httptest.NewRecorder()
+		context, _ := gin.CreateTestContext(writer)
+		context.Request = httptest.NewRequest("GET", "/api/draw/observations?mode=history&"+query, nil)
+		GetDrawObservations(context)
+		if writer.Code != 400 {
+			t.Fatalf("invalid %q did not stop before database access: status=%d", query, writer.Code)
+		}
+	}
+	context, _ := gin.CreateTestContext(httptest.NewRecorder())
+	context.Request = httptest.NewRequest("GET", "/api/draw/observations?mode=history&home_draws_min=0&home_draws_max=10&away_draws_max=&h2h_draws_min=11&h2h_draws_max=1000", nil)
+	q, err := parseDrawObservationQuery(context)
+	if err != nil || q.homeDraws.min == nil || *q.homeDraws.min != 0 || q.awayDraws.enabled() || q.h2hDraws.max == nil || *q.h2hDraws.max != 1000 {
+		t.Fatalf("valid or empty bounds were misread: %+v err=%v", q, err)
 	}
 }

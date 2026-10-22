@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
 import { getMatchStatistics } from '@/api'
+import { beijingToday } from '@/utils/date'
 import MatchDetailTable from './MatchDetailTable.vue'
 
 interface MatchDetail {
@@ -162,8 +163,7 @@ function groupedSignals(signals: Signal[]): SignalGroup[] {
 
 const loading = ref(false)
 const recomputing = ref(false)
-const startDate = ref('')
-const endDate = ref('')
+const date = ref(beijingToday())
 const report = ref<Report | null>(null)
 const error = ref('')
 // which detail tables are open, keyed by signal/bucket key
@@ -182,9 +182,8 @@ function accuracyColor(accuracy: number, matched: number) {
   return 'warning'
 }
 
-function sourceRange() {
-  if (!report.value?.start_date && !report.value?.end_date) return '全部历史完赛比赛'
-  return `${report.value?.start_date || '最早'} 至 ${report.value?.end_date || '最新'}`
+function sourceDate() {
+  return report.value?.start_date || date.value
 }
 
 function cappedMatches(matches: MatchDetail[]) {
@@ -192,14 +191,17 @@ function cappedMatches(matches: MatchDetail[]) {
 }
 
 async function fetchReport(refresh = false) {
+  if (!date.value) {
+    error.value = '请选择日期'
+    return
+  }
   if (refresh) recomputing.value = true
   else loading.value = true
   error.value = ''
   try {
     const { data } = await getMatchStatistics({
-      start_date: startDate.value || undefined,
-      end_date: endDate.value || undefined,
-      ...(refresh && !startDate.value && !endDate.value ? { refresh: 1 } : {}),
+      start_date: date.value,
+      end_date: date.value,
     })
     report.value = data as Report
     Object.keys(expanded).forEach((key) => delete expanded[key])
@@ -212,9 +214,8 @@ async function fetchReport(refresh = false) {
   }
 }
 
-function resetRange() {
-  startDate.value = ''
-  endDate.value = ''
+function resetDate() {
+  date.value = beijingToday()
   fetchReport(false)
 }
 
@@ -233,19 +234,18 @@ onMounted(() => fetchReport(false))
       <div>
         <h2 class="text-h5 font-weight-bold">完赛比赛信号统计</h2>
         <div class="text-body-2 text-medium-emphasis mt-1">
-          基于全部完赛比赛，按维度（胜平负 / 让球 / 球数 / 大小球 / 比分）分组，逐个信号统计符合条件的场次与命中率，并可下钻查看具体比赛。
+          基于所选日期的完赛比赛，按维度（胜平负 / 让球 / 球数 / 大小球 / 比分）分组，逐个信号统计符合条件的场次与命中率，并可下钻查看具体比赛。
         </div>
       </div>
       <v-spacer />
-      <v-btn :loading="recomputing" color="warning" prepend-icon="mdi-calculator" @click="fetchReport(true)">重新统计</v-btn>
+      <v-btn :loading="recomputing" color="warning" prepend-icon="mdi-calculator" @click="fetchReport(true)">重新计算所选日期</v-btn>
     </div>
 
     <v-card class="mb-5">
       <v-card-text class="d-flex flex-wrap align-center ga-3">
-        <v-text-field v-model="startDate" type="date" label="开始日期" hide-details style="max-width: 210px" />
-        <v-text-field v-model="endDate" type="date" label="结束日期" hide-details style="max-width: 210px" />
+        <v-text-field v-model="date" type="date" label="日期（北京时间）" hide-details style="max-width: 230px" />
         <v-btn color="primary" variant="tonal" :loading="loading" @click="fetchReport(false)">应用日期（即时计算）</v-btn>
-        <v-btn variant="text" @click="resetRange">查看全部（读缓存）</v-btn>
+        <v-btn variant="text" @click="resetDate">今天</v-btn>
         <v-spacer />
         <span v-if="generatedAtText()" class="text-caption text-medium-emphasis">统计时间：{{ generatedAtText() }}</span>
       </v-card-text>
@@ -256,8 +256,8 @@ onMounted(() => fetchReport(false))
     <v-card v-if="report?.needs_recompute" variant="tonal" color="warning" class="mb-5">
       <v-card-text class="text-center py-10">
         <div class="text-h6 font-weight-bold mb-2">统计结果尚未生成</div>
-        <div class="text-body-2 text-medium-emphasis mb-4">点击「重新统计」计算一次并存入数据库，之后每次打开直接读取，不再重算。</div>
-        <v-btn :loading="recomputing" color="warning" prepend-icon="mdi-calculator" @click="fetchReport(true)">重新统计</v-btn>
+        <div class="text-body-2 text-medium-emphasis mb-4">点击「重新计算所选日期」查看当天统计，不修改全量统计快照。</div>
+        <v-btn :loading="recomputing" color="warning" prepend-icon="mdi-calculator" @click="fetchReport(true)">重新计算所选日期</v-btn>
       </v-card-text>
     </v-card>
 
@@ -274,8 +274,8 @@ onMounted(() => fetchReport(false))
         <v-col cols="12" md="8">
           <v-card variant="tonal">
             <v-card-text>
-              <div class="text-body-2 text-medium-emphasis">统计范围</div>
-              <div class="text-subtitle-1 font-weight-medium mt-1">{{ sourceRange() }}</div>
+              <div class="text-body-2 text-medium-emphasis">统计日期</div>
+              <div class="text-subtitle-1 font-weight-medium mt-1">{{ sourceDate() }}</div>
               <div class="text-caption text-medium-emphasis mt-1">
                 每个信号显示“符合条件的场次 / 命中 / 命中率”。命中率按已完赛结果判断该信号方向猜没猜对；仅有盘口/赔率数据的比赛才会进入相应信号。
               </div>

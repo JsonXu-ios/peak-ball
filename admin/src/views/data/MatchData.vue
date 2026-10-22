@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
 import { deleteCrawlerMatch, getCrawlerMatchDetail, getCrawlerMatches } from '@/api'
+import { beijingToday, formatBeijingDateTime } from '@/utils/date'
 
 interface Match {
   id: number
@@ -33,10 +34,11 @@ const loading = ref(false)
 const page = ref(1)
 const pageSize = ref(20)
 const keyword = ref('')
-const selectedDate = ref('')
+const selectedDate = ref(beijingToday())
+const dateError = ref('')
 const selectedLeague = ref('')
 const leagues = ref<string[]>([])
-const dates = ref<string[]>([])
+const dates = ref<string[]>([selectedDate.value])
 
 const detailDialog = ref(false)
 const detailLoading = ref(false)
@@ -73,6 +75,11 @@ const pankouHeaders = [
 ]
 
 async function fetchMatches() {
+  if (!selectedDate.value) {
+    dateError.value = '请选择日期'
+    return
+  }
+  dateError.value = ''
   loading.value = true
   try {
     const { data } = await getCrawlerMatches({
@@ -85,7 +92,7 @@ async function fetchMatches() {
     matches.value = data.list || []
     total.value = data.total || 0
     leagues.value = data.leagues || []
-    dates.value = data.dates || []
+    dates.value = [...new Set<string>([beijingToday(), selectedDate.value, ...(data.dates || [])])].filter(Boolean).sort().reverse()
   } finally {
     loading.value = false
   }
@@ -96,6 +103,13 @@ onMounted(fetchMatches)
 function handleSearch() {
   page.value = 1
   fetchMatches()
+}
+
+function resetFilters() {
+  keyword.value = ''
+  selectedDate.value = beijingToday()
+  selectedLeague.value = ''
+  handleSearch()
 }
 
 async function showDetail(matchId: string) {
@@ -190,7 +204,7 @@ function historySummary(record: CrawlerRecord, keys: string[]) {
 
 function historyRows(record: CrawlerRecord, keys: string[]) {
   return asArray(valueByKeys(record, keys)).map((item) => ({
-    matchTime: textValue(item.matchTime ?? item.match_time),
+    matchTime: formatBeijingDateTime(textValue(item.matchTime ?? item.match_time)),
     league: textValue(item.league),
     home: textValue(item.home),
     guest: textValue(item.guest),
@@ -326,10 +340,11 @@ function scoreValue(value: unknown) {
           <v-col cols="12" md="3">
             <v-select
               v-model="selectedDate"
-              :items="['', ...dates]"
-              label="日期"
+              :items="dates"
+              label="日期（北京时间）"
               clearable
-              hide-details
+              hide-details="auto"
+              :error-messages="dateError"
               @update:model-value="handleSearch"
             />
           </v-col>
@@ -345,7 +360,7 @@ function scoreValue(value: unknown) {
           </v-col>
           <v-col cols="12" md="2">
             <v-btn color="primary" @click="handleSearch">搜索</v-btn>
-            <v-btn class="ml-2" @click="keyword = ''; selectedDate = ''; selectedLeague = ''; handleSearch()">重置</v-btn>
+            <v-btn class="ml-2" @click="resetFilters">重置为今天</v-btn>
           </v-col>
         </v-row>
       </v-card-text>

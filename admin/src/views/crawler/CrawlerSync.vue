@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { generateAnalysisRuleSnapshot, getAnalysisRuleSnapshotData, getAnalysisRuleSnapshotInfo, getCrawlerLogDetail, syncCrawlerData } from '@/api'
+import { beijingToday } from '@/utils/date'
 
 interface RuleSnapshotRule {
   value: string
@@ -32,7 +33,7 @@ let pollTimer: number | undefined
 
 const form = reactive({
   type: 'all',
-  date: '',
+  date: beijingToday(),
   match_id: '',
   async: true,
   force: false,
@@ -56,17 +57,17 @@ const taskTypes = [
   { title: '全量同步 (包含所有)', value: 'all' },
 ]
 
-const detailTypes = ['history', 'rank', 'odds_euro', 'odds_pankou', 'odds_refresh']
+const detailTypes = ['history', 'rank', 'odds_euro', 'odds_pankou']
 const syncGuides: Record<string, string> = {
-  match_list: '拉比赛基础信息、比分状态和队徽。日期留空时走 today/next，会包含今日和明日；填日期时只拉那一天。',
+  match_list: '拉取所选单日的比赛基础信息、比分状态和队徽，日期默认北京时间今天。',
   history: '填比赛ID时只拉单场历史；不填比赛ID时按日期批量拉当天比赛历史。',
   rank: '填比赛ID时只拉单场排名/积分榜；不填比赛ID时按日期批量拉当天比赛排名/积分榜。',
   odds_euro: '填比赛ID时只拉单场欧赔；不填比赛ID时按日期批量拉当天比赛欧赔。',
   odds_pankou: '填比赛ID时只拉单场盘口；不填比赛ID时按日期批量拉当天比赛盘口。',
   odds_refresh: '阶段性更新赔率专用：强制刷新欧赔、亚盘和大小球，不重拉历史和排名。',
-  all: '启动后推荐先跑：比赛列表 -> 历史 -> 排名/积分榜 -> 欧赔 -> 盘口。日期留空时包含今日和明日，填日期时只跑那一天。',
+  all: '按所选单日依次执行：比赛列表 -> 历史 -> 排名/积分榜 -> 欧赔 -> 盘口，日期默认北京时间今天。',
 }
-const showDateInput = computed(() => form.type === 'match_list' || form.type === 'all' || detailTypes.includes(form.type))
+const showDateInput = computed(() => form.type === 'match_list' || form.type === 'all' || form.type === 'odds_refresh' || detailTypes.includes(form.type))
 const showMatchInput = computed(() => detailTypes.includes(form.type))
 const currentSyncGuide = computed(() => syncGuides[form.type] || '')
 const workflowSteps = [
@@ -77,18 +78,22 @@ const workflowSteps = [
 ]
 
 function useStartupPreset() {
-  Object.assign(form, { type: 'all', date: '', match_id: '', async: true, force: false })
+  Object.assign(form, { type: 'all', date: beijingToday(), match_id: '', async: true, force: false })
 }
 
 function useMatchListPreset() {
-  Object.assign(form, { type: 'match_list', date: '', match_id: '', async: true, force: false })
+  Object.assign(form, { type: 'match_list', date: beijingToday(), match_id: '', async: true, force: false })
 }
 
 function useOddsRefreshPreset() {
-  Object.assign(form, { type: 'odds_refresh', date: '', match_id: '', async: true, force: true })
+  Object.assign(form, { type: 'odds_refresh', date: beijingToday(), match_id: '', async: true, force: true })
 }
 
 async function handleSync() {
+  if (showDateInput.value && !form.date) {
+    errorMsg.value = '请选择日期'
+    return
+  }
   loading.value = true
   result.value = null
   errorMsg.value = ''
@@ -100,7 +105,7 @@ async function handleSync() {
       force: form.force,
     }
     if (form.date) payload.date = form.date
-    if (form.match_id) payload.match_id = form.match_id
+    if (showMatchInput.value && form.match_id) payload.match_id = form.match_id
 
     const { data } = await syncCrawlerData(payload as { type: string; date?: string; match_id?: string; async?: boolean; force?: boolean })
     result.value = data
@@ -220,10 +225,10 @@ onBeforeUnmount(() => {
               v-if="showDateInput"
               v-model="form.date"
               type="date"
-              label="日期 (可选)"
+              label="日期（北京时间）"
               prepend-inner-icon="mdi-calendar"
               clearable
-              hint="留空时 match_list/all/odds_refresh 覆盖今日+明日；选择日期时只处理那一天"
+              :hint="showMatchInput ? '只处理所选单日；如填写比赛 ID，则只处理该场比赛' : '只处理所选单日'"
               persistent-hint
               class="mb-3"
             />

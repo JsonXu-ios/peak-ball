@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"encoding/json"
 	"math"
 	"strings"
 )
@@ -22,9 +23,10 @@ type sportteryTradePayload struct {
 }
 
 type sportteryTradeData struct {
-	Tzbl      sportteryBettingRatio `json:"tzbl"`
-	JyykSpf   sportteryProfitSpf    `json:"jyykSpf"`
-	JyykRqspf sportteryProfitRqspf  `json:"jyykRqspf"`
+	OddsRecord json.RawMessage       `json:"-"`
+	Tzbl       sportteryBettingRatio `json:"tzbl"`
+	JyykSpf    sportteryProfitSpf    `json:"jyykSpf"`
+	JyykRqspf  sportteryProfitRqspf  `json:"jyykRqspf"`
 }
 
 type sportteryBettingRatio struct {

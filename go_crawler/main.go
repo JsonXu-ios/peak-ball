@@ -251,9 +251,22 @@ func main() {
 						if err != nil {
 							fmt.Printf("  Error fetching sporttery trade: %v\n", err)
 						}
-						om := ConvertOddsEuroToOddsMoney(matchId, targetDate, oeResp, sportteryTradeBody)
-						if err := DB.Clauses(clause.OnConflict{UpdateAll: true}).Create(&om).Error; err != nil {
-							fmt.Printf("  Error saving Odds Euro to DB: %v\n", err)
+						var sportteryOddsBody []byte
+						if optionalString(match.Model.JingcaiId) != "" {
+							sportteryOddsBody, err = fetchSportteryOdds(matchId)
+							if err != nil {
+								fmt.Printf("  Error fetching sporttery opening/latest odds: %v\n", err)
+							}
+						}
+						var previous OddsMoney
+						if err := DB.Select("sporttery_trade").Where("match_id = ?", matchId).Limit(1).Find(&previous).Error; err != nil {
+							fmt.Printf("  Error reading previous sporttery data, preserving existing odds row: %v\n", err)
+						} else {
+							sportteryTradeBody = mergeSportteryBodies(previous.SportteryTrade, sportteryTradeBody, sportteryOddsBody)
+							om := ConvertOddsEuroToOddsMoney(matchId, targetDate, oeResp, sportteryTradeBody)
+							if err := DB.Clauses(clause.OnConflict{UpdateAll: true}).Create(&om).Error; err != nil {
+								fmt.Printf("  Error saving Odds Euro to DB: %v\n", err)
+							}
 						}
 					}
 				}

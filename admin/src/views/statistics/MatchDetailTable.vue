@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+import { formatBeijingDateTime } from '@/utils/date'
 
 interface MatchDetail {
   match_id: string
@@ -59,7 +60,7 @@ function logoSrc(path?: string): string {
 }
 
 function timeText(row: MatchDetail): string {
-  return row.match_time || row.date
+  return formatBeijingDateTime(row.match_time || row.date)
 }
 </script>
 

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { getTrendStatistics } from '@/api'
+import { beijingToday, formatBeijingDateTime } from '@/utils/date'
 import TrendSparkline from './TrendSparkline.vue'
 
 interface TrendRecord {
@@ -87,10 +88,7 @@ const report = ref<Report | null>(null)
 const expanded = reactive<Record<string, boolean>>({})
 
 function todayText() {
-  const now = new Date()
-  const month = String(now.getMonth() + 1).padStart(2, '0')
-  const day = String(now.getDate()).padStart(2, '0')
-  return `${now.getFullYear()}-${month}-${day}`
+  return beijingToday()
 }
 
 const mode = ref<'upcoming' | 'history'>('upcoming')
@@ -243,14 +241,14 @@ function generatedAtText() {
 }
 
 async function fetchReport() {
+  if (!date.value) {
+    error.value = '请选择日期'
+    return
+  }
   loading.value = true
   error.value = ''
   try {
-    const params: { mode: string; n: number; start_date?: string; end_date?: string } = { mode: mode.value, n: n.value }
-    if (date.value) {
-      params.start_date = date.value
-      params.end_date = date.value
-    }
+    const params = { mode: mode.value, n: n.value, start_date: date.value, end_date: date.value }
     const { data } = await getTrendStatistics(params)
     report.value = data as Report
     Object.keys(expanded).forEach((key) => delete expanded[key])
@@ -260,6 +258,11 @@ async function fetchReport() {
   } finally {
     loading.value = false
   }
+}
+
+function resetDate() {
+  date.value = todayText()
+  fetchReport()
 }
 
 watch(mode, () => {
@@ -291,8 +294,9 @@ onMounted(() => fetchReport())
           <v-btn value="history" size="small">完赛回测</v-btn>
         </v-btn-toggle>
         <v-select v-model="n" :items="nOptions" density="compact" hide-details variant="outlined" style="max-width: 130px" />
-        <v-text-field v-model="date" type="date" label="日期" density="compact" hide-details variant="outlined" style="max-width: 170px" />
+        <v-text-field v-model="date" type="date" label="日期（北京时间）" density="compact" hide-details variant="outlined" style="max-width: 230px" />
         <v-btn size="small" variant="tonal" @click="fetchReport()">查询</v-btn>
+        <v-btn size="small" variant="text" @click="resetDate">今天</v-btn>
         <v-divider vertical class="mx-1" />
         <v-select
           v-model="league"
@@ -419,7 +423,7 @@ onMounted(() => fetchReport())
               <template v-for="m in rows" :key="m.match_id">
                 <tr :class="{ 'row-dim': !m.sufficient }">
                   <td class="text-no-wrap">
-                    <div>{{ m.match_time || m.date }}</div>
+                    <div>{{ formatBeijingDateTime(m.match_time || m.date) }}</div>
                     <div class="text-caption text-medium-emphasis">{{ m.league }}</div>
                   </td>
                   <td class="text-no-wrap">
@@ -538,7 +542,7 @@ onMounted(() => fetchReport())
                             </thead>
                             <tbody>
                               <tr v-for="r in team.list" :key="r.match_id + r.date">
-                                <td class="text-no-wrap">{{ r.match_time || r.date }}</td>
+                                <td class="text-no-wrap">{{ formatBeijingDateTime(r.match_time || r.date) }}</td>
                                 <td>{{ r.league }}</td>
                                 <td>{{ r.is_home ? '主' : '客' }}</td>
                                 <td>{{ r.opponent }}</td>

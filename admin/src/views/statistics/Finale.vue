@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { getFinalePredictions } from '@/api'
+import { beijingToday, formatBeijingDateTime } from '@/utils/date'
 
 /** 逐列命中：true=中、false=没中、null=不适用（信号为空/走盘），不计入命中率 */
 type Hit = boolean | null
@@ -67,52 +68,10 @@ interface Report {
   warning?: string
 }
 
-/** 区间快捷键。upcoming=未来待赛（默认）；其余都查存档 */
-const RANGES = [
-  { value: 'upcoming', label: '未来待赛' },
-  { value: 'yesterday', label: '昨天' },
-  { value: '3d', label: '近3天' },
-  { value: '7d', label: '近7天' },
-  { value: '30d', label: '近30天' },
-  { value: 'all', label: '全部' },
-  { value: 'custom', label: '自定义' },
-] as const
-
-type RangeValue = (typeof RANGES)[number]['value']
-
 const loading = ref(false)
 const report = ref<Report | null>(null)
 const error = ref('')
-const range = ref<RangeValue>('upcoming')
-const customStart = ref('')
-const customEnd = ref('')
-
-function ymd(offsetDays: number): string {
-  const date = new Date()
-  date.setDate(date.getDate() + offsetDays)
-  const pad = (value: number) => String(value).padStart(2, '0')
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`
-}
-
-function rangeParams(value: RangeValue) {
-  switch (value) {
-    case 'upcoming':
-      return undefined
-    case 'yesterday':
-      return { mode: 'history', start: ymd(-1), end: ymd(-1) }
-    case '3d':
-      return { mode: 'history', start: ymd(-2), end: ymd(0) }
-    case '7d':
-      return { mode: 'history', start: ymd(-6), end: ymd(0) }
-    case '30d':
-      return { mode: 'history', start: ymd(-29), end: ymd(0) }
-    case 'custom':
-      // 起止都留空就是全部；只填一头也允许（另一头不限）。
-      return { mode: 'history', start: customStart.value, end: customEnd.value }
-    default:
-      return { mode: 'history' }
-  }
-}
+const date = ref(beijingToday())
 
 const isHistory = computed(() => report.value?.mode === 'history')
 const rows = computed(() => report.value?.predictions ?? [])
@@ -225,10 +184,14 @@ function accuracyColor(accuracy: number, matched: number) {
 }
 
 async function fetchReport() {
+  if (!date.value) {
+    error.value = '请选择日期'
+    return
+  }
   loading.value = true
   error.value = ''
   try {
-    const { data } = await getFinalePredictions(rangeParams(range.value))
+    const { data } = await getFinalePredictions({ mode: 'history', start: date.value, end: date.value })
     report.value = data as Report
   } catch (requestError) {
     const err = requestError as { response?: { data?: { error?: string } }; message?: string }
@@ -238,8 +201,8 @@ async function fetchReport() {
   }
 }
 
-function selectRange(value: RangeValue) {
-  range.value = value
+function resetDate() {
+  date.value = beijingToday()
   fetchReport()
 }
 
@@ -253,8 +216,8 @@ onMounted(() => fetchReport())
     <div class="d-flex flex-wrap align-center mb-4 ga-3">
       <div>
         <div class="text-body-2 text-medium-emphasis mt-1">
-          今天起 {{ report?.horizon_days ?? 14 }} 天内命中「前端主推≥70%」信号的场次，赛前自动存档；比赛完赛后（拉回结果即可）自动逐列结算命中。
-          <b>今天的比赛全部保留</b>，已开赛/已完赛的照样列出并显示比分与对错，不会踢一场少一场（存档仍严格按开赛时间冻结，前瞻实测不受影响）。
+          查看所选单日命中「前端主推≥70%」信号的比赛和赛前存档；比赛完赛后（拉回结果即可）自动逐列结算命中。
+          <b>当天的未开赛、进行中和已完赛存档均保留</b>，比分和命中标记仅在已结算后显示，存档仍严格按开赛时间冻结。
           <span class="text-error font-weight-bold">红色=偏主队</span>、<span class="text-success font-weight-bold">绿色=偏客队</span>；主推概率、亚盘/大小球盘口与交易/模拟盈亏推荐仅随行展示，不参与预测。两列<b>买小球</b>用同一个差值 =<b> 大小球盘口 − 球数综合均值</b>（历史场均与近期场均等权），按差值落在哪一段分开显示、<b>互斥</b>，一场比赛最多填一列，<b>只推小球——判到大球的场次两列都留空</b>：<b>超出±0.75</b> 列走【完赛基础统计】#33 的反向判断（差值 ≤−0.75，即均值高出盘口 0.75 球以上）；<b>±0.75内</b> 列走 #32 的常规判断（差值为正，即均值低于盘口）。本页只展示、不计入命中率。历史模式下：<b>赛果</b>列预测错的用<span class="text-purple font-weight-bold">紫色</span>标出；大小球推荐<b>打出</b>的用<span class="text-teal font-weight-bold">青色</span>、没打出的压成灰色，未结算的按方向上色（<span class="text-warning font-weight-bold">橙=买大</span>、<span class="text-info font-weight-bold">蓝=买小</span>）。
         </div>
       </div>
@@ -263,41 +226,9 @@ onMounted(() => fetchReport())
     </div>
 
     <div class="d-flex flex-wrap align-center ga-3 mb-4">
-      <v-btn-toggle
-        :model-value="range"
-        density="comfortable"
-        color="primary"
-        variant="outlined"
-        mandatory
-        class="flex-wrap"
-        @update:model-value="selectRange"
-      >
-        <v-btn v-for="item in RANGES" :key="item.value" :value="item.value">{{ item.label }}</v-btn>
-      </v-btn-toggle>
-
-      <template v-if="range === 'custom'">
-        <v-text-field
-          v-model="customStart"
-          type="date"
-          label="起"
-          density="compact"
-          variant="outlined"
-          hide-details
-          style="max-width: 170px"
-        />
-        <span class="text-medium-emphasis">~</span>
-        <v-text-field
-          v-model="customEnd"
-          type="date"
-          label="止"
-          density="compact"
-          variant="outlined"
-          hide-details
-          style="max-width: 170px"
-        />
-        <v-btn :loading="loading" color="primary" variant="tonal" @click="fetchReport">查询</v-btn>
-        <span class="text-caption text-medium-emphasis">起止填同一天=看某一天</span>
-      </template>
+      <v-text-field v-model="date" type="date" label="日期（北京时间）" density="compact" variant="outlined" hide-details style="max-width: 230px" />
+      <v-btn :loading="loading" color="primary" variant="tonal" @click="fetchReport">查询</v-btn>
+      <v-btn variant="text" :disabled="loading" @click="resetDate">今天</v-btn>
     </div>
 
     <v-alert v-if="error" type="error" variant="tonal" class="mb-5">{{ error }}</v-alert>
@@ -310,7 +241,7 @@ onMounted(() => fetchReport())
         <v-col cols="12" md="3">
           <v-card color="primary" variant="tonal">
             <v-card-text>
-              <div class="text-body-2">{{ isHistory ? '区间内存档场次' : `窗口内比赛（今天起${report.horizon_days}天）` }}</div>
+              <div class="text-body-2">所选日期比赛</div>
               <div class="text-h4 font-weight-bold mt-1">
                 {{ (isHistory ? rows.length : report.upcoming_total).toLocaleString() }}
               </div>
@@ -344,7 +275,7 @@ onMounted(() => fetchReport())
             <v-card-text>
               <div class="text-body-2 text-medium-emphasis">生成时间</div>
               <div class="text-subtitle-1 font-weight-medium mt-1">{{ report.generated_at }}</div>
-              <div class="text-caption text-medium-emphasis">每次打开实时计算并结算</div>
+              <div class="text-caption text-medium-emphasis">按所选日期查询，未结算比赛不计命中率</div>
             </v-card-text>
           </v-card>
         </v-col>
@@ -357,7 +288,7 @@ onMounted(() => fetchReport())
             已结算 {{ report.accuracy.settled_total.toLocaleString() }} 场
           </v-chip>
           <v-chip size="small" variant="text">
-            {{ isHistory ? (report.start || report.end ? `${report.start || '最早'} ~ ${report.end || '最新'}` : '全部') : '全部存档（未来待赛不参与结算）' }}
+            {{ report.start || date }}（未结算比赛不参与命中率）
           </v-chip>
         </v-card-title>
         <v-card-subtitle class="pb-2 text-wrap">
@@ -433,7 +364,7 @@ onMounted(() => fetchReport())
       <v-card>
         <v-card-text>
           <div v-if="!rows.length" class="text-medium-emphasis text-center py-10">
-            {{ isHistory ? '该区间内没有主推≥70% 的比赛（既没有赛前存档，回算也没算出符合条件的场次）。' : '当前没有符合信号的待赛比赛。' }}
+            所选日期没有主推≥70% 的比赛（既没有赛前存档，回算也没算出符合条件的场次）。
           </div>
           <v-table v-else density="comfortable" class="finale-table">
             <thead>
@@ -468,7 +399,7 @@ onMounted(() => fetchReport())
                   :key="p.match_id"
                   :class="p.pick === 'home' ? 'row-home' : p.pick === 'away' ? 'row-away' : ''"
                 >
-                  <td class="text-no-wrap">{{ p.match_time || p.date }}</td>
+                  <td class="text-no-wrap">{{ formatBeijingDateTime(p.match_time || p.date) }}</td>
                   <td v-if="isHistory" class="text-no-wrap">
                     <v-chip
                       :color="p.source === 'archive' ? 'primary' : 'warning'"

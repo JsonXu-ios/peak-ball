@@ -21,6 +21,7 @@ import (
 	"go_admin/models"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
 
 var runningCrawls sync.Map
@@ -546,6 +547,8 @@ func crawlerRequestType(rawURL string) string {
 		return "odds_pankou"
 	case strings.Contains(rawURL, "/match/jczq/lr/"):
 		return "sporttery_trade"
+	case strings.Contains(rawURL, "/match/jczq/sporttery/"):
+		return "sporttery_odds"
 	case strings.HasSuffix(rawURL, "/history"):
 		return "history"
 	case strings.HasSuffix(rawURL, "/rank"):
@@ -910,7 +913,8 @@ func crawlOddsEuro(ctx *crawlContext, matchID string) error {
 	isJingcai := crawlerMatchIsJingcai(matchID)
 	dataExists := hasExistingCrawlerData("odds_moneys", "data", matchID)
 	tradeExists := !isJingcai || hasExistingCrawlerData("odds_moneys", "sporttery_trade", matchID)
-	if !ctx.request.Force && dataExists && tradeExists {
+	pricesExist := !isJingcai || hasExistingCrawlerSportteryOdds(matchID)
+	if !ctx.request.Force && dataExists && tradeExists && pricesExist {
 		ctx.markSkipped(matchID)
 		return nil
 	}
@@ -935,6 +939,12 @@ func crawlOddsEuro(ctx *crawlContext, matchID string) error {
 
 	if isJingcai && (ctx.request.Force || !tradeExists) {
 		if err := crawlSportteryTrade(ctx, matchID); err != nil {
+			ctx.markFailed(matchID, err)
+			return err
+		}
+	}
+	if isJingcai && (ctx.request.Force || !pricesExist) {
+		if err := crawlSportteryOdds(matchID); err != nil {
 			ctx.markFailed(matchID, err)
 			return err
 		}
@@ -1430,6 +1440,11 @@ func upsertCrawlerJSON(tableName string, columnName string, matchID string, body
 			updates["date"] = crawlerMatchDate(matchID)
 		}
 		return database.DB.Table(tableName).Create(updates).Error
+	}
+	if tableName == "odds_moneys" && columnName == "sporttery_trade" {
+		// The lr and sporttery endpoints share an existing JSON column. Merge
+		// atomically so refreshing either never removes the other source.
+		updates[columnName] = gorm.Expr("JSON_MERGE_PATCH(CASE WHEN JSON_TYPE(sporttery_trade) = 'OBJECT' THEN sporttery_trade ELSE JSON_OBJECT() END, CAST(? AS JSON))", body)
 	}
 	return database.DB.Table(tableName).Where("match_id = ?", matchID).Updates(updates).Error
 }
