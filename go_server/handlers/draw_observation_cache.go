@@ -256,12 +256,15 @@ func (cache *drawObservationCache) read(q drawObservationQuery) (drawObservation
 		return drawObservationResponse{}, err
 	}
 	for i := range response.Items {
+		var modelInput *drawFeatureStudyRow
 		quote := quotes[response.Items[i].MatchID]
 		response.Items[i].AsianHandicap, response.Items[i].GoalsLine, response.Items[i].EuroOdds = quote.asian, quote.total, quote.euro
 		if value, exists := frontend[response.Items[i].MatchID]; exists {
 			response.Items[i].FrontendAnalysis = value.analysis
 			response.Items[i].CompanyQuotes = value.companies
+			modelInput = value.modelInput
 		}
+		response.Items[i].FrozenDrawSignal = drawObservationModelSignal(response.Items[i], modelInput)
 	}
 	return response, nil
 }

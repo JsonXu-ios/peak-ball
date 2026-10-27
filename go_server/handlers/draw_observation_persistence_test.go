@@ -273,3 +273,167 @@ func TestDrawObservationsPersistenceBulkForceParsesHistoryOnlyOnce(t *testing.T)
 		t.Fatalf("bulk rebuild repeated global parsing: base=%d days=%d", fake.baseCalls.Load(), fake.targetCalls.Load())
 	}
 }
+
+func TestDrawObservationsPersistenceSnapshotSurvivesContinuousExternalUpdates(t *testing.T) {
+	outside := newDrawObservationsFake()
+	frozen := newDrawObservationsFake()
+	frozen.marketLine = "0.25"
+	store := newDrawResultMemoryStore()
+	sourceCalls := 0
+	reader := newDrawObservationResultReader(store, func(q drawObservationQuery) (drawObservationSourceVersion, error) {
+		sourceCalls++
+		return drawObservationSourceVersion{Namespace: "test:draw", Core: fmt.Sprint(sourceCalls), Day: fmt.Sprint(sourceCalls)}, nil
+	}, outside.loaders())
+	snapshots := 0
+	reader.snapshot = func(q drawObservationQuery, build func(drawObservationSourceVersion, drawObservationLoaders) (*drawObservationStoredDay, error)) (*drawObservationStoredDay, error) {
+		snapshots++
+		// The transaction has its own fixed version even when the fast check
+		// saw a preceding version and the crawler continues writing outside it.
+		version := drawObservationSourceVersion{Namespace: "test:draw", Core: "snapshot", Day: "snapshot"}
+		return build(version, frozen.loaders())
+	}
+	result, err := reader.read(drawObservationQuery{date: "2026-10-21", mode: "today", scope: "all", page: 1, size: 50})
+	if err != nil {
+		t.Fatal("consistent transaction snapshot rejected concurrent source changes", err)
+	}
+	if sourceCalls != 1 || snapshots != 1 || result.DataVersion != "snapshot" || result.Total != 3 {
+		t.Fatalf("snapshot was retried against live source: source=%d snapshots=%d result=%+v", sourceCalls, snapshots, result)
+	}
+	if outside.baseCalls.Load() != 0 || outside.targetCalls.Load() != 0 || frozen.baseCalls.Load() != 1 || frozen.targetCalls.Load() != 1 || *result.Items[0].AsianHandicap.Opening != "0.25" {
+		t.Fatal("snapshot generation mixed transaction and outside loaders")
+	}
+	saved, err := reader.storedDay("test:draw:day:2026-10-21", "2026-10-21", "snapshot")
+	if err != nil || saved == nil || saved.Version != result.DataVersion {
+		t.Fatal("snapshot result was not persisted under its own version", err)
+	}
+}
+
+func TestDrawObservationsPersistenceSnapshotFailureDoesNotPublishDayOrKeepClosedLoader(t *testing.T) {
+	fake := newDrawObservationsFake()
+	fake.baseFailures.Store(1)
+	store := newDrawResultMemoryStore()
+	reader := newDrawObservationResultReader(store, drawResultTestSource, fake.loaders())
+	reader.snapshot = func(q drawObservationQuery, build func(drawObservationSourceVersion, drawObservationLoaders) (*drawObservationStoredDay, error)) (*drawObservationStoredDay, error) {
+		closed := false
+		loaders := fake.loaders()
+		original := loaders.base
+		loaders.base = func() (drawObservationBase, error) {
+			if closed {
+				return drawObservationBase{}, errors.New("transaction is already closed")
+			}
+			return original()
+		}
+		version, _ := drawResultTestSource(q)
+		day, err := build(version, loaders)
+		closed = true
+		return day, err
+	}
+	q := drawObservationQuery{date: "2026-10-21", mode: "today", scope: "all", page: 1, size: 50}
+	if _, err := reader.read(q); err == nil {
+		t.Fatal("failed snapshot reported success")
+	}
+	if _, exists := store.values["test:draw:day:2026-10-21"]; exists {
+		t.Fatal("failed snapshot published a durable day")
+	}
+	if result, err := reader.read(q); err != nil || result.Total != 3 {
+		t.Fatalf("failed snapshot kept a closed transaction loader: total=%d error=%v", result.Total, err)
+	}
+}
+
+func TestDrawObservationsPersistenceDoesNotPublishBeforeSnapshotCommit(t *testing.T) {
+	fake := newDrawObservationsFake()
+	store := newDrawResultMemoryStore()
+	reader := newDrawObservationResultReader(store, drawResultTestSource, fake.loaders())
+	reader.snapshot = func(q drawObservationQuery, build func(drawObservationSourceVersion, drawObservationLoaders) (*drawObservationStoredDay, error)) (*drawObservationStoredDay, error) {
+		version, _ := drawResultTestSource(q)
+		day, err := build(version, fake.loaders())
+		if err != nil {
+			return day, err
+		}
+		return day, errors.New("read transaction commit failed")
+	}
+	q := drawObservationQuery{date: "2026-10-21", mode: "today", scope: "all", page: 1, size: 50}
+	if _, err := reader.read(q); err == nil || !strings.Contains(err.Error(), "commit failed") {
+		t.Fatal("snapshot commit error hidden", err)
+	}
+	if _, exists := store.values["test:draw:day:2026-10-21"]; exists {
+		t.Fatal("day was published before the snapshot committed")
+	}
+}
+
+func TestDrawObservationsPersistenceSnapshotDifferentDateUsesCurrentTransactionLoaders(t *testing.T) {
+	fake := newDrawObservationsFake()
+	store := newDrawResultMemoryStore()
+	reader := newDrawObservationResultReader(store, drawResultTestSource, fake.loaders())
+	reader.snapshot = func(q drawObservationQuery, build func(drawObservationSourceVersion, drawObservationLoaders) (*drawObservationStoredDay, error)) (*drawObservationStoredDay, error) {
+		closed := false
+		loaders := fake.loaders()
+		base, targets, coverage, quotes := loaders.base, loaders.targets, loaders.coverage, loaders.quotes
+		loaders.base = func() (drawObservationBase, error) {
+			if closed {
+				return drawObservationBase{}, errors.New("closed transaction base")
+			}
+			return base()
+		}
+		loaders.targets = func(schema drawObservationSchema, query drawObservationQuery) ([]drawObservationTarget, error) {
+			if closed {
+				return nil, errors.New("closed transaction targets")
+			}
+			return targets(schema, query)
+		}
+		loaders.coverage = func(schema drawObservationSchema, ids []string) (map[string]drawObservationQuotesBundle, error) {
+			if closed {
+				return nil, errors.New("closed transaction coverage")
+			}
+			return coverage(schema, ids)
+		}
+		loaders.quotes = func(schema drawObservationSchema, ids []string) (map[string]drawObservationEuroOdds, error) {
+			if closed {
+				return nil, errors.New("closed transaction quotes")
+			}
+			return quotes(schema, ids)
+		}
+		version, _ := drawResultTestSource(q)
+		day, err := build(version, loaders)
+		closed = true
+		return day, err
+	}
+	for _, date := range []string{"2026-10-21", "2026-10-20"} {
+		if _, err := reader.read(drawObservationQuery{date: date, mode: "today", scope: "all", page: 1, size: 50}); err != nil {
+			t.Fatal("different date retained closed transaction loaders", err)
+		}
+	}
+	if fake.baseCalls.Load() != 1 || fake.targetCalls.Load() != 2 {
+		t.Fatal("immutable base was not shared independently from transaction day loaders")
+	}
+}
+
+func TestDrawObservationsPersistenceSnapshotPublishesOnlyInItsDatabaseNamespace(t *testing.T) {
+	fake := newDrawObservationsFake()
+	store := newDrawResultMemoryStore()
+	namespace := "database-before"
+	source := func(q drawObservationQuery) (drawObservationSourceVersion, error) {
+		return drawObservationSourceVersion{Namespace: namespace, Core: "core", Day: "day:" + q.date}, nil
+	}
+	reader := newDrawObservationResultReader(store, source, fake.loaders())
+	snapshots := 0
+	reader.snapshot = func(q drawObservationQuery, build func(drawObservationSourceVersion, drawObservationLoaders) (*drawObservationStoredDay, error)) (*drawObservationStoredDay, error) {
+		snapshots++
+		namespace = "database-snapshot"
+		version, _ := source(q)
+		return build(version, fake.loaders())
+	}
+	q := drawObservationQuery{date: "2026-10-21", mode: "today", scope: "all", page: 1, size: 50}
+	if _, err := reader.read(q); err != nil {
+		t.Fatal(err)
+	}
+	if _, exists := store.values["database-before:day:2026-10-21"]; exists {
+		t.Fatal("snapshot published in the fast check's old database namespace")
+	}
+	if _, exists := store.values["database-snapshot:day:2026-10-21"]; !exists {
+		t.Fatal("snapshot missing from its own database namespace")
+	}
+	if _, err := reader.read(q); err != nil || snapshots != 1 {
+		t.Fatal("database-specific persisted snapshot was not reused", err)
+	}
+}

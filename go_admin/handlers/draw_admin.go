@@ -72,6 +72,10 @@ func GetDrawObservationsAdmin(c *gin.Context) {
 	proxyDrawAdmin(c, "/draw/observations", 120*time.Second)
 }
 
+func GetDrawObservationDatesAdmin(c *gin.Context) {
+	proxyDrawAdmin(c, "/draw/observations/dates", 15*time.Second)
+}
+
 func RebuildDrawHistoryAdmin(c *gin.Context) {
 	// Add existing analysis inputs at the admin boundary, where the shared
 	// catalogue and context builders are available. Never import the historical

@@ -9,9 +9,42 @@ export type DrawFrontendAnalysis = Pick<AnalysisMatch,
   | 'winProbability' | 'drawProbability' | 'loseProbability'
   | 'sanhuxinli' | 'kailiresult' | 'ticairesult'
 > & {
+  /** Same current average European odds used by the frontend calculation; null means unavailable. */
+  averageEuroOdds?: number[] | null
+  comparisonStages?: DrawComparisonStage[]
+  predictionAvailability?: { kelly: DrawPredictionState; ticai: DrawPredictionState }
   basis?: { asian: string; goals: string; kelly: string; ticai: string }
+  /** Strict original inputs for the weighted support score; missing is never zero. */
+  weightedFeatureInputs?: {
+    homeHeat: number | null
+    officialProfitRates: [number | null, number | null, number | null]
+  }
   roiSimulation: MatchRoiSimulation | null
   localMarket: BookmakerMarket | null
+}
+
+export interface DrawPredictionState {
+  available: boolean
+  reason: string
+  /** Win/draw/loss order. Kelly indices, or signed William minus sporttery prices. */
+  values?: number[] | null
+}
+
+export interface DrawComparisonMetric extends DrawPredictionState {
+  result: string[]
+  basis: string
+}
+
+export interface DrawComparisonStage {
+  key: 'opening' | 'latest'
+  label: string
+  note: string
+  kelly: DrawComparisonMetric
+  ticai: DrawComparisonMetric
+  williamAverage: DrawComparisonMetric
+  william: number[] | null
+  sporttery: number[] | null
+  average: number[] | null
 }
 
 export interface DrawFrontendLoadState {
@@ -70,6 +103,7 @@ export interface DrawObservedLine {
 }
 
 export interface DrawObservedEuroOdds {
+	openingStatus?: 'available' | 'unopened' | 'no_quotes' | 'not_collected'
   company: string
   opening: Array<string | null>
   latest: Array<string | null>
@@ -85,6 +119,23 @@ export interface DrawCompanyQuote {
   goalsLine: DrawObservedLine
 }
 
+/** Fixed model selection is computed without the target match result. */
+export interface FrozenDrawSignal {
+  modelVersion: string
+  state: 'selected' | 'not_selected' | 'unavailable' | 'out_of_scope'
+  score?: number
+  threshold?: number
+  reason?: string
+}
+
+export interface DrawObservationDatesResponse {
+  month: string
+  mode: 'today' | 'history'
+  scope: 'all' | 'sporttery'
+  scheduleTimezone: string
+  dates: Array<{ date: string; count: number; matchCount: number; drawCount: number }>
+}
+
 export interface DrawObservation {
   matchId: string
   jingcaiId?: string
@@ -98,6 +149,8 @@ export interface DrawObservation {
   displayState: string
   status: number
   settled: boolean
+  /** Explicit confirmation of a usable regulation-time result; absent on older responses. */
+  regulationSettled?: boolean
   homeRecent: DrawRecentHistory
   awayRecent: DrawRecentHistory
   headToHead?: DrawRecentHistory
@@ -106,6 +159,7 @@ export interface DrawObservation {
   euroOdds: DrawObservedEuroOdds
   companyQuotes?: DrawCompanyQuote[] | null
   frontendAnalysis?: DrawFrontendAnalysis | null
+  frozenDrawSignal?: FrozenDrawSignal | null
   sources: string[]
   warnings: string[]
 }

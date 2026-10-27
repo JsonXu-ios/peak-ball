@@ -5,6 +5,13 @@ import { clearDrawFrontendCache, loadDrawCompanyQuotes, loadDrawFrontendAnalysis
 import { BEIJING_TIME_ZONE, beijingToday, formatBeijingDateTime } from '@/utils/date'
 import type { DrawFrontendAnalysis, DrawFrontendLoadState, DrawObservation, DrawObservationQuery, DrawObservedEuroOdds, DrawObservedLine, DrawRecentMatch, DrawObservationsResponse } from '@/types/drawHistory'
 import DrawFrontendData from './DrawFrontendData.vue'
+import DrawFeatureSignal from './DrawFeatureSignal.vue'
+import DrawProfitSummary from './DrawProfitSummary.vue'
+import DrawFrozenSignal from './DrawFrozenSignal.vue'
+import DrawSecondarySignal from './DrawSecondarySignal.vue'
+import DrawScheduleDate from './DrawScheduleDate.vue'
+import { DRAW_FEATURE_NOTE } from '@/utils/drawFeature'
+import { classifySecondaryDraw, SECONDARY_DRAW_THRESHOLD, SECONDARY_DRAW_VERSION } from '@/utils/drawSecondarySignal'
 
 const loading = ref(false)
 const error = ref('')
@@ -13,6 +20,7 @@ const mode = ref<'today' | 'history' | 'counts'>('today')
 const scope = ref<'all' | 'sporttery'>('all')
 const scopeOptions = [{ title: '全部赛事', value: 'all' }, { title: '竞彩赛事', value: 'sporttery' }]
 const scheduleDate = ref(beijingToday())
+const calendarRevision = ref(0)
 const league = ref<string | null>(null)
 const leagueOptions = ref<string[]>([])
 const search = ref('')
@@ -42,6 +50,18 @@ let sequence = 0
 const pages = computed(() => Math.max(1, Math.ceil((report.value?.total || 0) / pageSize.value)))
 const legacyHistoryCoverage = computed(() => !!report.value && mode.value !== 'today' && !report.value.scheduleTimezone)
 const summaryPrefix = computed(() => scope.value === 'sporttery' ? '竞彩主比赛表' : '主比赛表')
+const secondarySummary = computed(() => {
+  const counts = { selected: 0, retained: 0, rejected: 0, unavailable: 0 }
+  for (const row of report.value?.items || []) {
+    if (row.frozenDrawSignal?.state !== 'selected') continue
+    counts.selected++
+    const decision = classifySecondaryDraw(row).decision
+    if (decision === 'retained') counts.retained++
+    else if (decision === 'rejected') counts.rejected++
+    else counts.unavailable++
+  }
+  return counts
+})
 const emptyMessage = computed(() => {
   if (loading.value) return '正在读取本地比赛…'
   if (error.value) return '查询失败，请查看上方错误提示后重试'
@@ -90,12 +110,20 @@ function quote(value: string | null | undefined) {
   return value === null || value === undefined || value === '' ? '暂无' : value
 }
 
+function needsSportteryOpening(row: DrawObservation) {
+  if (!row.jingcaiId?.trim()) return false
+  const values = row.companyQuotes?.find((company) => company.key === 'sporttery')?.euroOdds.opening
+  const status = row.companyQuotes?.find((company) => company.key === 'sporttery')?.euroOdds.openingStatus
+  if (status === 'unopened' || status === 'no_quotes') return false
+  return !values || values.length !== 3 || values.some((raw) => raw == null || !Number.isFinite(Number(raw)) || Number(raw) <= 0)
+}
+
 function toggle(row: DrawObservation) {
   const closing = expanded.value.includes(row.matchId)
   expanded.value = closing
     ? expanded.value.filter((id) => id !== row.matchId)
     : [...expanded.value, row.matchId]
-  if (!closing && (row.companyQuotes === undefined || (row.jingcaiId?.trim() && !row.frontendAnalysis?.basis && !quoteStates[row.matchId]))) void supplementQuotes(row)
+  if (!closing && (row.companyQuotes === undefined || (needsSportteryOpening(row) && !quoteStates[row.matchId]))) void supplementQuotes(row)
 }
 
 function supplementError(error: unknown) {
@@ -125,7 +153,7 @@ async function supplementAnalysis(target = report.value, request = sequence, ref
 }
 
 async function supplementQuotes(row: DrawObservation, refresh = false) {
-  if (row.companyQuotes !== undefined && row.frontendAnalysis?.basis && !refresh) return
+  if (row.companyQuotes !== undefined && !needsSportteryOpening(row) && !refresh) return
   const target = report.value
   if (!target?.items.includes(row)) return
   const request = sequence
@@ -251,7 +279,10 @@ async function load(resetPage = false, refresh = false) {
     ...filters,
   }
   const request = ++sequence
-  if (refresh) clearDrawFrontendCache()
+  if (refresh) {
+    clearDrawFrontendCache()
+    calendarRevision.value++
+  }
   const prefetched: AnalysisPrefetch | undefined = legacyAnalysisObserved.value
     ? loadDrawFrontendAnalysis(submitted.date!).then((value) => ({ value }), (error: unknown) => ({ error }))
     : undefined
@@ -338,11 +369,11 @@ onBeforeUnmount(() => { sequence++ })
       <v-col cols="6" md="3"><v-card variant="tonal"><v-card-text><div class="text-caption">{{ mode === 'today' ? '当日赛程' : '历史平局' }}亚盘有记录</div><div class="text-h5 font-weight-bold">{{ legacyHistoryCoverage ? '—' : count(report?.summary.asianMatches) }}</div><div class="text-caption text-medium-emphasis">{{ legacyHistoryCoverage ? '当前接口未提供单日覆盖数' : '仅实际盘口记录' }}</div></v-card-text></v-card></v-col>
       <v-col cols="6" md="3"><v-card variant="tonal"><v-card-text><div class="text-caption">{{ mode === 'today' ? '当日赛程' : '历史平局' }}大小球有记录</div><div class="text-h5 font-weight-bold">{{ legacyHistoryCoverage ? '—' : count(report?.summary.totalMatches) }}</div><div class="text-caption text-medium-emphasis">{{ legacyHistoryCoverage ? '当前接口未提供单日覆盖数' : '仅实际盘口记录' }}</div></v-card-text></v-card></v-col>
     </v-row>
-    <div class="text-caption text-medium-emphasis mb-4">前两项总数统计本地主比赛表全历史，随赛事范围变化，不受日期、联赛、球队和次数条件影响。赛前近 10 场及交锋仍使用双方全部赛事记录。{{ legacyHistoryCoverage ? '当前接口未提供历史单日盘口覆盖数，已留空。' : '盘口覆盖按所选赛事范围与单日的目标比赛统计，不受联赛、球队和分页筛选影响。' }}<span v-if="mode === 'counts'">筛选后场数见下方结果。</span></div>
+    <div class="text-caption text-medium-emphasis mb-4">前两项总数统计本地主比赛表全历史，随赛事范围变化，不受日期、联赛、球队和次数条件影响。竞彩范围按本地竞彩编号识别；缺少编号的比赛不会计入，场数不代表竞彩数据已采集完整。赛前近 10 场及交锋仍使用双方全部赛事记录。{{ legacyHistoryCoverage ? '当前接口未提供历史单日盘口覆盖数，已留空。' : '盘口覆盖按所选赛事范围与单日的目标比赛统计，不受联赛、球队和分页筛选影响。' }}<span v-if="mode === 'counts'">筛选后场数见下方结果。</span></div>
 
     <v-card class="mb-4">
       <v-card-text class="d-flex flex-wrap align-center ga-3">
-        <v-text-field v-model="scheduleDate" type="date" label="赛程日期（北京时间）" density="compact" variant="outlined" hide-details class="filter-date" @update:model-value="invalidateDate" @change="load(true)" />
+        <DrawScheduleDate v-model="scheduleDate" :mode="mode === 'today' ? 'today' : 'history'" :scope="scope" :revision="calendarRevision" class="filter-date" @update:model-value="invalidateDate" @change="load(true)" />
         <v-select v-model="scope" :items="scopeOptions" label="赛事范围" density="compact" variant="outlined" hide-details class="filter-scope" @update:model-value="changeScope" />
         <v-autocomplete v-model="league" :items="leagueOptions" label="全部联赛" clearable density="compact" variant="outlined" hide-details class="filter-league" @update:model-value="invalidateResults" />
         <v-text-field v-model="search" label="球队 / 比赛 ID" prepend-inner-icon="mdi-magnify" density="compact" variant="outlined" hide-details class="filter-search" @update:model-value="invalidateResults" @keyup.enter="load(true)" />
@@ -374,6 +405,19 @@ onBeforeUnmount(() => { sequence++ })
       所有标签仅查看所选赛程日与赛事范围：今日比赛列出当日赛程，历史平局和平局次数仅列已完赛平局。双方近 10 场合计主客场并排除本场，最新在左，不足 10 场按实际数量显示。赔率与水位缺失显示“暂无”，即时盘展示当前已获取的最新报价；日期按源站赛程日查询。
     </v-alert>
 
+    <v-card variant="outlined" class="mb-4 secondary-observation-note" :data-secondary-version="SECONDARY_DRAW_VERSION">
+      <v-card-text class="py-3">
+        <div class="text-body-2"><strong>二次筛选观察 v1：</strong>原模型入选后，模型分数低于 {{ SECONDARY_DRAW_THRESHOLD.toFixed(3) }} 剔除，达到门槛保留。分数不是平局概率，赛果仅用于核对。</div>
+        <div v-if="report" class="d-flex flex-wrap ga-3 text-caption mt-2" aria-live="polite">
+          <span>本页原入选 {{ secondarySummary.selected }} 场</span>
+          <span class="text-primary">二次保留 {{ secondarySummary.retained }} 场</span>
+          <span class="text-warning">二次剔除 {{ secondarySummary.rejected }} 场</span>
+          <span v-if="secondarySummary.unavailable">待计算 {{ secondarySummary.unavailable }} 场</span>
+        </div>
+        <div class="text-caption text-medium-emphasis mt-1">按当前快照判断，原模型标记保留供对照。本页数量不代表全部筛选结果；查看误选和误剔请使用“今日比赛”并切换赛程日。</div>
+      </v-card-text>
+    </v-card>
+
     <v-card>
       <v-card-title class="d-flex flex-wrap align-center ga-3 text-subtitle-1">
         <v-icon size="20">mdi-table-search</v-icon>{{ report?.date || scheduleDate }} {{ mode === 'today' ? '全部赛程' : mode === 'counts' ? '平局次数筛选结果' : '历史平局明细' }}
@@ -385,13 +429,15 @@ onBeforeUnmount(() => { sequence++ })
       <v-progress-linear v-if="loading" indeterminate color="primary" />
       <v-divider v-else />
       <v-table density="comfortable" class="observation-table">
-        <thead><tr><th>时间 / 联赛</th><th>主队 / 客队</th><th>比分 / 状态</th><th>主队赛前近 10 场</th><th>客队赛前近 10 场</th><th>赛前历史交锋</th><th>欧赔（主 / 平 / 客）</th><th>亚盘（主 / 客水位）</th><th>大小球（大 / 小水位）</th><th>热度 / 专业信号</th><th>核查</th></tr></thead>
+        <thead><tr><th>时间 / 联赛</th><th>主队 / 客队</th><th>比分 / 状态</th><th title="固定竞彩选平模型按输入决定是否入选，完赛后才核对是否命中平局">模型选平 ⓘ</th><th title="二次筛选 v1：原模型入选且分数达到0.225保留，低于门槛剔除；原标记保留对照">二次筛选 ⓘ</th><th>主队赛前近 10 场</th><th>客队赛前近 10 场</th><th>赛前历史交锋</th><th>欧赔（主 / 平 / 客）</th><th>亚盘（主 / 客水位）</th><th>大小球（大 / 小水位）</th><th>投注热度</th><th>初盘对比</th><th>即时盘对比</th><th :title="DRAW_FEATURE_NOTE">平局特征 ⓘ</th><th>竞彩庄家盈亏</th><th>模拟庄家盈亏</th><th>核查</th></tr></thead>
         <tbody>
           <template v-for="row in report?.items || []" :key="row.matchId">
             <tr class="match-row" :class="{ 'is-expanded': expanded.includes(row.matchId) }" tabindex="0" role="button" :aria-expanded="expanded.includes(row.matchId)" @click="toggle(row)" @keydown.enter.prevent="toggle(row)" @keydown.space.prevent="toggle(row)">
               <td><div>{{ dateTime(row.matchTime || row.date) }}</div><div class="text-caption text-medium-emphasis">{{ row.league }}</div><div v-if="row.jingcaiId?.trim()" class="text-caption text-medium-emphasis">竞彩：{{ row.jingcaiId }}</div></td>
               <td><div>{{ row.home }}</div><div class="text-medium-emphasis">{{ row.guest }}</div></td>
               <td><div v-if="row.settled" class="font-weight-bold text-primary">{{ row.homeScore }} : {{ row.awayScore }}</div><div v-else class="text-medium-emphasis">未结算</div><div class="text-caption text-medium-emphasis">{{ row.displayState || (row.settled ? '已完赛' : '未完赛') }}</div></td>
+              <td class="frozen-signal-cell"><DrawFrozenSignal :row="row" /></td>
+              <td class="secondary-signal-cell"><DrawSecondarySignal :row="row" /></td>
               <td v-for="team in teams(row)" :key="team.key">
                 <div v-if="mode !== 'counts' || team.recent.sample > 0" class="text-body-2 mb-1"><strong>{{ team.recent.draws }} / {{ team.recent.sample }}</strong><span class="text-caption text-medium-emphasis ml-1">场平局</span></div>
                 <div v-if="team.recent.matches.length" class="result-strip"><span v-for="match in team.recent.matches" :key="match.matchId" class="result-badge" :class="`result-${match.result}`" :title="recentTitle(match)">{{ resultLabel(match.result) }}</span></div>
@@ -414,11 +460,15 @@ onBeforeUnmount(() => { sequence++ })
                 </template>
                 <span v-else class="text-medium-emphasis">暂无</span>
               </td>
-              <td><DrawFrontendData :row="row" :analysis-state="frontendStates[row.matchId]" compact @retry-analysis="supplementAnalysis(report, sequence, true)" /></td>
+              <td class="heat-cell"><DrawFrontendData :row="row" :analysis-state="frontendStates[row.matchId]" compact heat-only @retry-analysis="supplementAnalysis(report, sequence, true)" /></td>
+              <td v-for="stage in (['opening', 'latest'] as const)" :key="stage" class="comparison-cell" :data-comparison-column="stage"><DrawFrontendData :row="row" :analysis-state="frontendStates[row.matchId]" compact :comparison-stage="stage" @retry-analysis="supplementAnalysis(report, sequence, true)" /></td>
+              <td class="feature-cell"><DrawFeatureSignal :row="row" :analysis-state="frontendStates[row.matchId]" @retry-analysis="supplementAnalysis(report, sequence, true)" /></td>
+              <td class="profit-cell"><DrawProfitSummary :row="row" kind="sporttery" :analysis-state="frontendStates[row.matchId]" @retry-analysis="supplementAnalysis(report, sequence, true)" /></td>
+              <td class="profit-cell"><DrawProfitSummary :row="row" kind="simulated" :analysis-state="frontendStates[row.matchId]" @retry-analysis="supplementAnalysis(report, sequence, true)" /></td>
               <td><v-icon :icon="expanded.includes(row.matchId) ? 'mdi-chevron-up' : 'mdi-chevron-down'" size="20" /><div v-if="row.warnings?.length" class="text-caption text-warning">{{ row.warnings.length }} 项说明</div></td>
             </tr>
             <tr v-if="expanded.includes(row.matchId)" class="detail-row">
-              <td colspan="11" class="pa-4">
+              <td colspan="18" class="pa-4">
                 <div class="d-flex flex-wrap align-center ga-2 mb-3"><span class="text-subtitle-2">赛前历史战绩与交锋</span><span class="text-caption text-medium-emphasis">比赛 ID：{{ row.matchId }}</span><v-spacer /><span class="text-caption text-medium-emphasis">仅列本场之前的有效完赛记录</span></div>
                 <v-row>
                   <v-col v-for="team in teams(row)" :key="team.key" cols="12" xl="6">
@@ -442,7 +492,7 @@ onBeforeUnmount(() => { sequence++ })
               </td>
             </tr>
           </template>
-          <tr v-if="!report?.items?.length"><td colspan="11" class="text-center py-12 text-medium-emphasis">{{ emptyMessage }}</td></tr>
+          <tr v-if="!report?.items?.length"><td colspan="18" class="text-center py-12 text-medium-emphasis">{{ emptyMessage }}</td></tr>
         </tbody>
       </v-table>
       <v-divider />
@@ -468,6 +518,7 @@ onBeforeUnmount(() => { sequence++ })
 .result-loss { color: #b13737; background: #fce5e5; }
 .line-cell { min-width: 260px; }
 .euro-cell { min-width: 230px; }
+.comparison-cell :deep(.frontend-summary) { min-width: 310px; }
 .quote-row { display: grid; grid-template-columns: 60px repeat(3, minmax(40px, 1fr)); gap: 8px; align-items: baseline; }
 .water-values { display: inline-flex; gap: 10px; margin-left: 12px; font-size: 12px; color: rgba(var(--v-theme-on-surface), .7); }
 .detail-row { background: rgba(var(--v-theme-primary), .025); }

@@ -45,3 +45,25 @@ func TestSportteryRecordedSingleRowAndUnopenedLatest(t *testing.T) {
 		t.Fatal("unopened latest record borrowed an older lr quote")
 	}
 }
+
+func TestSportteryRecordedOpeningSkipsZeroAndIncompletePrefix(t *testing.T) {
+	wrapped := datatypes.JSON(`{"sportteryOdds":{"code":0,"data":{"spf":{"frist":0,"odds":[{"spf3":0,"spf1":0,"spf0":0},{"spf3":1.6,"spf1":3.7},{"spf3":1.55,"spf1":3.85,"spf0":4.45},{"spf3":1.36,"spf1":4.68,"spf0":5.55}]}}}}`)
+	quote := drawObservationCompanyEuro(models.OddsMoney{SportteryTrade: wrapped}, "sporttery", "竞彩")
+	if *quote.Opening[0] != "1.55" || *quote.Opening[1] != "3.85" || *quote.Opening[2] != "4.45" || *quote.Latest[0] != "1.36" {
+		t.Fatalf("unopened/partial records became the opening price: %+v", quote)
+	}
+	wrapped = datatypes.JSON(`{"sportteryOdds":{"code":0,"data":{"spf":{"odds":[{"spf3":0,"spf1":0,"spf0":0}]}}}}`)
+	quote = drawObservationCompanyEuro(models.OddsMoney{SportteryTrade: wrapped}, "sporttery", "竞彩")
+	if quote.Source != "missing" || quote.Opening[0] != nil || quote.Opening[1] != nil || quote.Opening[2] != nil || *quote.Latest[0] != "0" {
+		t.Fatal("an entirely unopened market fabricated a valid opening price")
+	}
+}
+
+func TestSportteryRecordedOpeningStatusDistinguishesMissingAndEmpty(t *testing.T) {
+	if sportteryRecordedOpeningStatus(json.RawMessage(`{"code":0,"data":null}`)) != "no_quotes" || sportteryRecordedOpeningStatus(json.RawMessage(`{"code":0}`)) != "not_collected" {
+		t.Fatal("source's null market was confused with a missing capture")
+	}
+	if sportteryRecordedOpeningStatus(nil) != "not_collected" || sportteryRecordedOpeningStatus(json.RawMessage(`{"code":0,"data":{}}`)) != "no_quotes" || sportteryRecordedOpeningStatus(json.RawMessage(`{"code":1,"data":{}}`)) != "not_collected" {
+		t.Fatal("missing capture and an empty successful source were confused")
+	}
+}

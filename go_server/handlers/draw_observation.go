@@ -45,36 +45,39 @@ type drawObservationLine struct {
 }
 
 type drawObservationEuroOdds struct {
-	Company    string     `json:"company"`
-	Opening    []*string  `json:"opening"`
-	Latest     []*string  `json:"latest"`
-	Source     string     `json:"source"`
-	CapturedAt *time.Time `json:"capturedAt"`
+	OpeningStatus string     `json:"openingStatus,omitempty"`
+	Company       string     `json:"company"`
+	Opening       []*string  `json:"opening"`
+	Latest        []*string  `json:"latest"`
+	Source        string     `json:"source"`
+	CapturedAt    *time.Time `json:"capturedAt"`
 }
 
 type drawObservationItem struct {
-	MatchID          string                           `json:"matchId"`
-	JingcaiID        string                           `json:"jingcaiId"`
-	Date             string                           `json:"date"`
-	MatchTime        time.Time                        `json:"matchTime"`
-	League           string                           `json:"league"`
-	Home             string                           `json:"home"`
-	Guest            string                           `json:"guest"`
-	HomeScore        int                              `json:"homeScore"`
-	AwayScore        int                              `json:"awayScore"`
-	Status           int                              `json:"status"`
-	DisplayState     string                           `json:"displayState"`
-	Settled          bool                             `json:"settled"`
-	HomeRecent       drawObservationRecent            `json:"homeRecent"`
-	AwayRecent       drawObservationRecent            `json:"awayRecent"`
-	HeadToHead       drawObservationRecent            `json:"headToHead"`
-	AsianHandicap    drawObservationLine              `json:"asianHandicap"`
-	GoalsLine        drawObservationLine              `json:"goalsLine"`
-	EuroOdds         drawObservationEuroOdds          `json:"euroOdds"`
-	FrontendAnalysis *drawObservationFrontendAnalysis `json:"frontendAnalysis,omitempty"`
-	CompanyQuotes    []drawObservationCompanyQuotes   `json:"companyQuotes,omitempty"`
-	Sources          []string                         `json:"sources"`
-	Warnings         []string                         `json:"warnings"`
+	MatchID           string                           `json:"matchId"`
+	JingcaiID         string                           `json:"jingcaiId"`
+	Date              string                           `json:"date"`
+	MatchTime         time.Time                        `json:"matchTime"`
+	League            string                           `json:"league"`
+	Home              string                           `json:"home"`
+	Guest             string                           `json:"guest"`
+	HomeScore         int                              `json:"homeScore"`
+	AwayScore         int                              `json:"awayScore"`
+	Status            int                              `json:"status"`
+	DisplayState      string                           `json:"displayState"`
+	Settled           bool                             `json:"settled"`
+	RegulationSettled *bool                            `json:"regulationSettled,omitempty"`
+	HomeRecent        drawObservationRecent            `json:"homeRecent"`
+	AwayRecent        drawObservationRecent            `json:"awayRecent"`
+	HeadToHead        drawObservationRecent            `json:"headToHead"`
+	AsianHandicap     drawObservationLine              `json:"asianHandicap"`
+	GoalsLine         drawObservationLine              `json:"goalsLine"`
+	EuroOdds          drawObservationEuroOdds          `json:"euroOdds"`
+	FrontendAnalysis  *drawObservationFrontendAnalysis `json:"frontendAnalysis,omitempty"`
+	CompanyQuotes     []drawObservationCompanyQuotes   `json:"companyQuotes,omitempty"`
+	Sources           []string                         `json:"sources"`
+	Warnings          []string                         `json:"warnings"`
+	FrozenDrawSignal  *drawObservationFrozenSignal     `json:"frozenDrawSignal,omitempty"`
 }
 
 type drawObservationSummary struct {
@@ -864,7 +867,8 @@ func buildDrawObservations(data drawObservationData, q drawObservationQuery) dra
 		if away.Sample < 10 {
 			warnings = append(warnings, fmt.Sprintf("客队赛前可核对记录仅 %d 场", away.Sample))
 		}
-		response.Items = append(response.Items, drawObservationItem{MatchID: g.ID, JingcaiID: m.JingcaiID, Date: drawObservationDate(m), MatchTime: g.Kickoff, League: drawObservationLeague(m), Home: m.Home, Guest: m.Guest, HomeScore: m.HomeScore, AwayScore: m.GuestScore, Status: m.Status, DisplayState: m.DisplayState, Settled: drawCompleted(m), HomeRecent: home, AwayRecent: away, HeadToHead: windows.h2h, AsianHandicap: ah, GoalsLine: gl, EuroOdds: drawObservationEuro(data.Odds[g.ID]), Sources: append([]string{}, target.Sources...), Warnings: warnings})
+		_, _, regulationSettled := drawRegulationResult(m)
+		response.Items = append(response.Items, drawObservationItem{MatchID: g.ID, JingcaiID: m.JingcaiID, Date: drawObservationDate(m), MatchTime: g.Kickoff, League: drawObservationLeague(m), Home: m.Home, Guest: m.Guest, HomeScore: m.HomeScore, AwayScore: m.GuestScore, Status: m.Status, DisplayState: m.DisplayState, Settled: drawCompleted(m), RegulationSettled: &regulationSettled, HomeRecent: home, AwayRecent: away, HeadToHead: windows.h2h, AsianHandicap: ah, GoalsLine: gl, EuroOdds: drawObservationEuro(data.Odds[g.ID]), Sources: append([]string{}, target.Sources...), Warnings: warnings})
 	}
 	return response
 }

@@ -1,6 +1,10 @@
 package handlers
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"math"
+	"strings"
+)
 
 // sportteryOdds is kept alongside the original lr payload, in the existing
 // sporttery_trade JSON column. The provider's matchId belongs to another ID
@@ -21,11 +25,54 @@ func sportteryRecordedPrices(raw json.RawMessage) (opening, latest []*string, pr
 		return []*string{drawObservationRawLine(row["spf3"]), drawObservationRawLine(row["spf1"]), drawObservationRawLine(row["spf0"])}
 	}
 	rows := payload.Data.Spf.Odds
-	return quote(rows[0]), quote(rows[len(rows)-1]), true
+	opening = make([]*string, 3)
+	for _, row := range rows {
+		prices := quote(row)
+		valid := true
+		for _, raw := range prices {
+			if raw == nil {
+				valid = false
+				break
+			}
+			value := parseFloat(*raw)
+			if value <= 0 || math.IsNaN(value) || math.IsInf(value, 0) {
+				valid = false
+				break
+			}
+		}
+		if valid {
+			opening = prices
+			break
+		}
+	}
+	return opening, quote(rows[len(rows)-1]), true
 }
 
 func sportteryRecordedBody(raw []byte) json.RawMessage {
 	var payload map[string]json.RawMessage
 	_ = json.Unmarshal(raw, &payload)
 	return payload["sportteryOdds"]
+}
+
+func sportteryRecordedOpeningStatus(raw json.RawMessage) string {
+	if opening, _, present := sportteryRecordedPrices(raw); present {
+		if opening[0] != nil {
+			return "available"
+		}
+		return "unopened"
+	}
+	var payload struct {
+		Code *int            `json:"code"`
+		Data json.RawMessage `json:"data"`
+	}
+	if json.Unmarshal(raw, &payload) == nil && payload.Code != nil && *payload.Code == 0 && len(payload.Data) > 0 {
+		if strings.TrimSpace(string(payload.Data)) == "null" {
+			return "no_quotes"
+		}
+		var data map[string]json.RawMessage
+		if json.Unmarshal(payload.Data, &data) == nil {
+			return "no_quotes"
+		}
+	}
+	return "not_collected"
 }

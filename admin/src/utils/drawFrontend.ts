@@ -1,10 +1,42 @@
 import type { AnalysisMatch } from '../../../src/types/analysis'
-import type { DrawCompanyQuote, DrawFrontendAnalysis, DrawObservedEuroOdds, DrawObservedLine } from '@/types/drawHistory'
+import type { DrawCompanyQuote, DrawComparisonStage, DrawComparisonMetric, DrawFrontendAnalysis, DrawObservedEuroOdds, DrawObservedLine, DrawObservation } from '@/types/drawHistory'
 
 type RecordValue = Record<string, unknown>
 type CompanyKey = DrawCompanyQuote['key']
 const companies: Array<{ key: CompanyKey; name: string }> = [{ key: 'sporttery', name: '竞彩' }, { key: 'william', name: '威廉' }, { key: 'bet365', name: 'Bet365' }]
 const own = (record: RecordValue, key: string) => Object.prototype.hasOwnProperty.call(record, key)
+
+/** Never display a legacy substituted model as a validated named prediction. */
+export function drawObservationSignal(row: DrawObservation, kind: 'kelly' | 'ticai') {
+  const analysis = row.frontendAnalysis
+  const state = analysis?.predictionAvailability?.[kind]
+  const unavailable = (reason: string) => ({ available: false, text: `暂无（${reason}）`, reason })
+  if (state && !state.available) return unavailable(state.reason || '计算数据不足')
+  if (kind === 'ticai' && row.companyQuotes !== undefined) {
+    const missing = (['sporttery', 'william'] as const).filter((key) => {
+      const quote = row.companyQuotes?.find((company) => company.key === key)?.euroOdds
+      return quote?.source !== 'odds_moneys' || !quote.latest || quote.latest.length < 3 || quote.latest.slice(0, 3).some((raw) => raw === null || raw.trim() === '' || !Number.isFinite(Number(raw)) || Number(raw) <= 0)
+    }).map((key) => key === 'sporttery' ? '竞彩' : '威廉')
+    if (missing.length) return unavailable(`缺少${missing.join('、')}完整有效的即时赔率`)
+  }
+  if (!state) return { available: false, text: '待校验', reason: '当前接口尚未提供预测输入校验，旧回退结果不展示' }
+  const values = kind === 'kelly' ? analysis?.kailiresult : analysis?.ticairesult
+  if (!values?.length || values.some((value) => !['胜', '平', '负'].includes(value))) return unavailable('后台未返回有效预测结果')
+  return { available: true, text: values.join(' / '), reason: '' }
+}
+
+/** Show the exact inputs used for the named direction, without substituting another company. */
+export function drawPredictionValues(row: DrawObservation, kind: 'kelly' | 'ticai') {
+  const signal = drawObservationSignal(row, kind)
+  const state = row.frontendAnalysis?.predictionAvailability?.[kind]
+  const raw = state?.values !== undefined ? state.values
+    : kind === 'ticai' && signal.available ? drawWilliamSportteryDifferences(row.companyQuotes).map((item) => item.difference) : null
+  const valid = signal.available && raw?.length === 3 && raw.every((value) => typeof value === 'number' && Number.isFinite(value) && (kind !== 'kelly' || value > 0))
+  return {
+    reason: !signal.available ? signal.reason : valid ? '' : '当前接口尚未提供计算明细',
+    items: ['胜', '平', '负'].map((outcome, index) => ({ outcome, value: valid ? raw![index] as number : null })),
+  }
+}
 
 /** Signed, per-outcome price differences. Missing/unopened prices are not zero. */
 export function drawWilliamSportteryDifferences(quotes: DrawCompanyQuote[] | null | undefined) {
@@ -18,6 +50,68 @@ export function drawWilliamSportteryDifferences(quotes: DrawCompanyQuote[] | nul
     const w = price(william?.[index]), s = price(sporttery?.[index])
     return { outcome, william: w, sporttery: s, difference: w === null || s === null ? null : Math.round((w - s) * 100) / 100 }
   })
+}
+
+/** Legacy localAverageOdds contains the same real average, never a simulated market. */
+export function drawAverageEuroOdds(analysis: DrawFrontendAnalysis | null | undefined): Array<number | null> {
+  const market = analysis?.localMarket
+  const raw = analysis?.averageEuroOdds !== undefined
+    ? analysis.averageEuroOdds
+    : market?.key === 'localAverageOdds' && market.oddsAvailable
+      ? [market.odds.home, market.odds.draw, market.odds.away] : null
+  return [0, 1, 2].map((index) => {
+    const value = raw?.[index]
+    return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : null
+  })
+}
+
+/** Separate from the sporttery prediction: compare signed William and average prices. */
+export function drawWilliamAverageDifferences(row: DrawObservation) {
+  const william = row.companyQuotes?.find((quote) => quote.key === 'william')?.euroOdds.latest
+  const average = drawAverageEuroOdds(row.frontendAnalysis)
+  return ['胜', '平', '负'].map((outcome, index) => {
+    const raw = william?.[index]
+    const value = raw == null || raw.trim() === '' ? NaN : Number(raw)
+    const w = Number.isFinite(value) && value > 0 ? value : null
+    const a = average[index] ?? null
+    return { outcome, william: w, average: a, difference: w === null || a === null ? null : Math.round((w - a) * 100) / 100 }
+  })
+}
+
+/** Keep opening/latest columns compatible with both old and new analysis responses. */
+export function drawComparisonStages(row: DrawObservation): DrawComparisonStage[] {
+  const missing = (reason: string): DrawComparisonMetric => ({ available: false, reason, values: null, result: [], basis: '' })
+  const prices = (key: 'william' | 'sporttery', phase: 'opening' | 'latest') => {
+    const values = row.companyQuotes?.find((company) => company.key === key)?.euroOdds[phase]
+    const parsed = values?.slice(0, 3).map((value) => value == null || value.trim() === '' ? NaN : Number(value))
+    return parsed?.length === 3 && parsed.every((value) => Number.isFinite(value) && value > 0) ? parsed : null
+  }
+  const difference = (a: number[] | null, b: number[] | null, basis: string): DrawComparisonMetric => {
+    if (!a || !b) return missing(`缺少${basis}所需的完整报价`)
+    const values = a.map((value, index) => value - b[index]!)
+    // Same tie preference as the backend; compare unrounded signed values by magnitude.
+    const min = Math.min(...values.map(Math.abs))
+    const index = [2, 1, 0].find((index) => Math.abs(values[index]!) === min)!
+    return { available: true, reason: '', values, result: [['胜', '平', '负'][index]!], basis }
+  }
+  const kelly = drawPredictionValues(row, 'kelly'), ticai = drawPredictionValues(row, 'ticai')
+  const average = drawAverageEuroOdds(row.frontendAnalysis)
+  const currentAverage = average.every((value) => value !== null) ? average as number[] : null
+  const latest: DrawComparisonStage = {
+    key: 'latest', label: '即时盘', note: '使用本地已采集的最新报价。',
+    kelly: { available: !kelly.reason, reason: kelly.reason, values: kelly.reason ? null : kelly.items.map((item) => item.value!), result: row.frontendAnalysis?.kailiresult || [], basis: row.frontendAnalysis?.basis?.kelly || '' },
+    ticai: { available: !ticai.reason, reason: ticai.reason, values: ticai.reason ? null : ticai.items.map((item) => item.value!), result: row.frontendAnalysis?.ticairesult || [], basis: row.frontendAnalysis?.basis?.ticai || '' },
+    william: prices('william', 'latest'), sporttery: prices('sporttery', 'latest'), average: currentAverage,
+    williamAverage: difference(prices('william', 'latest'), currentAverage, '威廉即时盘－平均欧赔即时盘'),
+  }
+  const opening: DrawComparisonStage = {
+    key: 'opening', label: '初盘', note: '各公司首个有效初盘分别比较，不混用即时盘；初盘报价时间可能不同。',
+    kelly: missing('当前接口尚未提供初盘凯利计算明细'),
+    ticai: difference(prices('william', 'opening'), prices('sporttery', 'opening'), '威廉初盘－竞彩初盘'),
+    williamAverage: missing('当前接口尚未提供平均欧赔初盘'),
+    william: prices('william', 'opening'), sporttery: prices('sporttery', 'opening'), average: null,
+  }
+  return [opening, latest].map((fallback) => row.frontendAnalysis?.comparisonStages?.find((stage) => stage.key === fallback.key) || fallback)
 }
 
 /** Keep JSON numeric quote text (including 0.00) without changing quoted strings. */
@@ -102,12 +196,18 @@ function euroQuote(odds: RecordValue, key: CompanyKey, name: string): DrawObserv
     const recorded = record(trade.sportteryOdds)
     const official = record(recorded.data)
     const history = record(official.spf).odds
+    result.openingStatus = Number(recorded.code) === 0 && own(recorded, 'data') ? 'no_quotes' : 'not_collected'
     const nested = record(trade.data)
     if (own(nested, 'tzbl')) trade = nested
     const ratio = record(trade.tzbl)
     result.latest = ['h', 'd', 'a'].map((key) => text(ratio[key]))
     if (Array.isArray(history) && history.length && Number(recorded.code ?? 0) === 0) {
-      result.opening = ['spf3', 'spf1', 'spf0'].map((key) => text(record(history[0])[key]))
+      const firstPriced = history.find((row) => ['spf3', 'spf1', 'spf0'].every((key) => {
+        const raw = text(record(row)[key])
+        return raw !== null && Number.isFinite(Number(raw)) && Number(raw) > 0
+      }))
+      result.opening = ['spf3', 'spf1', 'spf0'].map((key) => text(record(firstPriced)[key]))
+      result.openingStatus = firstPriced ? 'available' : 'unopened'
       result.latest = ['spf3', 'spf1', 'spf0'].map((key) => text(record(history[history.length - 1])[key]))
     }
     if (result.latest.some((value) => value !== null)) result.company = name

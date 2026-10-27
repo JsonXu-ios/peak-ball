@@ -21,7 +21,6 @@ import (
 	"go_admin/models"
 
 	"github.com/gin-gonic/gin"
-	"gorm.io/gorm"
 )
 
 var runningCrawls sync.Map
@@ -1444,7 +1443,7 @@ func upsertCrawlerJSON(tableName string, columnName string, matchID string, body
 	if tableName == "odds_moneys" && columnName == "sporttery_trade" {
 		// The lr and sporttery endpoints share an existing JSON column. Merge
 		// atomically so refreshing either never removes the other source.
-		updates[columnName] = gorm.Expr("JSON_MERGE_PATCH(CASE WHEN JSON_TYPE(sporttery_trade) = 'OBJECT' THEN sporttery_trade ELSE JSON_OBJECT() END, CAST(? AS JSON))", body)
+		updates[columnName] = crawlerSportteryJSONUpdate(body)
 	}
 	return database.DB.Table(tableName).Where("match_id = ?", matchID).Updates(updates).Error
 }

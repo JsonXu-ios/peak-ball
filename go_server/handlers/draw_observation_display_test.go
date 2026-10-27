@@ -3,6 +3,7 @@ package handlers
 import (
 	"database/sql"
 	"errors"
+	"math"
 	"reflect"
 	"sort"
 	"strings"
@@ -43,6 +44,9 @@ func TestDrawObservationsFrontendCopiesExistingCalculationAndKeepsRawSeparate(t 
 	got := buildDrawObservationFrontend(match, history, odds, pankou)
 	want := drawObservationFrontendValues(&response)
 	want.Basis = got.analysis.Basis // Provenance supplements, without changing shared values.
+	want.PredictionAvailability = got.analysis.PredictionAvailability
+	want.ComparisonStages = got.analysis.ComparisonStages
+	want.WeightedFeatureInputs = got.analysis.WeightedFeatureInputs // Strict source-presence supplements.
 	if !reflect.DeepEqual(got.analysis, want) || !reflect.DeepEqual(got.analysis.LocalMarket, response.Platform.LocalMarket) {
 		t.Fatalf("frontend display changed the shared calculation: got=%+v want=%+v", got.analysis, want)
 	}
@@ -63,10 +67,35 @@ func TestDrawObservationsFrontendCopiesExistingCalculationAndKeepsRawSeparate(t 
 	}
 }
 
+func TestDrawObservationsAverageOddsExposeRealInputsWithoutGenericProbabilities(t *testing.T) {
+	match, history, odds, pankou := drawObservationDisplayFixture()
+	got := buildDrawObservationFrontend(match, history, odds, pankou).analysis
+	if !reflect.DeepEqual(got.AverageEuroOdds, []float64{2, 3.1, 3.5}) {
+		t.Fatalf("stored average not exposed: %v", got.AverageEuroOdds)
+	}
+	// No source average: share the existing mean of ALL companies, not only William.
+	odds.AvgOdds = nil
+	got = buildDrawObservationFrontend(match, history, odds, pankou).analysis
+	if len(got.AverageEuroOdds) != 3 {
+		t.Fatalf("company mean missing: %v", got.AverageEuroOdds)
+	}
+	for i, want := range []float64{2.05, 3.1, 3.35} {
+		if math.Abs(got.AverageEuroOdds[i]-want) > 1e-12 {
+			t.Fatalf("company mean differs from the real inputs: %v", got.AverageEuroOdds)
+		}
+	}
+	for _, input := range []models.OddsMoney{{}, {AvgOdds: datatypes.JSON(`{"odds":["2","0","3"]}`)}} {
+		missing := buildDrawObservationFrontend(match, history, input, pankou).analysis
+		if missing.AverageEuroOdds != nil {
+			t.Fatalf("invalid/missing average became odds: %v", missing.AverageEuroOdds)
+		}
+	}
+}
+
 func TestDrawObservationsAnalysisBasisReportsActualCompanyAndFallback(t *testing.T) {
 	_, _, odds, pankou := drawObservationDisplayFixture()
 	basis := drawObservationBasis(odds, pankou)
-	if !strings.Contains(basis.Asian, "Bet365") || !strings.Contains(basis.Goals, "Bet365") || !strings.Contains(basis.Kelly, "Bet365") || !strings.Contains(basis.Ticai, "竞彩即时赔率") {
+	if !strings.Contains(basis.Asian, "Bet365") || !strings.Contains(basis.Goals, "Bet365") || !strings.Contains(basis.Kelly, "Bet365") || !strings.Contains(basis.Ticai, "威廉与竞彩") {
 		t.Fatalf("normal calculation source missing: %+v", basis)
 	}
 	// Existing shared logic falls back to the first company if Bet365 is absent.
@@ -75,11 +104,11 @@ func TestDrawObservationsAnalysisBasisReportsActualCompanyAndFallback(t *testing
 	odds.Data = datatypes.JSON(`{"odds":[{"companyId":"16","companyName":"10B**","odds":["2.31","3.80","2.95"]},{"companyId":"115","companyName":"***","odds":["2.25","3.50","2.88"]}]}`)
 	odds.SportteryTrade = nil
 	basis = drawObservationBasis(odds, pankou)
-	if !strings.Contains(basis.Asian, "威廉") || !strings.Contains(basis.Kelly, "10B**（欧赔 ID 16）") || !strings.Contains(basis.Goals, "回退") || !strings.Contains(basis.Ticai, "平均欧赔") {
+	if !strings.Contains(basis.Asian, "威廉") || !strings.Contains(basis.Kelly, "10B**（欧赔 ID 16）") || !strings.Contains(basis.Goals, "回退") || !strings.Contains(basis.Ticai, "缺少竞彩") {
 		t.Fatalf("fallback was relabeled as the preferred company: %+v", basis)
 	}
 	basis = drawObservationBasis(models.OddsMoney{}, models.PankouMoney{})
-	if !strings.Contains(basis.Kelly, "赔率不足") || !strings.Contains(basis.Ticai, "赔率不足") || !strings.Contains(basis.Asian, "缺少盘口") {
+	if !strings.Contains(basis.Kelly, "缺少完整") || !strings.Contains(basis.Ticai, "缺少竞彩、威廉") || !strings.Contains(basis.Asian, "缺少盘口") {
 		t.Fatalf("missing inputs falsely claim actual company prices: %+v", basis)
 	}
 }

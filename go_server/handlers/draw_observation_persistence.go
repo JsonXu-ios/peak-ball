@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"database/sql"
 	"encoding/gob"
 	"encoding/json"
 	"fmt"
@@ -15,11 +16,13 @@ import (
 	"time"
 
 	"github.com/redis/go-redis/v9"
+	"go_server/database"
+	"gorm.io/gorm"
 )
 
 // Results have no TTL. Source revisions, calculation version and explicit
 // refresh control regeneration; application restarts do not discard them.
-const drawObservationResultVersion = "v2"
+const drawObservationResultVersion = "v10-weighted-feature-inputs"
 
 type drawObservationResultStore interface {
 	get(context.Context, string) ([]byte, error)
@@ -93,9 +96,12 @@ type drawObservationResultFlight struct {
 	err  error
 }
 type drawObservationResultReader struct {
-	store      drawObservationResultStore
-	source     func(drawObservationQuery) (drawObservationSourceVersion, error)
-	loaders    drawObservationLoaders
+	store   drawObservationResultStore
+	source  func(drawObservationQuery) (drawObservationSourceVersion, error)
+	loaders drawObservationLoaders
+	// SQL readers build from one MVCC snapshot. Injectable loaders without a
+	// snapshot retain the bounded optimistic validation used by unit callers.
+	snapshot   func(drawObservationQuery, func(drawObservationSourceVersion, drawObservationLoaders) (*drawObservationStoredDay, error)) (*drawObservationStoredDay, error)
 	mu         sync.Mutex
 	generation string
 	generator  *drawObservationCache
@@ -106,7 +112,27 @@ func newDrawObservationResultReader(store drawObservationResultStore, source fun
 	return &drawObservationResultReader{store: store, source: source, loaders: loaders, flights: map[string]*drawObservationResultFlight{}}
 }
 
-var drawObservationResults = newDrawObservationResultReader(newDrawObservationRedisStore(), newDrawObservationSourceLoader(), drawObservationSQLLoaders())
+var drawObservationResults = newDrawObservationSQLResultReader(newDrawObservationRedisStore())
+
+func newDrawObservationSQLResultReader(store drawObservationResultStore) *drawObservationResultReader {
+	reader := newDrawObservationResultReader(store, newDrawObservationSourceLoaderWithMemo(func() *gorm.DB { return database.DB }, store, false), drawObservationSQLLoaders())
+	reader.snapshot = func(q drawObservationQuery, build func(drawObservationSourceVersion, drawObservationLoaders) (*drawObservationStoredDay, error)) (day *drawObservationStoredDay, err error) {
+		if database.DB == nil {
+			return nil, fmt.Errorf("数据库尚未连接")
+		}
+		err = database.DB.Transaction(func(tx *gorm.DB) error {
+			resolve := func() *gorm.DB { return tx }
+			source, sourceErr := newDrawObservationSourceLoaderWithMemo(resolve, store, true)(q)
+			if sourceErr != nil {
+				return sourceErr
+			}
+			day, sourceErr = build(source, drawObservationSQLLoadersForDB(resolve))
+			return sourceErr
+		}, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true})
+		return day, err
+	}
+	return reader
+}
 
 func drawObservationPack(encode func(io.Writer) error) ([]byte, error) {
 	var buffer bytes.Buffer
@@ -141,13 +167,17 @@ func drawObservationUnpack(data []byte, decode func(io.Reader) error) error {
 }
 
 func (reader *drawObservationResultReader) generationCache(source drawObservationSourceVersion, force bool) *drawObservationCache {
+	return reader.generationCacheWithLoaders(source, force, reader.loaders)
+}
+
+func (reader *drawObservationResultReader) generationCacheWithLoaders(source drawObservationSourceVersion, force bool, originalLoaders drawObservationLoaders) *drawObservationCache {
 	reader.mu.Lock()
 	defer reader.mu.Unlock()
 	generation := source.Namespace + ":" + source.Core
 	if !force && reader.generator != nil && reader.generation == generation {
 		return reader.generator
 	}
-	loaders := reader.loaders
+	loaders := originalLoaders
 	original := loaders.base
 	loaders.base = func() (drawObservationBase, error) {
 		key := source.Namespace + ":base"
@@ -184,14 +214,24 @@ func (reader *drawObservationResultReader) generationCache(source drawObservatio
 }
 
 func (reader *drawObservationResultReader) buildDay(q drawObservationQuery, source drawObservationSourceVersion, forceBase bool) (*drawObservationStoredDay, error) {
-	generator := reader.generationCache(source, forceBase)
+	return reader.buildDayWithLoaders(q, source, forceBase, reader.loaders)
+}
+
+func (reader *drawObservationResultReader) buildDayWithLoaders(q drawObservationQuery, source drawObservationSourceVersion, forceBase bool, loaders drawObservationLoaders) (*drawObservationStoredDay, error) {
+	generator := reader.generationCacheWithLoaders(source, forceBase, loaders)
 	shared, err := generator.get(false)
 	if err != nil {
+		// A failed transaction-bound base loader cannot outlive its transaction.
+		reader.mu.Lock()
+		if reader.generator == generator {
+			reader.generator, reader.generation = nil, ""
+		}
+		reader.mu.Unlock()
 		return nil, err
 	}
 	// Reuse only immutable history/index data. A quote-only revision must not
 	// reuse an earlier day's market or frontend caches from this process.
-	generator = drawObservationFreshQueryCache(shared, reader.loaders)
+	generator = drawObservationFreshQueryCache(shared, loaders)
 	core := generator.core
 	baseQuery := drawObservationQuery{mode: "today", scope: "all", date: q.date, page: 1, size: 200}
 	day, err := core.day(baseQuery, generator.loaders)
@@ -272,6 +312,29 @@ func (reader *drawObservationResultReader) readWithParsedBase(q drawObservationQ
 	// and its flight claim. Recheck before doing any expensive generation.
 	if !q.refresh {
 		pending.day, pending.err = reader.storedDay(key, q.date, source.Day)
+	}
+	if pending.day == nil && pending.err == nil && reader.snapshot != nil {
+		pending.day, pending.err = reader.snapshot(q, func(version drawObservationSourceVersion, loaders drawObservationLoaders) (*drawObservationStoredDay, error) {
+			// A writer may have committed after the fast version check. Resolve
+			// the day and all of its inputs under the transaction's own version.
+			source = version
+			key = source.Namespace + ":day:" + q.date
+			if !q.refresh {
+				saved, err := reader.storedDay(key, q.date, source.Day)
+				if err != nil || saved != nil {
+					return saved, err
+				}
+			}
+			return reader.buildDayWithLoaders(q, source, q.refresh && !reuseParsedBase, loaders)
+		})
+		// Publish only after the read-only transaction successfully commits.
+		if pending.err == nil {
+			var packed []byte
+			packed, pending.err = drawObservationPack(func(w io.Writer) error { return json.NewEncoder(w).Encode(pending.day) })
+			if pending.err == nil {
+				pending.err = reader.store.set(context.Background(), key, packed)
+			}
+		}
 	}
 	// Optimistic validation prevents publishing a snapshot assembled while the
 	// crawler changed its source data. No source tables are written or locked.

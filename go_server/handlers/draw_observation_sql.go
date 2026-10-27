@@ -91,24 +91,31 @@ func drawObservationReadSchema(db *gorm.DB) (drawObservationSchema, error) {
 }
 
 func drawObservationSQLLoaders() drawObservationLoaders {
+	return drawObservationSQLLoadersForDB(func() *gorm.DB { return database.DB })
+}
+
+// Resolve the connection at call time for the normal reader, or return one
+// transaction for every loader when building a consistent persisted day.
+func drawObservationSQLLoadersForDB(resolve func() *gorm.DB) drawObservationLoaders {
 	return drawObservationLoaders{
 		frontend: func(schema drawObservationSchema, targets []drawObservationTarget) (map[string]drawObservationFrontendEnrichment, error) {
-			return drawObservationReadFrontend(database.DB, schema, targets)
+			return drawObservationReadFrontend(resolve(), schema, targets)
 		},
 		base: func() (drawObservationBase, error) {
+			db := resolve()
 			base := drawObservationBase{}
-			schema, err := drawObservationReadSchema(database.DB)
+			schema, err := drawObservationReadSchema(db)
 			if err != nil {
 				return base, err
 			}
 			base.schema = schema
-			base.targets, err = drawObservationReadTargets(database.DB, schema, nil)
+			base.targets, err = drawObservationReadTargets(db, schema, nil)
 			if err != nil {
 				return base, err
 			}
 			var history []models.HistoryMoney
 			if schema["history_moneys"]["match_id"] {
-				if err := database.DB.Table("history_moneys").Select(drawObservationHistoryProjection(schema)).Find(&history).Error; err != nil {
+				if err := db.Table("history_moneys").Select(drawObservationHistoryProjection(schema)).Find(&history).Error; err != nil {
 					return base, err
 				}
 			}
@@ -116,7 +123,7 @@ func drawObservationSQLLoaders() drawObservationLoaders {
 			return base, nil
 		},
 		targets: func(schema drawObservationSchema, q drawObservationQuery) ([]drawObservationTarget, error) {
-			return drawObservationReadTargets(database.DB, schema, &q)
+			return drawObservationReadTargets(resolve(), schema, &q)
 		},
 		// Only the selected day's market JSON is transferred. Decode it once
 		// for coverage and reuse the exact same company selection on each page.
@@ -127,7 +134,7 @@ func drawObservationSQLLoaders() drawObservationLoaders {
 			}
 			var rows []models.PankouMoney
 			columns := drawObservationProjection(schema, "pankou_moneys", []string{"match_id", "asia_data", "dxq_data", "bet365_asia", "bet365_dxq", "captured_at"})
-			if err := database.DB.Table("pankou_moneys").Select(columns).Where("match_id IN ?", ids).Find(&rows).Error; err != nil {
+			if err := resolve().Table("pankou_moneys").Select(columns).Where("match_id IN ?", ids).Find(&rows).Error; err != nil {
 				return nil, err
 			}
 			for _, row := range rows {
@@ -143,7 +150,7 @@ func drawObservationSQLLoaders() drawObservationLoaders {
 			}
 			var rows []models.OddsMoney
 			columns := drawObservationProjection(schema, "odds_moneys", []string{"match_id", "data", "bet365", "william", "pinnacle", "captured_at"})
-			if err := database.DB.Table("odds_moneys").Select(columns).Where("match_id IN ?", ids).Find(&rows).Error; err != nil {
+			if err := resolve().Table("odds_moneys").Select(columns).Where("match_id IN ?", ids).Find(&rows).Error; err != nil {
 				return nil, err
 			}
 			for _, row := range rows {

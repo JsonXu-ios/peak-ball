@@ -1,6 +1,11 @@
 import api from './request'
 import type { AxiosResponse } from 'axios'
-import type { DrawObservationQuery, DrawObservationsResponse } from '@/types/drawHistory'
+import type { DrawObservationDatesResponse, DrawObservationQuery, DrawObservationsResponse } from '@/types/drawHistory'
+
+/** One lightweight request per visible month; never hydrate individual dates. */
+export function getDrawObservationDates(params: { month: string; mode: 'today' | 'history'; scope: 'all' | 'sporttery' }) {
+  return api.get<DrawObservationDatesResponse>('/admin/statistics/draw/observations/dates', { params })
+}
 
 interface ObservationCacheEntry {
   response?: AxiosResponse<DrawObservationsResponse>

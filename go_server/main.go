@@ -58,6 +58,7 @@ func main() {
 		api.POST("/draw/train", handlers.TrainDrawModel)
 		api.GET("/draw/history", handlers.GetDrawHistory)
 		api.GET("/draw/observations", handlers.GetDrawObservations)
+		api.GET("/draw/observations/dates", handlers.GetDrawObservationDates)
 		api.POST("/draw/history/rebuild", handlers.RebuildDrawHistory)
 		api.POST("/draw/history/calibrate", handlers.CalibrateDrawHistory)
 

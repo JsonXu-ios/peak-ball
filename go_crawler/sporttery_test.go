@@ -20,3 +20,22 @@ func TestMergeSportteryBodiesKeepsIndependentSourceOnFailedFetch(t *testing.T) {
 		t.Fatalf("empty inputs fabricated a capture: %s", got)
 	}
 }
+
+func TestSportteryUnopenedCaptureDoesNotErasePricedHistory(t *testing.T) {
+	priced := []byte(`{"code":0,"data":{"spf":{"odds":[{"spf3":1.55,"spf1":3.85,"spf0":4.45}]}}}`)
+	unopened := []byte(`{"code":0,"data":{"spf":{"odds":[{"spf3":0,"spf1":0,"spf0":0}]}}}`)
+	var payload map[string]json.RawMessage
+	previous, _ := json.Marshal(map[string]json.RawMessage{"sportteryOdds": priced})
+	if err := json.Unmarshal(mergeSportteryBodies(previous, nil, unopened), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := sportteryPriceState(payload["sportteryOdds"]); !ok {
+		t.Fatal("unopened response erased actual opening history")
+	}
+	if err := json.Unmarshal(mergeSportteryBodies(nil, nil, unopened), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if records, prices := sportteryPriceState(payload["sportteryOdds"]); !records || prices {
+		t.Fatal("unopened source was lost or turned into real prices")
+	}
+}

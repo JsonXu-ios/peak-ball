@@ -3,6 +3,7 @@ package handlers
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"strings"
 	"time"
 
@@ -11,23 +12,72 @@ import (
 )
 
 type drawObservationFrontendAnalysis struct {
-	Basis           *drawObservationAnalysisBasis `json:"basis,omitempty"`
-	YapanPankou1    float64                       `json:"yapanpankou1"`
-	YapanPankou2    float64                       `json:"yapanpankou2"`
-	QiushuPankou1   float64                       `json:"qiushupankou1"`
-	QiushuPankou2   float64                       `json:"qiushupankou2"`
-	YaPanTouZhu     []interface{}                 `json:"yapantouzhu"`
-	NewYaPanTouZhu  []interface{}                 `json:"newyapantouzhu"`
-	QiuShuTouZhu    []interface{}                 `json:"qiushutouzhu"`
-	NewQiuShuTouZhu []interface{}                 `json:"newqiushutouzhu"`
-	WinProbability  float64                       `json:"winProbability"`
-	DrawProbability float64                       `json:"drawProbability"`
-	LoseProbability float64                       `json:"loseProbability"`
-	SanhuXinli      []string                      `json:"sanhuxinli"`
-	KaiLiResult     []string                      `json:"kailiresult"`
-	TiCaiResult     []string                      `json:"ticairesult"`
-	RoiSimulation   *matchRoiSimulationResponse   `json:"roiSimulation"`
-	LocalMarket     *bookmakerMarketResponse      `json:"localMarket"`
+	ComparisonStages       []drawObservationComparisonStage       `json:"comparisonStages,omitempty"`
+	AverageEuroOdds        []float64                              `json:"averageEuroOdds"`
+	PredictionAvailability *drawObservationPredictionAvailability `json:"predictionAvailability,omitempty"`
+	Basis                  *drawObservationAnalysisBasis          `json:"basis,omitempty"`
+	YapanPankou1           float64                                `json:"yapanpankou1"`
+	YapanPankou2           float64                                `json:"yapanpankou2"`
+	QiushuPankou1          float64                                `json:"qiushupankou1"`
+	QiushuPankou2          float64                                `json:"qiushupankou2"`
+	YaPanTouZhu            []interface{}                          `json:"yapantouzhu"`
+	NewYaPanTouZhu         []interface{}                          `json:"newyapantouzhu"`
+	QiuShuTouZhu           []interface{}                          `json:"qiushutouzhu"`
+	NewQiuShuTouZhu        []interface{}                          `json:"newqiushutouzhu"`
+	WinProbability         float64                                `json:"winProbability"`
+	DrawProbability        float64                                `json:"drawProbability"`
+	LoseProbability        float64                                `json:"loseProbability"`
+	SanhuXinli             []string                               `json:"sanhuxinli"`
+	KaiLiResult            []string                               `json:"kailiresult"`
+	TiCaiResult            []string                               `json:"ticairesult"`
+	RoiSimulation          *matchRoiSimulationResponse            `json:"roiSimulation"`
+	LocalMarket            *bookmakerMarketResponse               `json:"localMarket"`
+	WeightedFeatureInputs  *drawObservationWeightedFeatureInputs  `json:"weightedFeatureInputs"`
+}
+
+// Pointer observations preserve an actual recorded zero while keeping absent
+// raw source rates unknown. These inputs are separate from simulated ROI.
+type drawObservationWeightedFeatureInputs struct {
+	HomeHeat            *float64    `json:"homeHeat"`
+	OfficialProfitRates [3]*float64 `json:"officialProfitRates"`
+}
+
+func drawObservationWeightedInputs(odds models.OddsMoney, pankou models.PankouMoney, simulation *matchRoiSimulationResponse) *drawObservationWeightedFeatureInputs {
+	result := &drawObservationWeightedFeatureInputs{HomeHeat: drawStudyStrictAsianHeat(odds, pankou).HomeHeat}
+	if simulation == nil {
+		return result
+	}
+	presence := drawStudyProfitInputs(odds, simulation).OfficialProfitRatePresence
+	candidates := []bookmakerMarketResponse{}
+	for _, market := range simulation.Markets {
+		if market.Key == "sporttery" && !market.Simulated {
+			candidates = append(candidates, market)
+		}
+	}
+	if len(candidates) != 1 || !candidates[0].OddsAvailable {
+		return result
+	}
+	for index, direction := range []string{"home", "draw", "away"} {
+		if !presence[index] {
+			continue
+		}
+		matches := []bookmakerOutcomeResponse{}
+		for _, outcome := range candidates[0].BookmakerByOutcome {
+			if outcome.Outcome == direction {
+				matches = append(matches, outcome)
+			}
+		}
+		// Available describes local stake/distribution amount calculation. A
+		// recorded official rate does not require that separate simulation.
+		if len(matches) != 1 || matches[0].Odds <= 0 || math.IsNaN(matches[0].Odds) || math.IsInf(matches[0].Odds, 0) || matches[0].OfficialProfitRate == nil {
+			continue
+		}
+		value := *matches[0].OfficialProfitRate
+		if !math.IsNaN(value) && !math.IsInf(value, 0) {
+			result.OfficialProfitRates[index] = &value
+		}
+	}
+	return result
 }
 
 type drawObservationAnalysisBasis struct {
@@ -82,24 +132,9 @@ func drawObservationBasis(odds models.OddsMoney, pankou models.PankouMoney) *dra
 	basis := &drawObservationAnalysisBasis{
 		Asian: drawObservationLineBasis(selectPankouRow(jsonValue[analysisPankouItem](pankou.Bet365Asia), asia, 8), false),
 		Goals: drawObservationLineBasis(selectPankouRow(jsonValue[analysisPankouItem](pankou.Bet365Dxq), goals, 8), true),
-		Kelly: "可用赔率不足，回退平均欧赔隐含概率最高方向；平均欧赔缺失时使用胜33%/平34%/负33%",
-		Ticai: "可用赔率不足，回退平均欧赔隐含概率最高方向；平均欧赔缺失时使用胜33%/平34%/负33%",
 	}
-	avg, rows, _ := resolveAverageOdds(odds)
-	if len(kellyResult(odds, avg, rows)) > 0 {
-		basis.Kelly = drawObservationEuroSource(kellySource(odds, rows)) + "即时赔率 ÷ 平均欧赔 × 平均返还率，取凯利值最小方向；并列优先负、平、胜"
-	}
-	if len(ticaiResult(rows, avg, sportteryOdds(sportteryTradeFromJSON(odds.SportteryTrade)))) > 0 {
-		reference := findEuroOdd(rows, "115", "威廉")
-		comparison := "竞彩即时赔率"
-		if len(reference.Odds) < 3 || len(sportteryOdds(sportteryTradeFromJSON(odds.SportteryTrade))) < 3 {
-			comparison = "平均欧赔（竞彩或威廉数据不足时的原有回退）"
-			if len(reference.Odds) < 3 {
-				reference = firstEuroOdd(rows)
-			}
-		}
-		basis.Ticai = drawObservationEuroSource(reference) + "即时赔率与" + comparison + "逐项相减，取绝对差最小方向；并列优先负、平、胜"
-	}
+	predictions := drawObservationPredictions(odds)
+	basis.Kelly, basis.Ticai = predictions.KellyBasis, predictions.TicaiBasis
 	return basis
 }
 
@@ -112,14 +147,21 @@ type drawObservationCompanyQuotes struct {
 }
 
 type drawObservationFrontendEnrichment struct {
-	analysis  *drawObservationFrontendAnalysis
-	companies []drawObservationCompanyQuotes
-	euro      drawObservationEuroOdds
+	analysis      *drawObservationFrontendAnalysis
+	companies     []drawObservationCompanyQuotes
+	euro          drawObservationEuroOdds
+	modelInput    *drawFeatureStudyRow
+	studyResponse *analysisMatchResponse
 }
 
 func drawObservationFrontendValues(response *analysisMatchResponse) *drawObservationFrontendAnalysis {
+	var average []float64
+	if drawObservationValidPrices(response.averageOdds) {
+		average = append([]float64(nil), response.averageOdds[:3]...)
+	}
 	return &drawObservationFrontendAnalysis{
-		YapanPankou1: response.YapanPankou1, YapanPankou2: response.YapanPankou2,
+		AverageEuroOdds: average,
+		YapanPankou1:    response.YapanPankou1, YapanPankou2: response.YapanPankou2,
 		QiushuPankou1: response.QiushuPankou1, QiushuPankou2: response.QiushuPankou2,
 		YaPanTouZhu: response.YaPanTouZhu, NewYaPanTouZhu: response.NewYaPanTouZhu,
 		QiuShuTouZhu: response.QiuShuTouZhu, NewQiuShuTouZhu: response.NewQiuShuTouZhu,
@@ -133,8 +175,13 @@ func buildDrawObservationFrontend(match models.Money, history models.HistoryMone
 	response := buildAnalysisFromData(match, history, odds, pankou, sportteryTradeFromJSON(odds.SportteryTrade))
 	attachAnalysisWeights(&response)
 	analysis := drawObservationFrontendValues(&response)
+	predictions := drawObservationPredictions(odds)
+	analysis.KaiLiResult, analysis.TiCaiResult = predictions.Kelly, predictions.Ticai
+	analysis.PredictionAvailability = &predictions.Availability
+	analysis.ComparisonStages = drawObservationComparisonStages(odds, predictions)
 	analysis.Basis = drawObservationBasis(odds, pankou)
-	return drawObservationFrontendEnrichment{analysis: analysis, companies: drawObservationCompanies(odds, pankou), euro: drawObservationEuro(odds)}
+	analysis.WeightedFeatureInputs = drawObservationWeightedInputs(odds, pankou, analysis.RoiSimulation)
+	return drawObservationFrontendEnrichment{analysis: analysis, companies: drawObservationCompanies(odds, pankou), euro: drawObservationEuro(odds), studyResponse: &response}
 }
 
 // Frontend enrichment happens after count filters and pagination. All inputs
@@ -236,7 +283,17 @@ func drawObservationReadFrontend(db *gorm.DB, schema drawObservationSchema, targ
 		pankouByID[row.MatchId] = row
 	}
 	for _, id := range ids {
-		result[id] = buildDrawObservationFrontend(main[id], historyByID[id], oddsByID[id], pankouByID[id])
+		value := buildDrawObservationFrontend(main[id], historyByID[id], oddsByID[id], pankouByID[id])
+		// Reuse the already loaded batch and the shared market calculation. No
+		// per-match query or external Python/model process is necessary.
+		if strings.TrimSpace(main[id].JingcaiID) != "" {
+			input := drawFeatureStudyBuildRowWithEnrichment(main[id], historyByID[id], oddsByID[id], pankouByID[id], value)
+			value.modelInput = &input
+		}
+		// The full response is needed only while projecting the frozen inputs.
+		// Avoid retaining a second copy of the analysis payload in the cache.
+		value.studyResponse = nil
+		result[id] = value
 	}
 	return result, nil
 }
@@ -334,6 +391,7 @@ func drawObservationAnyRawOdds(values ...[]*string) bool {
 func drawObservationCompanyEuro(odds models.OddsMoney, key, name string) drawObservationEuroOdds {
 	result := drawObservationEuroOdds{Opening: make([]*string, 3), Latest: make([]*string, 3), Source: "missing", CapturedAt: odds.CapturedAt}
 	if key == "sporttery" {
+		result.OpeningStatus = sportteryRecordedOpeningStatus(sportteryRecordedBody(odds.SportteryTrade))
 		var raw map[string]json.RawMessage
 		_ = json.Unmarshal(odds.SportteryTrade, &raw)
 		var data map[string]json.RawMessage

@@ -1,18 +1,18 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { drawWilliamSportteryDifferences } from '@/utils/drawFrontend'
-import type { BookmakerOutcome, DirectionValues, DrawFrontendLoadState, DrawObservation, DrawObservedEuroOdds, DrawObservedLine } from '@/types/drawHistory'
+import type { BookmakerOutcome, DirectionValues, DrawCompanyQuote, DrawFrontendLoadState, DrawObservation, DrawObservedEuroOdds, DrawObservedLine } from '@/types/drawHistory'
+import { isDrawSimulatedResultMarket } from '@/utils/drawProfit'
 import DrawProfitTable from './DrawProfitTable.vue'
+import DrawComparisonStages from './DrawComparisonStages.vue'
 
-const props = defineProps<{ row: DrawObservation; compact?: boolean; analysisState?: DrawFrontendLoadState; quotesState?: DrawFrontendLoadState }>()
+const props = defineProps<{ row: DrawObservation; compact?: boolean; heatOnly?: boolean; comparisonStage?: 'opening' | 'latest'; analysisState?: DrawFrontendLoadState; quotesState?: DrawFrontendLoadState }>()
 defineEmits<{ retryAnalysis: []; retryQuotes: [] }>()
 const analysis = computed(() => props.row.frontendAnalysis)
 const markets = computed(() => analysis.value?.roiSimulation?.markets || [])
 const tradeMarkets = computed(() => markets.value.filter((market) => !market.simulated && !['william', 'bet365'].includes(market.key)))
-const simulatedMarkets = computed(() => markets.value.filter((market) => market.simulated))
+const simulatedMarkets = computed(() => markets.value.filter(isDrawSimulatedResultMarket))
 const sporttery = computed(() => markets.value.find((market) => market.key === 'sporttery' && !market.simulated))
 const bettingRows = computed(() => sporttery.value?.bettingRatio?.length ? sporttery.value.bettingRatio : sporttery.value?.bookmakerByOutcome || [])
-const differences = computed(() => drawWilliamSportteryDifferences(props.row.companyQuotes))
 
 function value(raw: unknown): string {
   if (raw === null || raw === undefined || raw === '') return '暂无'
@@ -40,14 +40,6 @@ function heatClass(values: unknown[] | undefined) {
   return (values || []).slice(0, 2).some((raw) => Number.parseFloat(String(raw).replace(/%$/, '')) > 65) ? 'text-error font-weight-bold' : ''
 }
 
-function differenceText(raw: number | null) {
-  return raw === null ? '暂无' : `${raw > 0 ? '+' : ''}${raw.toFixed(2)}`
-}
-
-function differenceClass(raw: number | null) {
-  return raw === null || raw === 0 ? 'text-medium-emphasis' : raw > 0 ? 'text-error' : 'text-success'
-}
-
 function euroText(euro: DrawObservedEuroOdds, phase: 'opening' | 'latest') {
   const values = euro?.[phase] || []
   return values.some((raw) => raw !== null && raw !== undefined && raw !== '') ? [0, 1, 2].map((index) => value(values[index])).join(' / ') : '暂无'
@@ -56,6 +48,13 @@ function euroText(euro: DrawObservedEuroOdds, phase: 'opening' | 'latest') {
 function unpricedEuro(euro: DrawObservedEuroOdds) {
   const values = [...(euro?.opening || []), ...(euro?.latest || [])].filter((raw) => raw !== null && raw !== undefined && raw.trim() !== '')
   return euro?.source === 'missing' && values.length > 0 && values.every((raw) => Number(raw) === 0)
+}
+
+function openingText(company: DrawCompanyQuote) {
+  if (company.key === 'sporttery' && company.euroOdds.openingStatus === 'no_quotes') return '源站无报价记录'
+  if (company.key === 'sporttery' && unpricedEuro(company.euroOdds)) return '未开价'
+  const opening = euroText(company.euroOdds, 'opening')
+  return company.key === 'sporttery' && opening === '暂无' ? '未采集初盘' : opening
 }
 
 function lineText(line: DrawObservedLine, phase: 'opening' | 'latest', labels: string[]) {
@@ -83,10 +82,11 @@ function outcome(row: BookmakerOutcome) {
 <template>
   <div v-if="compact" class="frontend-summary text-caption">
     <template v-if="analysis">
-      <div :class="heatClass(analysis.yapantouzhu)">亚盘热度：主 {{ percent(analysis.yapantouzhu?.[0]) }} / 客 {{ percent(analysis.yapantouzhu?.[1]) }}</div>
-      <div :class="heatClass(analysis.qiushutouzhu)">大小球热度：大 {{ percent(analysis.qiushutouzhu?.[0]) }} / 小 {{ percent(analysis.qiushutouzhu?.[1]) }}</div>
-      <div>凯利：{{ list(analysis.kailiresult) }}</div>
-      <div>体彩：{{ list(analysis.ticairesult) }}</div>
+      <template v-if="!comparisonStage">
+        <div :class="heatClass(analysis.yapantouzhu)">亚盘热度：主 {{ percent(analysis.yapantouzhu?.[0]) }} / 客 {{ percent(analysis.yapantouzhu?.[1]) }}</div>
+        <div :class="heatClass(analysis.qiushutouzhu)">大小球热度：大 {{ percent(analysis.qiushutouzhu?.[0]) }} / 小 {{ percent(analysis.qiushutouzhu?.[1]) }}</div>
+      </template>
+      <DrawComparisonStages v-if="!heatOnly" :row="row" :stage="comparisonStage" compact />
     </template>
     <div v-else :class="analysisState?.error ? 'text-error' : 'text-medium-emphasis'">{{ analysisState?.loading ? '正在读取前台分析…' : analysisState?.error || (row.frontendAnalysis === undefined ? '尚未读取前台分析数据' : '暂无本场前台分析数据') }}<v-btn v-if="row.frontendAnalysis === undefined && !analysisState?.loading" size="x-small" variant="text" color="primary" @click.stop="$emit('retryAnalysis')" @keydown.enter.stop @keydown.space.stop>{{ analysisState?.error ? '重试' : '读取分析' }}</v-btn></div>
   </div>
@@ -101,7 +101,7 @@ function outcome(row: BookmakerOutcome) {
         <tbody>
           <tr v-for="company in row.companyQuotes" :key="company.key">
             <td class="font-weight-bold">{{ company.name }}</td>
-            <td>{{ euroText(company.euroOdds, 'opening') }}</td>
+            <td>{{ openingText(company) }}</td>
             <td>{{ euroText(company.euroOdds, 'latest') }}<div v-if="unpricedEuro(company.euroOdds)" class="text-caption text-medium-emphasis">未开价（原始记录）</div></td>
             <td>{{ lineText(company.asianHandicap, 'opening', ['主', '客']) }}</td>
             <td>{{ lineText(company.asianHandicap, 'latest', ['主', '客']) }}</td>
@@ -115,13 +115,7 @@ function outcome(row: BookmakerOutcome) {
       <div class="text-caption text-medium-emphasis pa-3">每家公司分别展示实际记录，缺失为“暂无”；即时盘为当前已获取的最新报价。</div>
     </v-card>
 
-    <v-card variant="outlined" class="mb-4 odds-difference">
-      <v-card-title class="text-subtitle-2">威廉即时盘 − 竞彩即时盘</v-card-title>
-      <v-table density="compact"><thead><tr><th>赛果</th><th>威廉即时赔率</th><th>竞彩即时赔率</th><th>差值（威廉 − 竞彩）</th></tr></thead><tbody>
-        <tr v-for="item in differences" :key="item.outcome"><td>{{ item.outcome }}</td><td>{{ item.william === null ? '暂无' : item.william.toFixed(2) }}</td><td>{{ item.sporttery === null ? '暂无' : item.sporttery.toFixed(2) }}</td><td class="font-weight-bold" :class="differenceClass(item.difference)">{{ differenceText(item.difference) }}</td></tr>
-      </tbody></v-table>
-      <div class="text-caption text-medium-emphasis pa-3"><span class="text-error">正值：威廉高于竞彩</span>；<span class="text-success">负值：威廉低于竞彩</span>；零为相同，缺少任一报价显示“暂无”。</div>
-    </v-card>
+    <DrawComparisonStages :row="row" />
 
     <template v-if="analysis">
       <v-row>
@@ -140,13 +134,11 @@ function outcome(row: BookmakerOutcome) {
         </v-col>
         <v-col cols="12" xl="6">
           <v-card variant="outlined" class="h-100">
-            <v-card-title class="text-subtitle-2">散户心理与专业信号</v-card-title>
+            <v-card-title class="text-subtitle-2">散户心理</v-card-title>
             <v-table density="compact"><tbody>
               <tr><th>散户心理 · 隐含基底</th><td>主 {{ Number.isFinite(analysis.winProbability) ? `${Math.round(analysis.winProbability)}%` : '暂无' }} / 平 {{ Number.isFinite(analysis.drawProbability) ? `${Math.round(analysis.drawProbability)}%` : '暂无' }} / 客 {{ Number.isFinite(analysis.loseProbability) ? `${Math.round(analysis.loseProbability)}%` : '暂无' }}</td></tr>
               <tr><th>散户心理 · 加权分布</th><td>{{ list(analysis.sanhuxinli?.slice(0, 3)) }}</td></tr>
               <tr><th>人气备注</th><td>{{ value(analysis.sanhuxinli?.[4]) }}</td></tr>
-              <tr><th>凯利预测</th><td>{{ list(analysis.kailiresult) }}<div class="text-caption text-medium-emphasis mt-1">{{ analysis.basis?.kelly || '公司即时赔率 ÷ 平均欧赔 × 平均返还率，取最小凯利方向；来源及回退信息需更新接口后查看' }}</div></td></tr>
-              <tr><th>体彩预测</th><td>{{ list(analysis.ticairesult) }}<div class="text-caption text-medium-emphasis mt-1">{{ analysis.basis?.ticai || '优先比较威廉与竞彩即时赔率，取绝对差最小方向；数据不足时沿用前台回退规则' }}</div></td></tr>
             </tbody></v-table>
           </v-card>
         </v-col>
