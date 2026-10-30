@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"reflect"
 	"strings"
 	"sync"
@@ -42,6 +43,10 @@ func drawResultComparable(t *testing.T, response drawObservationResponse) interf
 	t.Helper()
 	response.DataVersion = ""
 	response.GeneratedAt = nil
+	// The internal page generator is intentionally not a metrics endpoint. The
+	// durable day derives complete-window metrics once all pages are present;
+	// dedicated metrics tests compare that field independently.
+	response.ObservationMetrics = nil
 	encoded, err := json.Marshal(response)
 	if err != nil {
 		t.Fatal(err)
@@ -73,6 +78,23 @@ func TestDrawObservationsPersistenceOneDayServesAllTabsScopesFiltersAndPages(t *
 		{date: "2026-10-21", mode: "history", scope: "all", homeDraws: drawObservationRange{min: &zero, max: &one}, page: 1, size: 50},
 		{date: "2026-10-21", mode: "history", scope: "all", h2hDraws: drawObservationRange{min: &zero, max: &zero}, page: 1, size: 50},
 		{date: "2026-10-21", mode: "today", scope: "all", page: 999, size: 1},
+	}
+	// Reuse a day stored in the old descending order, including its page
+	// boundaries, without rebuilding the source data.
+	source, _ := drawResultTestSource(cases[0])
+	saved, err := reader.buildDay(cases[0], source, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, j := 0, len(saved.Items)-1; i < j; i, j = i+1, j-1 {
+		saved.Items[i], saved.Items[j] = saved.Items[j], saved.Items[i]
+	}
+	encoded, err := drawObservationPack(func(w io.Writer) error { return json.NewEncoder(w).Encode(saved) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = store.set(context.Background(), source.Namespace+":day:"+saved.Date, encoded); err != nil {
+		t.Fatal(err)
 	}
 	for _, q := range cases {
 		got, err := reader.read(q)

@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"fmt"
 	"sync"
 	"time"
@@ -24,6 +25,9 @@ type drawObservationBase struct {
 // Loaders perform only SELECTs. Keeping them injectable lets cache behavior be
 // tested without connecting to a database or starting an HTTP server.
 type drawObservationLoaders struct {
+	// Only real SQL factories enable library write-through; injected read-only
+	// loaders remain deterministic and never open a real database in unit tests.
+	research bool
 	base     func() (drawObservationBase, error)
 	targets  func(drawObservationSchema, drawObservationQuery) ([]drawObservationTarget, error)
 	coverage func(drawObservationSchema, []string) (map[string]drawObservationQuotesBundle, error)
@@ -263,8 +267,24 @@ func (cache *drawObservationCache) read(q drawObservationQuery) (drawObservation
 			response.Items[i].FrontendAnalysis = value.analysis
 			response.Items[i].CompanyQuotes = value.companies
 			modelInput = value.modelInput
+			if modelInput != nil {
+				response.Items[i].ScoreInputs = modelInput.ScoreInputs
+			}
 		}
-		response.Items[i].FrozenDrawSignal = drawObservationModelSignal(response.Items[i], modelInput)
+		item := response.Items[i]
+		if cache.loaders.research {
+			response.Items[i].FrozenDrawSignal, response.Items[i].ResearchDecision = ResolveDrawResearchSignal(context.Background(), item, modelInput, func() *drawObservationFrozenSignal { return drawObservationModelSignal(item, modelInput) })
+		} else {
+			response.Items[i].FrozenDrawSignal = drawObservationModelSignal(item, modelInput)
+		}
+		decision := drawObservationSecondaryDecision(response.Items[i])
+		response.Items[i].SecondaryDecision = &decision
+		recommendation := drawObservationScoreRecommendation(response.Items[i])
+		response.Items[i].ScoreRecommendation = &recommendation
+	}
+	response.ResearchTakeover = buildDrawResearchTakeover(response.Items)
+	if cache.loaders.research && response.ResearchTakeover == nil {
+		response.ResearchTakeover = emptyDrawResearchTakeover()
 	}
 	return response, nil
 }

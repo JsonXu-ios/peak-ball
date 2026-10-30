@@ -91,4 +91,10 @@ func SetupProtectedRoutes(r *gin.RouterGroup) {
 	r.GET("/statistics/draw/matches", handlers.GetDrawMatchesAdmin)
 	r.POST("/statistics/draw/generate", handlers.GenerateDrawPredictionsAdmin)
 	r.GET("/statistics/draw/stats", handlers.GetDrawStatsAdmin)
+	r.GET("/statistics/research/overview", handlers.GetResearchOverviewAdmin)
+	r.GET("/statistics/research/sync/status", handlers.GetResearchSyncStatusAdmin)
+	r.POST("/statistics/research/sync", handlers.StartResearchSyncAdmin)
+	r.GET("/statistics/research/features", handlers.GetResearchFeaturesAdmin)
+	r.GET("/statistics/research/audit/issues", handlers.GetResearchIssuesAdmin)
+	r.GET("/statistics/research/evaluations", handlers.GetResearchEvaluationsAdmin)
 }

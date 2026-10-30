@@ -177,7 +177,7 @@ func TestDrawObservationsCachePaginationAndFiltersOnlyLoadPageOdds(t *testing.T)
 	if fake.baseCalls.Load() != 1 || fake.targetCalls.Load() != 1 || fake.marketCalls.Load() != 1 || fake.quoteCalls.Load() != 2 {
 		t.Fatal("turning pages or changing filters repeated base/history/day reads")
 	}
-	if !reflect.DeepEqual(fake.quoteIDs, [][]string{{"day-0"}, {"day-1"}}) {
+	if !reflect.DeepEqual(fake.quoteIDs, [][]string{{"day-2"}, {"day-1"}}) {
 		t.Fatalf("odds fetched outside requested pages: %v", fake.quoteIDs)
 	}
 	core, _ := cache.get(false)

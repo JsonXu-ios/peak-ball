@@ -300,7 +300,7 @@ func TestDrawObservationsFrontendCacheUsesOnlyPageIDsAndRetriesRefreshes(t *test
 	}
 	q.page, q.homeDraws = 1, drawObservationRange{max: drawTestPtr(0)}
 	filtered, err := cache.read(q)
-	if err != nil || filtered.Total != 1 || calls.Load() != 2 || !reflect.DeepEqual(seen, [][]string{{"day-0"}, {"day-1"}}) {
+	if err != nil || filtered.Total != 1 || calls.Load() != 2 || !reflect.DeepEqual(seen, [][]string{{"day-2"}, {"day-1"}}) {
 		t.Fatalf("filter/page change loaded off-page inputs or ignored cached values: seen=%v error=%v", seen, err)
 	}
 	q.homeDraws, q.page = drawObservationRange{}, 3

@@ -9,6 +9,11 @@ import DrawFeatureSignal from './DrawFeatureSignal.vue'
 import DrawProfitSummary from './DrawProfitSummary.vue'
 import DrawFrozenSignal from './DrawFrozenSignal.vue'
 import DrawSecondarySignal from './DrawSecondarySignal.vue'
+import DrawProfitSupportSignal from './DrawProfitSupportSignal.vue'
+import DrawScoreRecommendation from './DrawScoreRecommendation.vue'
+import DrawResearchSource from './DrawResearchSource.vue'
+import DrawResearchTakeover from './DrawResearchTakeover.vue'
+import DrawObservationMetrics from './DrawObservationMetrics.vue'
 import DrawScheduleDate from './DrawScheduleDate.vue'
 import { DRAW_FEATURE_NOTE } from '@/utils/drawFeature'
 import { classifySecondaryDraw, SECONDARY_DRAW_THRESHOLD, SECONDARY_DRAW_VERSION } from '@/utils/drawSecondarySignal'
@@ -354,6 +359,7 @@ onBeforeUnmount(() => { sequence++ })
 
     <v-alert v-if="error" type="error" variant="tonal" class="mb-4" closable @click:close="error = ''">{{ error }}</v-alert>
     <v-alert v-if="loading && report" type="info" variant="tonal" density="compact" class="mb-4">正在查询或刷新，当前表格与展开内容为上次读取的结果。</v-alert>
+    <DrawResearchTakeover v-if="report" :status="report.researchTakeover" />
 
     <v-card class="mb-4">
       <v-tabs v-model="mode" color="primary" @update:model-value="changeMode">
@@ -407,14 +413,16 @@ onBeforeUnmount(() => { sequence++ })
 
     <v-card variant="outlined" class="mb-4 secondary-observation-note" :data-secondary-version="SECONDARY_DRAW_VERSION">
       <v-card-text class="py-3">
-        <div class="text-body-2"><strong>二次筛选观察 v1：</strong>原模型入选后，模型分数低于 {{ SECONDARY_DRAW_THRESHOLD.toFixed(3) }} 剔除，达到门槛保留。分数不是平局概率，赛果仅用于核对。</div>
+        <div class="text-body-2"><strong>二次筛选：</strong>原模型入选且模型分数不少于 {{ SECONDARY_DRAW_THRESHOLD.toFixed(3) }}，竞彩初盘与即时盘报价完整、赛前交锋至少5场，才二次保留。分数不是平局概率，赛果仅用于核对。</div>
+        <DrawObservationMetrics :metrics="report?.observationMetrics" :date="report?.date || scheduleDate" :queried="!!report" />
+        <div v-if="report?.generatedAt" class="text-caption text-medium-emphasis mt-1">统计快照：{{ dateTime(report.generatedAt) }}</div>
         <div v-if="report" class="d-flex flex-wrap ga-3 text-caption mt-2" aria-live="polite">
           <span>本页原入选 {{ secondarySummary.selected }} 场</span>
           <span class="text-primary">二次保留 {{ secondarySummary.retained }} 场</span>
           <span class="text-warning">二次剔除 {{ secondarySummary.rejected }} 场</span>
           <span v-if="secondarySummary.unavailable">待计算 {{ secondarySummary.unavailable }} 场</span>
         </div>
-        <div class="text-caption text-medium-emphasis mt-1">按当前快照判断，原模型标记保留供对照。本页数量不代表全部筛选结果；查看误选和误剔请使用“今日比赛”并切换赛程日。</div>
+        <div class="text-caption text-medium-emphasis mt-1">以上本页数量仅用于核对当前列表。规则版本与门槛固定，不会随历史增加自动训练；历史和赔率补齐可能改变单场分数。标记按当前快照计算，尚未锁定首次赛前决定。</div>
       </v-card-text>
     </v-card>
 
@@ -429,15 +437,17 @@ onBeforeUnmount(() => { sequence++ })
       <v-progress-linear v-if="loading" indeterminate color="primary" />
       <v-divider v-else />
       <v-table density="comfortable" class="observation-table">
-        <thead><tr><th>时间 / 联赛</th><th>主队 / 客队</th><th>比分 / 状态</th><th title="固定竞彩选平模型按输入决定是否入选，完赛后才核对是否命中平局">模型选平 ⓘ</th><th title="二次筛选 v1：原模型入选且分数达到0.225保留，低于门槛剔除；原标记保留对照">二次筛选 ⓘ</th><th>主队赛前近 10 场</th><th>客队赛前近 10 场</th><th>赛前历史交锋</th><th>欧赔（主 / 平 / 客）</th><th>亚盘（主 / 客水位）</th><th>大小球（大 / 小水位）</th><th>投注热度</th><th>初盘对比</th><th>即时盘对比</th><th :title="DRAW_FEATURE_NOTE">平局特征 ⓘ</th><th>竞彩庄家盈亏</th><th>模拟庄家盈亏</th><th>核查</th></tr></thead>
+        <thead><tr><th>时间 / 联赛</th><th>主队 / 客队</th><th>比分 / 状态</th><th title="固定竞彩选平模型按输入决定是否入选，完赛后才核对是否命中平局">模型选平 ⓘ</th><th title="原模型入选且分数达到0.225、竞彩初盘和即时盘报价完整、赛前交锋至少5场才保留；原标记保留对照">二次筛选 ⓘ</th><th title="二次保留后按本场竞彩比分报价或进球数据排序，依次展示首选和次选平局比分">两比分推荐 ⓘ</th><th title="两套最低盈亏方向无交集时标记；仅为增强观察，不改变候选名单">盈亏分歧 ⓘ</th><th>主队赛前近 10 场</th><th>客队赛前近 10 场</th><th>赛前历史交锋</th><th>欧赔（主 / 平 / 客）</th><th>亚盘（主 / 客水位）</th><th>大小球（大 / 小水位）</th><th>投注热度</th><th>初盘对比</th><th>即时盘对比</th><th :title="DRAW_FEATURE_NOTE">平局特征 ⓘ</th><th>竞彩庄家盈亏</th><th>模拟庄家盈亏</th><th>核查</th></tr></thead>
         <tbody>
           <template v-for="row in report?.items || []" :key="row.matchId">
             <tr class="match-row" :class="{ 'is-expanded': expanded.includes(row.matchId) }" tabindex="0" role="button" :aria-expanded="expanded.includes(row.matchId)" @click="toggle(row)" @keydown.enter.prevent="toggle(row)" @keydown.space.prevent="toggle(row)">
               <td><div>{{ dateTime(row.matchTime || row.date) }}</div><div class="text-caption text-medium-emphasis">{{ row.league }}</div><div v-if="row.jingcaiId?.trim()" class="text-caption text-medium-emphasis">竞彩：{{ row.jingcaiId }}</div></td>
               <td><div>{{ row.home }}</div><div class="text-medium-emphasis">{{ row.guest }}</div></td>
               <td><div v-if="row.settled" class="font-weight-bold text-primary">{{ row.homeScore }} : {{ row.awayScore }}</div><div v-else class="text-medium-emphasis">未结算</div><div class="text-caption text-medium-emphasis">{{ row.displayState || (row.settled ? '已完赛' : '未完赛') }}</div></td>
-              <td class="frozen-signal-cell"><DrawFrozenSignal :row="row" /></td>
+              <td class="frozen-signal-cell"><DrawFrozenSignal :row="row" /><DrawResearchSource :row="row" /></td>
               <td class="secondary-signal-cell"><DrawSecondarySignal :row="row" /></td>
+              <td class="score-recommendation-cell"><DrawScoreRecommendation :row="row" /></td>
+              <td class="profit-support-cell"><DrawProfitSupportSignal :row="row" /></td>
               <td v-for="team in teams(row)" :key="team.key">
                 <div v-if="mode !== 'counts' || team.recent.sample > 0" class="text-body-2 mb-1"><strong>{{ team.recent.draws }} / {{ team.recent.sample }}</strong><span class="text-caption text-medium-emphasis ml-1">场平局</span></div>
                 <div v-if="team.recent.matches.length" class="result-strip"><span v-for="match in team.recent.matches" :key="match.matchId" class="result-badge" :class="`result-${match.result}`" :title="recentTitle(match)">{{ resultLabel(match.result) }}</span></div>
@@ -468,7 +478,7 @@ onBeforeUnmount(() => { sequence++ })
               <td><v-icon :icon="expanded.includes(row.matchId) ? 'mdi-chevron-up' : 'mdi-chevron-down'" size="20" /><div v-if="row.warnings?.length" class="text-caption text-warning">{{ row.warnings.length }} 项说明</div></td>
             </tr>
             <tr v-if="expanded.includes(row.matchId)" class="detail-row">
-              <td colspan="18" class="pa-4">
+              <td colspan="20" class="pa-4">
                 <div class="d-flex flex-wrap align-center ga-2 mb-3"><span class="text-subtitle-2">赛前历史战绩与交锋</span><span class="text-caption text-medium-emphasis">比赛 ID：{{ row.matchId }}</span><v-spacer /><span class="text-caption text-medium-emphasis">仅列本场之前的有效完赛记录</span></div>
                 <v-row>
                   <v-col v-for="team in teams(row)" :key="team.key" cols="12" xl="6">
@@ -492,7 +502,7 @@ onBeforeUnmount(() => { sequence++ })
               </td>
             </tr>
           </template>
-          <tr v-if="!report?.items?.length"><td colspan="18" class="text-center py-12 text-medium-emphasis">{{ emptyMessage }}</td></tr>
+          <tr v-if="!report?.items?.length"><td colspan="20" class="text-center py-12 text-medium-emphasis">{{ emptyMessage }}</td></tr>
         </tbody>
       </v-table>
       <v-divider />

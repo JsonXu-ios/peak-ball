@@ -16,4 +16,7 @@ require (
 	github.com/jinzhu/now v1.1.5 // indirect
 	golang.org/x/crypto v0.40.0 // indirect
 	golang.org/x/text v0.27.0 // indirect
+	peakball/researchstore v0.0.0
 )
+
+replace peakball/researchstore => ../research_store

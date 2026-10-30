@@ -72,7 +72,7 @@ func TestDrawObservationsScopeMergesCurrentBeforeSportteryAndNeverGuessesFromOdd
 		"whitespace": {SportteryTrade: datatypes.JSON(`{"tzbl":{"h":2,"d":3,"a":4}}`)},
 	}}
 	got := buildDrawObservations(data, drawObservationQuery{scope: "sporttery", mode: "history", date: "2026-10-21", size: 50})
-	if got.Total != 2 || got.Summary.HistoricalMatches != 2 || got.Summary.DrawMatches != 2 || got.Items[0].MatchID != "legacy-only" || got.Items[1].MatchID != "literal-zero" || got.Items[0].JingcaiID != "  周三002  " {
+	if got.Total != 2 || got.Summary.HistoricalMatches != 2 || got.Summary.DrawMatches != 2 || got.Items[0].MatchID != "literal-zero" || got.Items[1].MatchID != "legacy-only" || got.Items[1].JingcaiID != "  周三002  " {
 		t.Fatalf("legacy JC resurrected current non-JC or odds/whitespace guessed JC membership: %+v", got)
 	}
 	got = buildDrawObservations(data, drawObservationQuery{scope: "all", mode: "history", date: "2026-10-21", size: 50})
@@ -110,10 +110,10 @@ func TestDrawObservationsScopeCacheCombinationPaginationSummaryAndAllHistory(t *
 	if err != nil {
 		t.Fatal(err)
 	}
-	if first.Total != 2 || first.Items[0].MatchID != "day-0" || second.Items[0].MatchID != "day-2" || first.Summary.HistoricalMatches != 3 || first.Summary.DrawMatches != 3 || first.Summary.AsianMatches != 2 || !reflect.DeepEqual(first.Leagues, []string{"Sport A", "Sport B"}) {
+	if first.Total != 2 || first.Items[0].MatchID != "day-2" || second.Items[0].MatchID != "day-0" || first.Summary.HistoricalMatches != 3 || first.Summary.DrawMatches != 3 || first.Summary.AsianMatches != 2 || !reflect.DeepEqual(first.Leagues, []string{"Sport A", "Sport B"}) {
 		t.Fatalf("scope did not precede options/coverage/page or changed global/date distinction: first=%+v second=%+v", first, second)
 	}
-	if first.Items[0].HomeRecent.Sample != 1 || first.Items[0].HeadToHead.Sample != 1 {
+	if second.Items[0].HomeRecent.Sample != 1 || second.Items[0].HeadToHead.Sample != 1 {
 		t.Fatal("sporttery scope shrank historical inputs to JC-only matches")
 	}
 	q.scope, q.page, q.size = "all", 1, 50

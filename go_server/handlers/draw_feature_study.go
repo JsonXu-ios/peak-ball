@@ -150,6 +150,7 @@ type drawFeatureStudyRow struct {
 	CompanyQuotes   []drawObservationCompanyQuotes   `json:"companyQuotes"`
 	PreMatchHistory *drawFeatureStudyPreMatchHistory `json:"preMatchHistory"`
 	AnalysisInputs  drawFeatureStudyAnalysisInputs   `json:"analysisInputs"`
+	ScoreInputs     *drawScoreInputs                 `json:"scoreInputs,omitempty"`
 }
 
 func drawStudyFrontendProjection(frontend *drawObservationFrontendAnalysis) *drawObservationFrontendAnalysis {
@@ -561,6 +562,7 @@ func drawFeatureStudyBuildRowWithEnrichment(match models.Money, history models.H
 	row := drawFeatureStudyRow{MatchID: match.MatchId, Date: drawObservationDate(match), MatchTime: drawSourceTime(match.MatchTime).In(drawSourceLocation), League: drawObservationLeague(match), Home: match.Home, Guest: match.Guest, JingcaiID: match.JingcaiID}
 	frontend := enrichment.analysis
 	row.Frontend, row.CompanyQuotes = drawStudyFrontendProjection(frontend), enrichment.companies
+	row.ScoreInputs = drawObservationBuildScoreInputs(match.MatchId, odds)
 	row.RoiSimulation = drawStudyProfitMarkets(frontend.RoiSimulation)
 	row.ProfitInputs = drawStudyProfitInputs(odds, row.RoiSimulation)
 	row.History = drawStudyHistoryInputs(match, history)
@@ -600,6 +602,12 @@ func drawFeatureStudyBuildRowWithEnrichment(match models.Money, history models.H
 // ExportDrawFeatureStudy executes SELECTs in one read-only repeatable-read
 // transaction. It does not initialize a server, migrate schemas or write Redis.
 func ExportDrawFeatureStudy(db *gorm.DB, now time.Time) (DrawFeatureStudyDataset, error) {
+	return exportDrawFeatureStudy(db, now, false)
+}
+
+// exportDrawFeatureStudy's research variant also archives upcoming fixtures.
+// Unconfirmed results are explicitly -1 and never become training labels.
+func exportDrawFeatureStudy(db *gorm.DB, now time.Time, includeUpcoming bool) (DrawFeatureStudyDataset, error) {
 	data := DrawFeatureStudyDataset{GeneratedAt: now.UTC(), Version: "draw-market-feature-study-v4-full-inputs", Audit: map[string]interface{}{}, Rows: []drawFeatureStudyRow{}}
 	err := db.Transaction(func(tx *gorm.DB) error {
 		schema, err := drawObservationReadSchema(tx)
@@ -630,6 +638,10 @@ func ExportDrawFeatureStudy(db *gorm.DB, now time.Time) (DrawFeatureStudyDataset
 		excluded := map[string]int{"unfinished_or_ambiguous_regulation": 0, "unknown_score": 0, "missing_or_future_kickoff": 0}
 		for _, target := range targets {
 			m := target.Match
+			if includeUpcoming && !m.MatchTime.IsZero() {
+				finished = append(finished, target)
+				continue
+			}
 			if !knownScores[m.MatchId] {
 				excluded["unknown_score"]++
 				continue
@@ -702,6 +714,7 @@ func ExportDrawFeatureStudy(db *gorm.DB, now time.Time) (DrawFeatureStudyDataset
 		historyPool := drawObservationParsedHistory(targets, historyRows, now)
 		historyIndex := indexDrawObservations(historyPool)
 		coverage := map[string]int{}
+		confirmedCount := 0
 		for _, target := range finished {
 			m := target.Match
 			if main, exists := mainByID[m.MatchId]; exists {
@@ -710,10 +723,16 @@ func ExportDrawFeatureStudy(db *gorm.DB, now time.Time) (DrawFeatureStudyDataset
 			row := drawFeatureStudyBuildRow(m, histories[m.MatchId], odds[m.MatchId], lines[m.MatchId])
 			preMatch := drawStudyPreMatchHistory(historyIndex, m)
 			row.PreMatchHistory = &preMatch
-			row.HomeScore, row.AwayScore, _ = drawRegulationResult(m)
-			row.Result = actualOutcomeIndex(row.HomeScore, row.AwayScore)
+			row.HomeScore, row.AwayScore, row.Result = -1, -1, -1
+			if h, a, confirmed := drawRegulationResult(m); confirmed && knownScores[m.MatchId] && !drawSourceTime(m.MatchTime).After(now) {
+				row.HomeScore, row.AwayScore = h, a
+				row.Result = actualOutcomeIndex(h, a)
+			}
 			if row.Result == 1 {
 				coverage["draws"]++
+			}
+			if row.Result >= 0 {
+				confirmedCount++
 			}
 			if preMatch.HomeRecent.Sample == 10 {
 				coverage["pre_match_home10_complete"]++
@@ -813,7 +832,10 @@ func ExportDrawFeatureStudy(db *gorm.DB, now time.Time) (DrawFeatureStudyDataset
 			}
 			data.Rows = append(data.Rows, row)
 		}
-		data.Audit["mainUniqueMatches"], data.Audit["settledRegulationMatches"], data.Audit["excluded"], data.Audit["coverage"] = len(targets), len(finished), excluded, coverage
+		data.Audit["mainUniqueMatches"], data.Audit["settledRegulationMatches"], data.Audit["excluded"], data.Audit["coverage"] = len(targets), confirmedCount, excluded, coverage
+		if includeUpcoming {
+			data.Audit["archivedMatches"] = len(finished)
+		}
 		data.Audit["historyDocumentsRead"], data.Audit["historyPoolUniqueMatches"] = len(historyRows), len(historyPool)
 		data.Audit["featureDefinitions"] = map[string]string{"sportteryDiff": "William - Sporttery; order home/draw/away", "averageDiff": "William - market average", "literalSportteryAverageDiff": "Sporttery - average = averageDiff - sportteryDiff (or directly from raw prices)", "homeHeat": "UI pressurePair: de-vig average probabilities and actual opening/latest Asian handicap; unavailable inputs excluded", "outcomes": "0=home, 1=draw, 2=away; regulation time only"}
 		data.Audit["profitDefinitions"] = map[string]string{

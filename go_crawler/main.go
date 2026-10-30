@@ -64,6 +64,10 @@ func generateRandomIP() string {
 }
 
 func fetch(url string) ([]byte, error) {
+	return fetchForMatch(url, "", "")
+}
+
+func fetchForMatch(url, matchID, kind string) ([]byte, error) {
 	client := &http.Client{
 		Timeout: 10 * time.Second,
 	}
@@ -84,11 +88,20 @@ func fetch(url string) ([]byte, error) {
 	}
 	defer resp.Body.Close()
 
+	body, readErr := io.ReadAll(resp.Body)
+	// Capture the unmodified response before JSON parsing, source merging,
+	// image substitutions or business-row upserts. This is when these bytes
+	// actually became available, not the source quote's historical time.
+	receivedAt := time.Now().UTC()
+	archiveResearchResponse(url, matchID, kind, body, receivedAt, resp.StatusCode)
+	if readErr != nil {
+		return nil, readErr
+	}
 	if resp.StatusCode != 200 {
 		return nil, fmt.Errorf("status code error: %d %s", resp.StatusCode, resp.Status)
 	}
 
-	return io.ReadAll(resp.Body)
+	return body, nil
 }
 
 func fetchSportteryTrade(matchID string, jingcaiID string) ([]byte, error) {
@@ -102,7 +115,7 @@ func fetchSportteryTrade(matchID string, jingcaiID string) ([]byte, error) {
 		seen[tradeID] = true
 
 		tradeURL := fmt.Sprintf("%s/match/jczq/lr/%s", BaseURL, tradeID)
-		body, err := fetch(tradeURL)
+		body, err := fetchForMatch(tradeURL, matchID, "sporttery_trade")
 		if err != nil {
 			lastErr = err
 			continue
@@ -164,6 +177,8 @@ func main() {
 	}
 	fmt.Println("Database initialized successfully.")
 	useDB = true
+	researchCapture = initResearchCapture(DSN)
+	defer researchCapture.finish()
 
 	// Ensure img dir exists
 	if _, err := os.Stat(ImgBaseDir); os.IsNotExist(err) {

@@ -54,30 +54,34 @@ type drawObservationEuroOdds struct {
 }
 
 type drawObservationItem struct {
-	MatchID           string                           `json:"matchId"`
-	JingcaiID         string                           `json:"jingcaiId"`
-	Date              string                           `json:"date"`
-	MatchTime         time.Time                        `json:"matchTime"`
-	League            string                           `json:"league"`
-	Home              string                           `json:"home"`
-	Guest             string                           `json:"guest"`
-	HomeScore         int                              `json:"homeScore"`
-	AwayScore         int                              `json:"awayScore"`
-	Status            int                              `json:"status"`
-	DisplayState      string                           `json:"displayState"`
-	Settled           bool                             `json:"settled"`
-	RegulationSettled *bool                            `json:"regulationSettled,omitempty"`
-	HomeRecent        drawObservationRecent            `json:"homeRecent"`
-	AwayRecent        drawObservationRecent            `json:"awayRecent"`
-	HeadToHead        drawObservationRecent            `json:"headToHead"`
-	AsianHandicap     drawObservationLine              `json:"asianHandicap"`
-	GoalsLine         drawObservationLine              `json:"goalsLine"`
-	EuroOdds          drawObservationEuroOdds          `json:"euroOdds"`
-	FrontendAnalysis  *drawObservationFrontendAnalysis `json:"frontendAnalysis,omitempty"`
-	CompanyQuotes     []drawObservationCompanyQuotes   `json:"companyQuotes,omitempty"`
-	Sources           []string                         `json:"sources"`
-	Warnings          []string                         `json:"warnings"`
-	FrozenDrawSignal  *drawObservationFrozenSignal     `json:"frozenDrawSignal,omitempty"`
+	MatchID             string                           `json:"matchId"`
+	JingcaiID           string                           `json:"jingcaiId"`
+	Date                string                           `json:"date"`
+	MatchTime           time.Time                        `json:"matchTime"`
+	League              string                           `json:"league"`
+	Home                string                           `json:"home"`
+	Guest               string                           `json:"guest"`
+	HomeScore           int                              `json:"homeScore"`
+	AwayScore           int                              `json:"awayScore"`
+	Status              int                              `json:"status"`
+	DisplayState        string                           `json:"displayState"`
+	Settled             bool                             `json:"settled"`
+	RegulationSettled   *bool                            `json:"regulationSettled,omitempty"`
+	HomeRecent          drawObservationRecent            `json:"homeRecent"`
+	AwayRecent          drawObservationRecent            `json:"awayRecent"`
+	HeadToHead          drawObservationRecent            `json:"headToHead"`
+	AsianHandicap       drawObservationLine              `json:"asianHandicap"`
+	GoalsLine           drawObservationLine              `json:"goalsLine"`
+	EuroOdds            drawObservationEuroOdds          `json:"euroOdds"`
+	FrontendAnalysis    *drawObservationFrontendAnalysis `json:"frontendAnalysis,omitempty"`
+	CompanyQuotes       []drawObservationCompanyQuotes   `json:"companyQuotes,omitempty"`
+	Sources             []string                         `json:"sources"`
+	Warnings            []string                         `json:"warnings"`
+	FrozenDrawSignal    *drawObservationFrozenSignal     `json:"frozenDrawSignal,omitempty"`
+	SecondaryDecision   *drawObservationSecondarySignal  `json:"secondaryDecision,omitempty"`
+	ScoreInputs         *drawScoreInputs                 `json:"scoreInputs,omitempty"`
+	ScoreRecommendation *drawScoreRecommendation         `json:"scoreRecommendation,omitempty"`
+	ResearchDecision    *drawObservationResearchDecision `json:"researchDecision,omitempty"`
 }
 
 type drawObservationSummary struct {
@@ -88,19 +92,21 @@ type drawObservationSummary struct {
 }
 
 type drawObservationResponse struct {
-	DataVersion      string                 `json:"dataVersion,omitempty"`
-	GeneratedAt      *time.Time             `json:"generatedAt,omitempty"`
-	ScheduleTimezone string                 `json:"scheduleTimezone"`
-	Mode             string                 `json:"mode"`
-	Scope            string                 `json:"scope"`
-	Date             string                 `json:"date"`
-	Summary          drawObservationSummary `json:"summary"`
-	Total            int                    `json:"total"`
-	Page             int                    `json:"page"`
-	PageSize         int                    `json:"pageSize"`
-	Leagues          []string               `json:"leagues"`
-	Items            []drawObservationItem  `json:"items"`
-	Notes            []string               `json:"notes"`
+	DataVersion        string                           `json:"dataVersion,omitempty"`
+	GeneratedAt        *time.Time                       `json:"generatedAt,omitempty"`
+	ScheduleTimezone   string                           `json:"scheduleTimezone"`
+	Mode               string                           `json:"mode"`
+	Scope              string                           `json:"scope"`
+	Date               string                           `json:"date"`
+	Summary            drawObservationSummary           `json:"summary"`
+	ObservationMetrics *drawObservationMetrics          `json:"observationMetrics,omitempty"`
+	ResearchTakeover   *drawObservationResearchTakeover `json:"researchTakeover,omitempty"`
+	Total              int                              `json:"total"`
+	Page               int                              `json:"page"`
+	PageSize           int                              `json:"pageSize"`
+	Leagues            []string                         `json:"leagues"`
+	Items              []drawObservationItem            `json:"items"`
+	Notes              []string                         `json:"notes"`
 }
 
 type drawObservationQuery struct {
@@ -206,6 +212,18 @@ func GetDrawObservations(c *gin.Context) {
 	if err != nil {
 		drawHTTPError(c, err)
 		return
+	}
+	// Recompute the row-aware display contract from this exact saved input.
+	// Older durable days are regenerated before reaching this point; never
+	// fabricate a fixed score pair when source evidence is unavailable.
+	for i := range response.Items {
+		decision := drawObservationSecondaryDecision(response.Items[i])
+		response.Items[i].SecondaryDecision = &decision
+		recommendation := drawObservationScoreRecommendation(response.Items[i])
+		response.Items[i].ScoreRecommendation = &recommendation
+	}
+	if takeover := buildDrawResearchTakeover(response.Items); takeover != nil {
+		response.ResearchTakeover = takeover
 	}
 	c.JSON(http.StatusOK, response)
 }
@@ -835,7 +853,7 @@ func buildDrawObservations(data drawObservationData, q drawObservationQuery) dra
 		if a.Equal(b) {
 			return selected[i].Match.MatchId < selected[j].Match.MatchId
 		}
-		return a.After(b)
+		return a.Before(b)
 	})
 	response.Total = len(selected)
 	offset := len(selected)

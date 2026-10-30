@@ -1,10 +1,10 @@
-// Independent, offline review of secondary-v1. No service, browser, database,
-// model training, cache, or production file is started or modified.
+// Offline contract and actual Vue SSR checks for secondary-v2 and ranked scores.
+// No service, database, browser, network or model training is used.
 const fs = require('node:fs')
 const path = require('node:path')
 const os = require('node:os')
-const crypto = require('node:crypto')
 const assert = require('node:assert/strict')
+const crypto = require('node:crypto')
 const { createRequire } = require('node:module')
 const root = path.resolve(__dirname, '..')
 const adminRequire = createRequire(path.join(root, 'admin/package.json'))
@@ -12,13 +12,10 @@ const ts = adminRequire('typescript')
 const vue = adminRequire('vue')
 const { parse, compileScript } = adminRequire('@vue/compiler-sfc')
 const { renderToString } = adminRequire('@vue/server-renderer')
-const folder = path.join(root, 'reports/draw-secondary-observation-review')
-const read = relative => fs.readFileSync(path.join(root, relative), 'utf8')
-const shaFile = absolute => crypto.createHash('sha256').update(fs.readFileSync(absolute)).digest('hex')
-const sha = relative => shaFile(path.join(root, relative))
+const read = name => fs.readFileSync(path.join(root, name), 'utf8')
 let checks = 0
-function equal(actual, expected, message) { assert.deepEqual(actual, expected, message); checks++ }
-function check(actual, message) { assert.ok(actual, message); checks++ }
+const equal = (a, b, message) => { assert.deepEqual(a, b, message); checks++ }
+const check = (condition, message) => { assert.ok(condition, message); checks++ }
 function load(source, imports = {}) {
   const module = { exports: {} }
   const compiled = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 } }).outputText
@@ -26,147 +23,150 @@ function load(source, imports = {}) {
   return module.exports
 }
 const secondary = load(read('admin/src/utils/drawSecondarySignal.ts'))
-const frozen = load(read('admin/src/utils/drawFrozenSignal.ts'))
-const unchangedSources = {
-  'admin/src/utils/drawFrozenSignal.ts': 'd68476cd87630c2ca69198963ead381c3e03f8092f63ef4c753d7976048d3358',
-  'admin/src/views/statistics/DrawFrozenSignal.vue': '82540784e4b58cbe6b175ac146c9be010132adf5b26df11fb4a1a415fa555f14',
-  'admin/src/views/statistics/DrawScheduleDate.vue': '637b3309ee1e91c5603dc221dfbadaf15d22bdf46980aab13817a5dbf6e89bb7',
-  'admin/src/utils/drawCalendar.ts': 'd044549d9a77de66006fc0ed916abae51debf2aba9d92e880213741c5088f735',
-  'go_server/internal/drawmodeldata/observation_v1.json': 'e7cb7d50668a76e916d2f86a6ab598a6bcb23ab5e6c961dbd972875346afd987',
+const score = load(read('admin/src/utils/drawScoreRecommendation.ts'), { './drawSecondarySignal': secondary })
+const decision = extra => ({ version: 'secondary-v2-input-guards', decision: 'retained', threshold: .225, score: .3,
+  reason: '报价完整，赛前交锋8场，二次保留', headToHeadSample: 8, minimumHeadToHead: 5, sportteryQuotesAvailable: true, ...extra })
+const recommendation = extra => ({ version: 'draw-score-dynamic-v2', state: 'recommended', source: 'sporttery_score_odds',
+  scores: [{ home: 2, away: 2 }, { home: 1, away: 1 }], reason: '按本场竞彩比分报价排序', ...extra })
+const fixture = extra => ({ jingcaiId: '202610305002', frozenDrawSignal: { state: 'selected', score: .3 },
+  secondaryDecision: decision(), scoreRecommendation: recommendation(), settled: false, regulationSettled: false, homeScore: 0, awayScore: 0, ...extra })
+async function render(component, row, warnings) {
+  const app = vue.createSSRApp({ render: () => vue.h(component, { row }) })
+  app.config.warnHandler = warning => warnings.push(warning)
+  app.component('VChip', { setup: (_, { slots }) => () => vue.h('span', slots.default?.()) })
+  return renderToString(app)
 }
-
-function row(score, state = 'selected', extra = {}) {
-  return { frozenDrawSignal: { state, modelVersion: 'sporttery-draw-observation-v1', score }, settled: false, regulationSettled: false, homeScore: 0, awayScore: 0, ...extra }
-}
-function summary(rows, select, totalDraws) {
-  const selected = rows.filter(select)
-  const draws = selected.filter(item => item.result === 1).length
-  return { matches: selected.length, draws, nonDraws: selected.length - draws, precision: selected.length ? draws / selected.length : null, coverage: totalDraws ? draws / totalDraws : null }
-}
-function auditCohort(rows, lookup, expected) {
-  const cohort = rows.filter(item => typeof item.jingcaiId === 'string' && item.jingcaiId.trim())
-  const drawCount = cohort.filter(item => item.result === 1).length
-  let selectedStateCount = 0
-  const observations = cohort.map(source => {
-    const result = lookup(String(source.matchId))
-    check(result && Number.isFinite(result.score), `missing real score for ${source.matchId}`)
-    const observation = row(result.score, result.selected ? 'selected' : 'not_selected', {
-      matchId: source.matchId, result: source.result, settled: true, regulationSettled: true,
-      homeScore: source.homeScore, awayScore: source.awayScore,
-    })
-    const prior = frozen.frozenDrawPresentation(observation)
-    const before = JSON.stringify(observation)
-    const classification = secondary.classifySecondaryDraw(observation)
-    secondary.secondaryDrawPresentation(observation)
-    equal(JSON.stringify(observation), before, 'secondary helper cannot mutate original row')
-    equal(frozen.frozenDrawPresentation(observation), prior, 'original fixed-model presentation is preserved')
-    const alternateResult = { ...observation, result: (source.result + 1) % 3, homeScore: 99, awayScore: 98, status: -999, settled: false, regulationSettled: false }
-    equal(secondary.classifySecondaryDraw(alternateResult), classification, 'actual target result cannot select or reject a row')
-    if (result.selected) selectedStateCount++
-    return { ...source, modelSelected: result.selected, decision: classification.decision }
-  })
-  const baseline = summary(observations, item => item.modelSelected, drawCount)
-  const retained = summary(observations, item => item.decision === 'retained', drawCount)
-  const rejected = summary(observations, item => item.decision === 'rejected', drawCount)
-  equal(baseline.matches, retained.matches + rejected.matches, 'all valid selected rows partition into retained/rejected')
-  equal(baseline.draws, retained.draws + rejected.draws, 'selected draw accounting reconciles')
-  equal([cohort.length, drawCount, baseline.matches, baseline.draws, retained.matches, retained.draws], expected, 'real historical cohort totals reconcile')
-  return { cohortMatches: cohort.length, cohortDraws: drawCount, baseline, retained, rejected, targetMutations: cohort.length, originalSelectedStatesPreserved: selectedStateCount }
-}
-
 async function main() {
-  equal(secondary.SECONDARY_DRAW_VERSION, 'secondary-v1', 'version frozen explicitly')
-  equal(secondary.SECONDARY_DRAW_THRESHOLD, .225, 'threshold frozen explicitly')
-  for (const [file, expected] of Object.entries(unchangedSources)) equal(sha(file), expected, `${file} must remain unchanged`)
-  for (const [score, expected] of [[.2016984853563883, 'rejected'], [.22499999999999998, 'rejected'], [.225, 'retained'], [.22500000000000003, 'retained'], [.25, 'retained'], [0, 'rejected']]) {
-    equal(secondary.classifySecondaryDraw(row(score)).decision, expected, `strict numeric boundary at ${score}`)
+  equal(secondary.SECONDARY_DRAW_VERSION, 'secondary-v2-input-guards', 'current secondary contract is versioned')
+  equal(score.DRAW_SCORE_RECOMMENDATION_VERSION, 'draw-score-dynamic-v2', 'dynamic score contract is versioned')
+  equal(crypto.createHash('sha256').update(fs.readFileSync(path.join(root, 'go_server/internal/drawmodeldata/observation_v1.json'))).digest('hex'),
+    'e7cb7d50668a76e916d2f86a6ab598a6bcb23ab5e6c961dbd972875346afd987', 'original frozen model is unchanged')
+  equal(secondary.classifySecondaryDraw(fixture()).decision, 'retained', 'current backend retention is accepted')
+  for (const payload of [undefined, null, decision({ version: 'secondary-v1' }), decision({ version: 'unknown' }), decision({ decision: 'SELECTED' }), decision({ threshold: .2 })]) {
+    const row = fixture({ secondaryDecision: payload, frozenDrawSignal: { state: 'selected', score: .99 } })
+    equal(secondary.classifySecondaryDraw(row).decision, 'unavailable', 'old/missing/invalid backend decision never falls back to high score')
+    equal(secondary.secondaryDrawPresentation(row).label, '待更新', 'old contract is visibly waiting for update')
+    equal(score.recommendDrawScores(row).scores, [], 'old secondary cannot receive scores')
   }
-  for (const invalid of [undefined, null, NaN, Infinity, -Infinity, '0.225']) equal(secondary.classifySecondaryDraw(row(invalid)).decision, 'unavailable', 'missing/non-numeric/non-finite score is not a rejection')
-  for (const state of ['unavailable', 'unknown', 'SELECTED']) equal(secondary.classifySecondaryDraw(row(.3, state)).decision, 'unavailable', 'unknown states cannot enter selection')
-  equal(secondary.classifySecondaryDraw({ frozenDrawSignal: { score: .3 } }).decision, 'unavailable', 'missing state is unavailable')
-  equal(secondary.classifySecondaryDraw({}).decision, 'unavailable', 'old API result cannot be silently rejected')
-  equal(secondary.classifySecondaryDraw(row(.9, 'not_selected')).decision, 'not_selected', 'secondary never promotes a non-selected original row')
-  equal(secondary.classifySecondaryDraw(row(.9, 'out_of_scope')).decision, 'out_of_scope', 'non-lottery rows stay out of scope')
-
-  const resultCases = [
-    ['pending', { settled: false, regulationSettled: false, homeScore: 0, awayScore: 0 }, '二次入选 · 待赛果', '待赛果核对'],
-    ['unconfirmed regulation', { settled: true, regulationSettled: undefined, homeScore: 1, awayScore: 1 }, '二次入选 · 待赛果', '待赛果核对'],
-    ['missing score', { settled: true, regulationSettled: true, homeScore: NaN, awayScore: 1 }, '二次入选 · 待赛果', '待赛果核对'],
-    ['confirmed draw', { settled: true, regulationSettled: true, homeScore: 1, awayScore: 1 }, '命中平局', '误剔平局'],
-    ['confirmed non-draw', { settled: true, regulationSettled: true, homeScore: 2, awayScore: 0 }, '二次入选 · 未打平', '剔除正确'],
+  const causes = [
+    ['quotes', '竞彩初盘或即时盘报价不完整', { sportteryQuotesAvailable: false, reasonCodes: ['sporttery_quotes_missing'] }],
+    ['history', '赛前交锋仅2场，少于5场', { headToHeadSample: 2, reasonCodes: ['head_to_head_insufficient'] }],
+    ['score', '模型分数0.2100低于二次门槛0.225', { score: .21, reasonCodes: ['score_below_threshold'] }],
   ]
-  for (const [name, result, retainedLabel, rejectionOutcome] of resultCases) {
-    equal(secondary.secondaryDrawPresentation(row(.23, 'selected', result)).label, retainedLabel, name)
-    equal(secondary.secondaryDrawPresentation(row(.22, 'selected', result)).outcomeLabel, rejectionOutcome, name)
-    equal(secondary.classifySecondaryDraw(row(.23, 'selected', result)), secondary.classifySecondaryDraw(row(.23)), 'settlement cannot alter retained decision')
-    equal(secondary.classifySecondaryDraw(row(.22, 'selected', result)), secondary.classifySecondaryDraw(row(.22)), 'settlement cannot alter rejected decision')
+  for (const [name, reason, fields] of causes) {
+    const row = fixture({ secondaryDecision: decision({ ...fields, decision: 'rejected', reason }) })
+    equal(secondary.classifySecondaryDraw(row).decision, 'rejected', `${name}: follow backend rejection even with original selected`)
+    equal(score.recommendDrawScores(row).state, 'not_selected', `${name}: rejected candidate cannot receive recommendation`)
+    equal(row.frozenDrawSignal.state, 'selected', `${name}: original model marker is not erased`)
   }
-  const frozenRow = Object.freeze({ ...row(.22), frozenDrawSignal: Object.freeze(row(.22).frozenDrawSignal) })
-  equal(secondary.classifySecondaryDraw(frozenRow).decision, 'rejected', 'works on immutable source objects')
-  const noOutcomeAccess = new Proxy(row(.23), {
-    get(target, key) {
-      if (key !== 'frozenDrawSignal') throw new Error(`Selection accessed non-model field ${String(key)}`)
-      return target[key]
-    },
-  })
-  equal(secondary.classifySecondaryDraw(noOutcomeAccess).decision, 'retained', 'classification reads only original model output, never target results or current-page odds')
-
-  const originalRows = JSON.parse(read('reports/draw-full-feature-study/dataset.json')).rows
-  const scoreSource = JSON.parse(read('reports/draw-observation-model/frozen-scores.json'))
-  const originalScores = new Map(scoreSource.scores.map(item => [String(item.matchId), item]))
-  equal(originalRows.length, 4161, 'use full original settled history')
-  const original = auditCohort(originalRows, id => originalScores.get(id), [511, 124, 320, 122, 285, 118])
-  const currentPath = path.join(os.tmpdir(), 'peak-ball-match-202610257025-readonly.json')
-  const currentScoresPath = path.join(os.tmpdir(), 'peak-ball-smallest-intersection-independent-audit.json')
-  let current = { status: 'skipped', reason: 'Optional read-only TEMP snapshot or scores are absent; no substitute or network request was made.' }
-  if (fs.existsSync(currentPath) && fs.existsSync(currentScoresPath)) {
-    const currentRows = JSON.parse(fs.readFileSync(currentPath, 'utf8').replace(/^\uFEFF/, '')).rows
-    const currentScores = JSON.parse(fs.readFileSync(currentScoresPath, 'utf8').replace(/^\uFEFF/, '')).newScores
-    const originalThreshold = .2016984853563883
-    current = { status: 'passed', ...auditCohort(currentRows, id => ({ score: currentScores[id], selected: currentScores[id] >= originalThreshold }), [525, 127, 326, 124, 291, 120]), sourceHashes: { snapshot: shaFile(currentPath), scores: shaFile(currentScoresPath) } }
+  const multipleReasons = secondary.classifySecondaryDraw(fixture({ secondaryDecision: decision({ decision: 'rejected', reason: '条件不足', reasons: ['竞彩报价不完整', '赛前交锋仅2场'] }) }))
+  check(multipleReasons.reason.includes('竞彩报价不完整') && multipleReasons.reason.includes('赛前交锋仅2场'), 'all independent rejection reasons stay visible')
+  const onlyInputs = new Proxy(fixture(), { get(target, key) {
+    if (!['frozenDrawSignal', 'secondaryDecision'].includes(key)) throw new Error(`Secondary accessed target/current-page field ${String(key)}`)
+    return target[key]
+  } })
+  equal(secondary.classifySecondaryDraw(onlyInputs).decision, 'retained', 'secondary consumes only backend decision, never current-page history/odds/outcomes')
+  equal(secondary.classifySecondaryDraw(fixture({ frozenDrawSignal: { state: 'not_selected', score: .9 } })).decision, 'unavailable', 'contradictory backend cannot promote original non-selection')
+  const low = fixture({ secondaryDecision: decision({ decision: 'rejected', reason: causes[2][1], score: .21 }) })
+  for (const outcome of [{ settled: true, regulationSettled: true, homeScore: 2, awayScore: 2 }, { settled: true, regulationSettled: true, homeScore: 5, awayScore: 0 }]) {
+    equal(secondary.classifySecondaryDraw({ ...low, ...outcome }), secondary.classifySecondaryDraw(low), 'outcomes cannot change rejection')
+    equal(score.recommendDrawScores({ ...fixture(), ...outcome }), score.recommendDrawScores(fixture()), 'outcomes cannot reorder scores')
   }
-
-  const componentPath = 'admin/src/views/statistics/DrawSecondarySignal.vue'
-  const componentSource = read(componentPath)
-  const { descriptor } = parse(componentSource)
-  const script = compileScript(descriptor, { id: 'secondary-observation-offline', inlineTemplate: true })
-  const component = load(script.content, { '@/utils/drawSecondarySignal': secondary }).default
-  const fixtures = [
-    ['保留／待赛', row(.225)],
-    ['保留／命中', row(.3, 'selected', { settled: true, regulationSettled: true, homeScore: 1, awayScore: 1 })],
-    ['保留／未平', row(.3, 'selected', { settled: true, regulationSettled: true, homeScore: 2, awayScore: 0 })],
-    ['剔除／待赛', row(.22)],
-    ['剔除／正确', row(.22, 'selected', { settled: true, regulationSettled: true, homeScore: 2, awayScore: 0 })],
-    ['剔除／误删', row(.22, 'selected', { settled: true, regulationSettled: true, homeScore: 1, awayScore: 1 })],
-    ['原模型未入选', row(.3, 'not_selected')], ['非竞彩', row(.3, 'out_of_scope')],
-    ['缺少分数', row(undefined)], ['尚无原模型', {}],
+  equal(secondary.secondaryDrawPresentation({ ...low, settled: true, regulationSettled: true, homeScore: 2, awayScore: 2 }).outcomeLabel, '误剔平局', 'excluded actual draw stays visible')
+  equal(secondary.secondaryDrawPresentation({ ...low, settled: true, regulationSettled: true, homeScore: 2, awayScore: 0 }).outcomeLabel, '剔除正确', 'excluded decisive result is audited')
+  equal(score.recommendDrawScores(fixture()).scores, ['2:2', '1:1'], 'backend ranking is preserved without a fixed fallback')
+  equal(score.recommendDrawScores(fixture({ scoreRecommendation: recommendation({ scores: [{ home: 3, away: 3 }, { home: 2, away: 2 }], source: 'goal_estimate' }) })).scores, ['3:3', '2:2'], 'higher draw scores are accepted in server order')
+  equal(score.recommendDrawScores(fixture({ scoreRecommendation: recommendation({ scores: [{ home: 6, away: 6 }, { home: 0, away: 0 }] }) })).scores, ['6:6', '0:0'], 'valid server draw range includes zero and six')
+  for (const payload of [undefined, null, recommendation({ version: 'draw-score-baseline-v1' }), recommendation({ version: 'unknown' }), recommendation({ state: 'not_selected' }), recommendation({ reason: '' })]) {
+    equal(score.recommendDrawScores(fixture({ scoreRecommendation: payload })).state, 'unavailable', 'old/missing score payload stays pending with no manufactured 1:1/0:0')
+    equal(score.recommendDrawScores(fixture({ scoreRecommendation: payload })).scores, [], 'no fallback scores are fabricated')
+  }
+  for (const bad of [null, [], [{ home: 2, away: 2 }], [{ home: 2, away: 2 }, { home: 2, away: 2 }],
+    [{ home: 2, away: 1 }, { home: 0, away: 0 }], [{ home: 7, away: 7 }, { home: 1, away: 1 }],
+    [{ home: -1, away: -1 }, { home: 0, away: 0 }], [{ home: 1.5, away: 1.5 }, { home: 1, away: 1 }],
+    [{ home: '2', away: '2' }, { home: 1, away: 1 }], [{ home: NaN, away: NaN }, { home: 0, away: 0 }],
+    [null, { home: 1, away: 1 }], [{ home: 1, away: 1 }, { home: 2, away: 2 }, { home: 3, away: 3 }]]) {
+    equal(score.recommendDrawScores(fixture({ scoreRecommendation: recommendation({ scores: bad }) })).state, 'unavailable', 'malformed, duplicate or non-draw backend scores are rejected')
+  }
+  const proxiedScores = new Proxy(fixture(), { get(target, key) {
+    if (!['jingcaiId', 'frozenDrawSignal', 'secondaryDecision', 'scoreRecommendation'].includes(key)) throw new Error(`Score choice read target field ${String(key)}`)
+    return target[key]
+  } })
+  equal(score.recommendDrawScores(proxiedScores).scores, ['2:2', '1:1'], 'score choice never reads final goals/status')
+  const mutated = score.recommendDrawScores(fixture()); mutated.scores.pop()
+  equal(score.recommendDrawScores(fixture()).scores.length, 2, 'recommendation arrays are isolated between calls')
+  equal(score.drawScorePresentation(fixture({ settled: true, regulationSettled: true, homeScore: 2, awayScore: 2 })).outcomeLabel, '首选命中', 'first dynamic score settles correctly')
+  equal(score.drawScorePresentation(fixture({ settled: true, regulationSettled: true, homeScore: 1, awayScore: 1 })).outcomeLabel, '次选命中（前二命中）', 'second dynamic score settles correctly')
+  equal(score.drawScorePresentation(fixture({ settled: true, regulationSettled: true, homeScore: 0, awayScore: 0 })).outcomeLabel, '前二未命中', 'no hidden 0:0 recommendation survives')
+  for (const extra of [{ settled: true, regulationSettled: false }, { settled: true, regulationSettled: true, homeScore: NaN }, { settled: true, regulationSettled: true, homeScore: -1 }, { settled: true, regulationSettled: true, homeScore: 1.2 }]) {
+    equal(score.drawScorePresentation(fixture(extra)).outcomeLabel, '待赛果核对', 'ambiguous or invalid results do not settle recommendations')
+  }
+  const components = {
+    secondary: load(compileScript(parse(read('admin/src/views/statistics/DrawSecondarySignal.vue')).descriptor, { id: 'secondary-v2-offline', inlineTemplate: true }).content, { '@/utils/drawSecondarySignal': secondary }).default,
+    scores: load(compileScript(parse(read('admin/src/views/statistics/DrawScoreRecommendation.vue')).descriptor, { id: 'scores-v2-offline', inlineTemplate: true }).content, { '@/utils/drawScoreRecommendation': score }).default,
+  }
+  const cases = [
+    ['retained', fixture(), '二次入选', '首选'],
+    ...causes.map(([name, reason, fields]) => [name, fixture({ secondaryDecision: decision({ ...fields, decision: 'rejected', reason }) }), reason, '未二次入选']),
+    ['legacy', fixture({ secondaryDecision: undefined }), '待更新', '待更新'],
+    ['no scores', fixture({ scoreRecommendation: undefined }), '二次入选', '待更新'],
+    ['old scores', fixture({ scoreRecommendation: recommendation({ version: 'draw-score-baseline-v1' }) }), '二次入选', '待更新'],
+    ['estimate', fixture({ scoreRecommendation: recommendation({ source: 'goal_estimate', reason: '按近期进球、交锋和大小球估计', scores: [{ home: 3, away: 3 }, { home: 2, away: 2 }] }) }), '二次入选', '3:3'],
+    ['first hit', fixture({ settled: true, regulationSettled: true, homeScore: 2, awayScore: 2 }), '命中平局', '首选命中'],
+    ['second hit', fixture({ settled: true, regulationSettled: true, homeScore: 1, awayScore: 1 }), '命中平局', '次选命中'],
   ]
-  const rendered = []
-  const warnings = []
-  for (const [name, input] of fixtures) {
-    const app = vue.createSSRApp({ render: () => vue.h(component, { row: input }) })
-    app.config.warnHandler = message => warnings.push(message)
-    app.component('VChip', { props: ['color', 'size', 'variant'], setup: (props, { slots }) => () => vue.h('span', { class: ['chip', props.color] }, slots.default?.()) })
-    const html = await renderToString(app)
-    const presentation = secondary.secondaryDrawPresentation(input)
-    check(html.includes(presentation.label), `${name} primary marker is visible in actual Vue rendering`)
-    check(html.includes(`data-secondary-state="${presentation.decision}"`), `${name} state exposed`) 
-    check(html.includes('分数不是平局概率'), 'tooltip explicitly disambiguates model score')
-    check(!/模型分数[^<]*%/.test(html), 'model score must not be labelled a percentage')
-    if (presentation.outcomeLabel) check(html.includes(presentation.outcomeLabel), `${name} outcome audit is visible`)
-    if (Number.isFinite(presentation.score)) check(html.includes(presentation.score.toFixed(4)), `${name} numeric score is visible`)
-    rendered.push(`<section><h2>${name}</h2>${html}</section>`)
+  const warnings = [], rendered = []
+  for (const [name, row, secondText, scoreText] of cases) {
+    const a = await render(components.secondary, row, warnings), b = await render(components.scores, row, warnings)
+    check(a.includes(secondText), `${name}: backend secondary reason/decision is visible`)
+    check(b.includes(scoreText), `${name}: ranked recommendation or pending state is visible`)
+    check(!b.includes('基线推荐') && !b.includes('固定推荐'), `${name}: obsolete baseline wording is removed`)
+    if (score.recommendDrawScores(row).state === 'recommended') check(b.includes(row.scoreRecommendation.reason), `${name}: recommendation source reasoning is visible`)
+    rendered.push({ name, secondaryHTML: a, scoresHTML: b })
   }
-  equal(warnings, [], 'actual component renders without Vue warnings')
+  equal(warnings, [], 'real Vue components render all decision and score states without warnings')
   const page = read('admin/src/views/statistics/DrawHistory.vue')
-  check(page.includes('DrawSecondarySignal') && page.includes('二次筛选'), 'observation table includes independent secondary column')
-  check(page.includes('<DrawFrozenSignal'), 'original selection column still exists')
-
-  fs.mkdirSync(folder, { recursive: true })
-  fs.writeFileSync(path.join(folder, 'states.html'), `<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>二次筛选离线状态核对</title><style>body{background:#151515;color:#eee;font:14px system-ui;margin:24px;display:grid;grid-template-columns:repeat(3,minmax(240px,1fr));gap:16px}section{border:1px solid #555;padding:16px;border-radius:6px}h2{font-size:15px}.chip{display:inline-block;border-radius:18px;padding:5px 12px;background:#333}.success,.text-success{color:#75d29a}.warning{color:#ffc65c}.error,.text-error{color:#ff7b7b}.primary{color:#6eb2ff}.text-caption{font-size:12px}.mt-1{margin-top:6px}.text-medium-emphasis{color:#aaa}</style>${rendered.join('\n')}</html>`, 'utf8')
-  const sourceFiles = ['admin/src/utils/drawSecondarySignal.ts', componentPath, 'admin/src/views/statistics/DrawHistory.vue', 'scripts/verify-draw-secondary-observation.cjs', 'reports/draw-full-feature-study/dataset.json', 'reports/draw-observation-model/frozen-scores.json', ...Object.keys(unchangedSources)]
-  const result = { status: 'passed', version: secondary.SECONDARY_DRAW_VERSION, threshold: secondary.SECONDARY_DRAW_THRESHOLD, checks, original, current, actualVueRenderedStates: fixtures.length, vueWarnings: warnings, originalSourcesUnchanged: Object.keys(unchangedSources), servicesStarted: false, networkRequests: false, modelTraining: false, sourceHashes: Object.fromEntries(sourceFiles.map(file => [file, sha(file)])), limitations: ['Historical metrics are fitted-history observations, not prospective validation.', 'Current 525-match snapshot is optional and read from existing TEMP files only.', 'SSR uses a simple chip stub; it validates actual template content and conditional visibility, not full Vuetify browser layout.'] }
-  fs.writeFileSync(path.join(folder, 'review.json'), JSON.stringify(result, null, 2) + '\n')
-  console.log(JSON.stringify(result, null, 2))
+  check(page.includes('<DrawFrozenSignal :row="row"') && page.includes('<DrawResearchSource :row="row"'), 'original model marker and research provenance are preserved')
+  check(page.includes('赛前交锋至少5场') && !page.includes('二次筛选 v1'), 'shared list explains current guards')
+  check(!page.includes('固定推荐1:1、0:0'), 'shared list has no fixed-score claim')
+  const realPath = process.env.DRAW_CURRENT_RESPONSE_JSON || path.join(os.tmpdir(), 'peak-ball-20261031-current-api-review.json')
+  let realReview = { status: 'skipped', reason: 'No actual response supplied; no substitute is fabricated.' }
+  if (fs.existsSync(realPath)) {
+    const response = JSON.parse(fs.readFileSync(realPath, 'utf8').replace(/^\uFEFF/, ''))
+    check(Array.isArray(response.items), 'actual response rows exist')
+    let oldPending = 0, current = 0, retained = 0, rejected = 0, recommended = 0, higherDraws = 0
+    for (const row of response.items) {
+      const result = secondary.classifySecondaryDraw(row)
+      if (row.secondaryDecision?.version !== secondary.SECONDARY_DRAW_VERSION) { equal(result.decision, 'unavailable', 'actual old API row cannot masquerade as v2'); oldPending++ }
+      else { equal(result.decision, row.secondaryDecision.decision, 'actual current API uses backend decision'); current++ }
+      const html = await render(components.secondary, row, warnings)
+      check(html.includes(secondary.secondaryDrawPresentation(row).label), 'actual API decision renders correctly')
+      if (result.decision === 'retained') retained++
+      if (result.decision === 'rejected') {
+        rejected++
+        for (const reason of result.reasons) check(html.includes(reason), 'actual backend exclusion reasons are visible')
+      }
+      const ranked = score.recommendDrawScores(row), scoreHTML = await render(components.scores, row, warnings)
+      check(scoreHTML.includes(score.drawScorePresentation(row).label), 'actual score source/pending state is visible')
+      if (ranked.state === 'recommended') {
+        recommended++
+        equal(ranked.scores, row.scoreRecommendation.scores.map(x => `${x.home}:${x.away}`), 'actual backend score rank is not reordered')
+        for (const value of ranked.scores) check(scoreHTML.includes(value), 'actual recommended score renders')
+        if (row.scoreRecommendation.scores.some(x => x.home >= 2)) higherDraws++
+        check(scoreHTML.includes(row.scoreRecommendation.reason), 'actual score source reason is shown')
+      } else check(!scoreHTML.includes('首选 '), 'non-candidates have no hidden fixed score fallback')
+    }
+    if (oldPending === 0 && response.observationMetrics?.secondaryVersion === secondary.SECONDARY_DRAW_VERSION) {
+      equal(retained, response.observationMetrics.secondary.selected, 'actual per-row decisions match full-window secondary total')
+      equal(rejected, response.observationMetrics.rejected.selected, 'actual per-row exclusions match full-window rejected total')
+    }
+    equal(warnings, [], 'actual response rows render without Vue warnings')
+    realReview = { status: 'passed', rows: response.items.length, oldPending, current, retained, rejected, recommended, higherDraws }
+  }
+  const report = { status: 'passed', checks, version: secondary.SECONDARY_DRAW_VERSION, scoreVersion: score.DRAW_SCORE_RECOMMENDATION_VERSION,
+    renderedStates: cases.length, actualResponse: realReview, servicesStarted: false, networkRequests: false, originalModelChanged: false, vueWarnings: warnings }
+  fs.writeFileSync(path.join(os.tmpdir(), 'peak-ball-secondary-v2-ui-review.json'), JSON.stringify(report, null, 2))
+  fs.writeFileSync(path.join(os.tmpdir(), 'peak-ball-secondary-v2-ui-states.html'), '<!doctype html><meta charset="utf-8">' + rendered.map(x => `<section><h2>${x.name}</h2>${x.secondaryHTML}${x.scoresHTML}</section>`).join('\n'))
+  console.log(JSON.stringify(report, null, 2))
 }
 main().catch(error => { console.error(error); process.exitCode = 1 })

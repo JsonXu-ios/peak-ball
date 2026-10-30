@@ -59,6 +59,7 @@ const menuItems = computed(() => [
       { title: '完赛基础统计', icon: 'mdi-chart-bar', to: '/statistics/matches' },
       { title: '平局模型验证', icon: 'mdi-scale-balance', to: '/statistics/draw' },
       { title: '平局比赛观察', icon: 'mdi-soccer-field', to: '/statistics/draw-history' },
+      { title: '研究与特征库', icon: 'mdi-database-search', to: '/statistics/research-store' },
       { title: '小球王', icon: 'mdi-crown', to: '/statistics/underking' },
       { title: '信号命中率总台', icon: 'mdi-target', to: '/statistics/cross' },
       { title: '最后一舞', icon: 'mdi-dance-ballroom', to: '/statistics/lastdance' },

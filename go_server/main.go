@@ -18,6 +18,9 @@ func main() {
 		log.Fatalf("Failed to initialize database: %v", err)
 	}
 	log.Println("Database initialized successfully.")
+	// The worker runs within this existing process; it never starts a service or
+	// migrates either database. Its immutable archives survive process restarts.
+	handlers.StartResearchStoreWorker()
 
 	r := gin.Default()
 
@@ -61,6 +64,12 @@ func main() {
 		api.GET("/draw/observations/dates", handlers.GetDrawObservationDates)
 		api.POST("/draw/history/rebuild", handlers.RebuildDrawHistory)
 		api.POST("/draw/history/calibrate", handlers.CalibrateDrawHistory)
+		api.GET("/research/overview", handlers.GetResearchOverview)
+		api.GET("/research/sync/status", handlers.GetResearchSyncStatus)
+		api.POST("/research/sync", handlers.StartResearchSync)
+		api.GET("/research/features", handlers.GetResearchFeatures)
+		api.GET("/research/audit/issues", handlers.GetResearchIssues)
+		api.GET("/research/evaluations", handlers.GetResearchEvaluations)
 
 		// Owner pick recording (blind backfill: entry rows hide real results)
 		api.GET("/picks/entry", handlers.GetPickEntryMatches)

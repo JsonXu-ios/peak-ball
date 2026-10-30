@@ -96,6 +96,12 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '平局比赛观察', icon: 'mdi-soccer-field' },
       },
       {
+        path: 'statistics/research-store',
+        name: 'ResearchStore',
+        component: () => import('@/views/statistics/ResearchStore.vue'),
+        meta: { title: '研究与特征库', icon: 'mdi-database-search' },
+      },
+      {
         path: 'statistics/underking',
         name: 'UnderKing',
         component: () => import('@/views/statistics/UnderKing.vue'),

@@ -28,6 +28,9 @@ func fetchSportteryBrowser(matchID string) ([]byte, error) {
 			cmd := exec.CommandContext(ctx, "node", script, "--match-id", matchID)
 			cmd.WaitDelay = 5 * time.Second
 			body, err := cmd.Output()
+			if err == nil {
+				archiveResearchBrowserResponse(fmt.Sprintf("https://www.vipc.cn/i/match/jczq/sporttery/%s", matchID), matchID, body, time.Now().UTC())
+			}
 			if failure, ok := err.(*exec.ExitError); ok {
 				detail := strings.TrimSpace(string(failure.Stderr))
 				if len(detail) > 512 {

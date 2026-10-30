@@ -209,8 +209,8 @@ func TestDrawObservationsMainTablesDefineTargetsAndTodayIncludesUnsettled(t *tes
 	if today.Total != 3 || today.Summary.HistoricalMatches != 3 || today.Summary.DrawMatches != 1 {
 		t.Fatalf("target scope or current-table precedence is wrong: %+v", today)
 	}
-	if today.Items[0].MatchID != "scheduled" || today.Items[0].Settled || today.Items[0].DisplayState != "未开赛" || today.Items[0].Date != "2026-10-21" {
-		t.Fatalf("unfinished schedule was hidden or marked as a draw: %+v", today.Items[0])
+	if today.Items[0].MatchID != "duplicate" || today.Items[1].MatchID != "legacy-draw" || today.Items[2].MatchID != "scheduled" || today.Items[2].Settled || today.Items[2].DisplayState != "未开赛" || today.Items[2].Date != "2026-10-21" {
+		t.Fatalf("chronological ordering or unfinished schedule is wrong: %+v", today.Items)
 	}
 	history := buildDrawObservations(data, drawObservationQuery{mode: "history", date: "2026-10-21", page: 1, size: 50})
 	if history.Total != 1 || history.Items[0].MatchID != "legacy-draw" || !history.Items[0].Settled || history.Items[0].HomeRecent.Sample != 1 {
@@ -355,7 +355,7 @@ func TestDrawObservationsCountRangesApplyBeforePaginationWithANDAndKeepSummary(t
 		drawObservationGame("five-six", "5", "6", kickoff.Add(-10*24*time.Hour), 1, 1),
 	}, Pankou: map[string]models.PankouMoney{"wrong-count": {Bet365Asia: datatypes.JSON(`{"pankou":"0"}`)}}}
 	all := buildDrawObservations(data, drawObservationQuery{mode: "history", date: "2026-10-21", page: 1, size: 50})
-	if all.Total != 4 || all.Items[0].HeadToHead.Sample != 0 || all.Items[0].HeadToHead.Matches == nil {
+	if all.Total != 4 || all.Items[3].MatchID != "no-records" || all.Items[3].HeadToHead.Sample != 0 || all.Items[3].HeadToHead.Matches == nil {
 		t.Fatal("unfiltered mode lost empty H2H rows")
 	}
 	zero := drawObservationRange{min: drawTestPtr(0), max: drawTestPtr(0)}
@@ -363,7 +363,7 @@ func TestDrawObservationsCountRangesApplyBeforePaginationWithANDAndKeepSummary(t
 	first := buildDrawObservations(data, q)
 	q.page = 2
 	second := buildDrawObservations(data, q)
-	if first.Total != 2 || len(first.Items) != 1 || first.Items[0].MatchID != "good-first" || second.Total != 2 || len(second.Items) != 1 || second.Items[0].MatchID != "good-second" {
+	if first.Total != 2 || len(first.Items) != 1 || first.Items[0].MatchID != "good-second" || second.Total != 2 || len(second.Items) != 1 || second.Items[0].MatchID != "good-first" {
 		t.Fatalf("count filter ran after pagination or counted no-records as zero draws: first=%+v second=%+v", first, second)
 	}
 	if !reflect.DeepEqual(first.Summary, all.Summary) || first.Summary.AsianMatches != 1 || first.Summary.HistoricalMatches != 4 {

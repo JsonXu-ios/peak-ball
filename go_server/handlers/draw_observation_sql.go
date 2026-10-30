@@ -98,6 +98,7 @@ func drawObservationSQLLoaders() drawObservationLoaders {
 // transaction for every loader when building a consistent persisted day.
 func drawObservationSQLLoadersForDB(resolve func() *gorm.DB) drawObservationLoaders {
 	return drawObservationLoaders{
+		research: true,
 		frontend: func(schema drawObservationSchema, targets []drawObservationTarget) (map[string]drawObservationFrontendEnrichment, error) {
 			return drawObservationReadFrontend(resolve(), schema, targets)
 		},

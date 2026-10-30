@@ -128,6 +128,49 @@ export interface FrozenDrawSignal {
   reason?: string
 }
 
+/** Server-owned secondary screening; target results only annotate this decision. */
+export interface DrawSecondaryDecision {
+  version: string
+  decision: 'retained' | 'rejected' | 'not_selected' | 'unavailable' | 'out_of_scope'
+  threshold: number
+  score?: number
+  reason: string
+  reasons?: string[]
+  reasonCodes?: string[]
+  headToHeadSample: number
+  minimumHeadToHead: number
+  sportteryQuotesAvailable: boolean
+}
+
+/** Ranked server recommendations are separate from match selection. */
+export interface DrawScoreRecommendationSignal {
+  version: string
+  state: 'recommended' | 'not_selected' | 'out_of_scope' | 'unavailable'
+  scores: Array<{ home: number; away: number }>
+  reason: string
+  source?: 'sporttery_score_odds' | 'goal_estimate' | string
+}
+
+/** Actual serving provenance; it never changes the frozen model decision. */
+export interface DrawResearchDecision {
+  version: string
+  source: 'research' | 'research_write_through' | 'legacy_fallback' | 'not_applicable'
+  snapshotId?: number
+  predictionId?: number
+  asOf?: string
+  reason?: string
+}
+
+export interface DrawResearchTakeover {
+  version: string
+  mode: 'research' | 'mixed' | 'fallback'
+  served: number
+  persisted: number
+  fallback: number
+  unavailable: number
+  reason?: string
+}
+
 export interface DrawObservationDatesResponse {
   month: string
   mode: 'today' | 'history'
@@ -160,8 +203,56 @@ export interface DrawObservation {
   companyQuotes?: DrawCompanyQuote[] | null
   frontendAnalysis?: DrawFrontendAnalysis | null
   frozenDrawSignal?: FrozenDrawSignal | null
+  secondaryDecision?: DrawSecondaryDecision | null
+  scoreRecommendation?: DrawScoreRecommendationSignal | null
+  researchDecision?: DrawResearchDecision | null
   sources: string[]
   warnings: string[]
+}
+
+/** Complete query-window totals, independent of list mode, count filters and pagination. */
+export interface DrawObservationMetricGroup {
+  selected: number
+  settled: number
+  hits: number
+  misses: number
+  pending: number
+  /** Confirmed regulation draws / confirmed regulation settled selections. */
+  precision: number | null
+  /** Confirmed regulation draws selected / all eligible confirmed draws in the window. */
+  coverage: number | null
+}
+
+/** A descriptive split of the existing secondary pool, never a new selector. */
+export interface DrawProfitSupportMetrics {
+  version: string
+  status: 'available' | 'incomplete'
+  secondaryComparable: DrawObservationMetricGroup
+  secondarySupported: DrawObservationMetricGroup
+  secondaryNotSupported: DrawObservationMetricGroup
+  secondaryUnavailable: DrawObservationMetricGroup
+}
+
+export interface DrawObservationMetrics {
+  status: 'available' | 'incomplete'
+  modelVersion: string
+  secondaryVersion: string
+  secondaryThreshold: number
+  scopeMatches: number
+  settledMatches: number
+  settledDraws: number
+  eligibleMatches: number
+  eligibleSettled: number
+  eligibleDraws: number
+  modelAvailable: number
+  modelUnavailable: number
+  outOfScope: number
+  secondaryUnavailable: number
+  original: DrawObservationMetricGroup
+  secondary: DrawObservationMetricGroup
+  rejected: DrawObservationMetricGroup
+  /** Absent on services that have not loaded profit-support-v1 aggregation. */
+  profitSupport?: DrawProfitSupportMetrics | null
 }
 
 export interface DrawObservationsResponse {
@@ -171,6 +262,10 @@ export interface DrawObservationsResponse {
   scope?: 'all' | 'sporttery'
   mode: 'today' | 'history'
   date: string
+  /** Absent on services that have not loaded the current-window metrics update. */
+  observationMetrics?: DrawObservationMetrics | null
+  /** Absent until the analysis service loads the research serving integration. */
+  researchTakeover?: DrawResearchTakeover | null
   summary: {
     /** All deduplicated money/moneys rows in the response scope, including fixtures not yet completed. */
     historicalMatches: number

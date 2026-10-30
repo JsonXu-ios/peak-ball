@@ -1,6 +1,6 @@
 import type { DrawObservation } from '@/types/drawHistory'
 
-export const SECONDARY_DRAW_VERSION = 'secondary-v1'
+export const SECONDARY_DRAW_VERSION = 'secondary-v2-input-guards'
 export const SECONDARY_DRAW_THRESHOLD = 0.225
 
 export type SecondaryDrawDecision = 'retained' | 'rejected' | 'not_selected' | 'unavailable' | 'out_of_scope'
@@ -11,6 +11,8 @@ export interface SecondaryDrawClassification {
   threshold: number
   score?: number
   reason: string
+  reasons: string[]
+  needsUpdate?: boolean
 }
 
 export interface SecondaryDrawPresentation extends SecondaryDrawClassification {
@@ -20,47 +22,40 @@ export interface SecondaryDrawPresentation extends SecondaryDrawClassification {
   outcomeColor?: string
 }
 
-type SecondaryDrawInput = Pick<DrawObservation, 'frozenDrawSignal'>
+type SecondaryDrawInput = Pick<DrawObservation, 'frozenDrawSignal' | 'secondaryDecision'>
 type SecondaryDrawResultInput = SecondaryDrawInput & Pick<DrawObservation, 'settled' | 'regulationSettled' | 'homeScore' | 'awayScore'>
+const validScore = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 1
+const decisions: SecondaryDrawDecision[] = ['retained', 'rejected', 'not_selected', 'unavailable', 'out_of_scope']
 
-/** Only frozen model inputs determine this decision; match results never select rows. */
+/** The server owns quote/history guards. The browser never reconstructs a
+ * secondary decision from the model score, current-page odds or final result. */
 export function classifySecondaryDraw(row: SecondaryDrawInput): SecondaryDrawClassification {
-  const signal = row.frozenDrawSignal
-  const base = { version: SECONDARY_DRAW_VERSION, threshold: SECONDARY_DRAW_THRESHOLD }
-  if (!signal) return { ...base, decision: 'unavailable', reason: '等待接口返回原固定模型结果' }
-  if (signal.state === 'out_of_scope') {
-    return { ...base, decision: 'out_of_scope', reason: signal.reason || '仅对原固定模型入选的竞彩比赛做二次筛选' }
+  const base = { version: SECONDARY_DRAW_VERSION, threshold: SECONDARY_DRAW_THRESHOLD, reasons: [] as string[] }
+  const recorded = row.secondaryDecision
+  if (!recorded || recorded.version !== SECONDARY_DRAW_VERSION) {
+    return { ...base, decision: 'unavailable', needsUpdate: true, reason: '二次筛选结果待更新' }
   }
-  if (signal.state === 'not_selected') {
-    return { ...base, decision: 'not_selected', reason: '原固定模型未入选，不进入二次筛选' }
+  if (!decisions.includes(recorded.decision) || recorded.threshold !== SECONDARY_DRAW_THRESHOLD) {
+    return { ...base, decision: 'unavailable', needsUpdate: true, reason: '二次筛选结果待更新，请重新查询' }
   }
-  if (signal.state !== 'selected') {
-    return { ...base, decision: 'unavailable', reason: signal.reason || '原固定模型数据不足，不能判为二次剔除' }
+  if (recorded.decision === 'retained' && row.frozenDrawSignal?.state !== 'selected') {
+    return { ...base, decision: 'unavailable', needsUpdate: true, reason: '原模型与二次筛选结果尚未一致，请重新查询' }
   }
-  const score = signal.score
-  if (typeof score !== 'number' || !Number.isFinite(score) || score < 0 || score > 1) {
-    return { ...base, decision: 'unavailable', reason: '原固定模型分数缺失或无效，不能判为二次剔除' }
-  }
-  if (score < SECONDARY_DRAW_THRESHOLD) {
-    return { ...base, score, decision: 'rejected', reason: '原模型已入选，但模型分数低于固定二次门槛 0.225，二次剔除' }
-  }
-  return { ...base, score, decision: 'retained', reason: '原模型已入选，且模型分数达到固定二次门槛 0.225，二次保留' }
+  const reasons = Array.isArray(recorded.reasons) ? recorded.reasons.filter((reason): reason is string => typeof reason === 'string' && !!reason.trim()) : []
+  const reason = reasons.length ? reasons.join('；') : typeof recorded.reason === 'string' ? recorded.reason.trim() : ''
+  if (!reason) return { ...base, decision: 'unavailable', needsUpdate: true, reason: '二次筛选说明待更新' }
+  const score = validScore(recorded.score) ? recorded.score : validScore(row.frozenDrawSignal?.score) ? row.frozenDrawSignal.score : undefined
+  return { ...base, decision: recorded.decision, score, reason, reasons: reasons.length ? [...reasons] : [reason] }
 }
 
-/** Results annotate a previously fixed decision, and cannot change it. */
+/** Results annotate an existing server decision and cannot change selection. */
 export function secondaryDrawPresentation(row: SecondaryDrawResultInput): SecondaryDrawPresentation {
   const classified = classifySecondaryDraw(row)
-  if (classified.decision === 'out_of_scope') {
-    return { ...classified, label: '非竞彩', outcomeLabel: '' }
-  }
-  if (classified.decision === 'not_selected') {
-    return { ...classified, label: '原模型未入选', outcomeLabel: '' }
-  }
-  if (classified.decision === 'unavailable') {
-    return { ...classified, label: row.frozenDrawSignal ? '数据不足' : '待计算', outcomeLabel: '' }
-  }
+  if (classified.decision === 'out_of_scope') return { ...classified, label: '非竞彩', outcomeLabel: '' }
+  if (classified.decision === 'not_selected') return { ...classified, label: '原模型未入选', outcomeLabel: '' }
+  if (classified.decision === 'unavailable') return { ...classified, label: classified.needsUpdate ? '待更新' : '数据不足', outcomeLabel: '' }
   const settled = row.settled === true && row.regulationSettled === true
-    && Number.isFinite(row.homeScore) && Number.isFinite(row.awayScore)
+    && Number.isInteger(row.homeScore) && row.homeScore >= 0 && Number.isInteger(row.awayScore) && row.awayScore >= 0
   if (classified.decision === 'rejected') {
     if (!settled) return { ...classified, label: '二次剔除', color: 'warning', outcomeLabel: '待赛果核对' }
     return row.homeScore === row.awayScore

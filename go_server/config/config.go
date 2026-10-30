@@ -10,6 +10,10 @@ import (
 var (
 	// DSN is the MySQL data source name.
 	DSN = getEnv("GO_SERVER_DSN", "root:123456@tcp(127.0.0.1:3306)/football_data?charset=utf8mb4&parseTime=True&loc=Local")
+	// Research keeps its own schema in the same MySQL instance by default.
+	// These connections never run business AutoMigrate.
+	ResearchBaseDSN  = getEnv("RESEARCH_BASE_DSN", DSN)
+	ResearchDatabase = getEnv("RESEARCH_DB_NAME", "football_research")
 
 	// ServerAddr is the address the HTTP server listens on.
 	ServerAddr = getEnv("GO_SERVER_ADDR", ":28080")

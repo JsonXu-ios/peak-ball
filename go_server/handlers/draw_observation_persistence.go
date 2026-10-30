@@ -81,6 +81,7 @@ type drawObservationStoredBase struct {
 	Schema  drawObservationSchema
 }
 type drawObservationStoredDay struct {
+	TakeoverVersion  string                 `json:"takeoverVersion,omitempty"`
 	Version          string                 `json:"version"`
 	Date             string                 `json:"date"`
 	GeneratedAt      time.Time              `json:"generatedAt"`
@@ -239,6 +240,9 @@ func (reader *drawObservationResultReader) buildDayWithLoaders(q drawObservation
 		return nil, err
 	}
 	saved := &drawObservationStoredDay{Version: source.Day, Date: q.date, GeneratedAt: time.Now().UTC(), AllSummary: core.summary, SportterySummary: core.sportterySummary, DrawIDs: map[string]bool{}, Items: []drawObservationItem{}}
+	if loaders.research {
+		saved.TakeoverVersion = drawResearchTakeoverVersion
+	}
 	for _, target := range day.targets {
 		if h, a, ok := drawRegulationResult(target.Match); ok && h == a {
 			saved.DrawIDs[target.Match.MatchId] = true
@@ -385,6 +389,9 @@ func (reader *drawObservationResultReader) storedDay(key, date, version string) 
 	if drawObservationUnpack(data, func(r io.Reader) error { return json.NewDecoder(r).Decode(&saved) }) != nil || saved.Version != version || saved.Date != date {
 		return nil, nil
 	}
+	if reader.loaders.research && !drawResearchStoredDayReady(saved, time.Now().UTC()) {
+		return nil, nil
+	}
 	return &saved, nil
 }
 
@@ -401,6 +408,7 @@ func (saved *drawObservationStoredDay) filter(q drawObservationQuery) drawObserv
 	}
 	generated := saved.GeneratedAt
 	response := drawObservationResponse{ScheduleTimezone: drawSourceLocation.String(), Mode: q.mode, Scope: q.scope, Date: saved.Date, Page: page, PageSize: size, Summary: saved.AllSummary, Leagues: []string{}, Items: []drawObservationItem{}, Notes: append([]string{}, saved.Notes...), DataVersion: saved.Version, GeneratedAt: &generated}
+	response.ObservationMetrics = buildDrawObservationMetrics(saved.Items, q)
 	if q.scope == "sporttery" {
 		response.Summary = saved.SportterySummary
 	}
@@ -434,6 +442,15 @@ func (saved *drawObservationStoredDay) filter(q drawObservationQuery) drawObserv
 		response.Leagues = append(response.Leagues, league)
 	}
 	sort.Strings(response.Leagues)
+	// Sort the complete filtered set before pagination, including days already
+	// persisted in the previous descending order.
+	sort.SliceStable(selected, func(i, j int) bool {
+		a, b := selected[i].MatchTime, selected[j].MatchTime
+		if a.Equal(b) {
+			return selected[i].MatchID < selected[j].MatchID
+		}
+		return a.Before(b)
+	})
 	response.Total = len(selected)
 	offset := len(selected)
 	if page-1 <= len(selected)/size {
@@ -441,6 +458,10 @@ func (saved *drawObservationStoredDay) filter(q drawObservationQuery) drawObserv
 	}
 	end := min(offset+size, len(selected))
 	response.Items = append(response.Items, selected[offset:end]...)
+	response.ResearchTakeover = buildDrawResearchTakeover(response.Items)
+	if saved.TakeoverVersion == drawResearchTakeoverVersion && response.ResearchTakeover == nil {
+		response.ResearchTakeover = emptyDrawResearchTakeover()
+	}
 	return response
 }
 
