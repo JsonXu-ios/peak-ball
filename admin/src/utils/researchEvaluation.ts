@@ -20,7 +20,12 @@ export function isResearchScoreRankMetrics(evaluation: Pick<ResearchEvaluation, 
 
 export function researchScoreMethod(evaluation: Pick<ResearchEvaluation, 'version' | 'metrics'>) {
   if (isResearchScoreRankMetrics(evaluation) && evaluation.version === 'research-evaluation-v3-dynamic-scores') {
-    return { kind: 'current-dynamic', label: '本场数据比分推荐', note: '首选、次选按各场竞彩比分报价或进球数据排序；二次候选要求报价完整且赛前交锋至少5场。' }
+    const secondaryNote = evaluation.metrics.secondaryVersion === 'secondary-v3-quotes-only'
+      ? '二次候选要求分数达标且竞彩报价完整；交锋场次仅供观察。'
+      : evaluation.metrics.secondaryVersion === 'secondary-v2-input-guards'
+        ? '此记录采用旧版二次条件：报价完整且赛前交锋至少5场。'
+        : '二次筛选以该评估记录的规则版本为准。'
+    return { kind: 'current-dynamic', label: '本场数据比分推荐', note: `首选、次选按各场竞彩比分报价或进球数据排序；${secondaryNote}` }
   }
   if (isResearchScoreRankMetrics(evaluation) && evaluation.version === 'research-evaluation-v2-score-ranks') {
     return { kind: 'historical-baseline', label: '历史固定比分：1:1 / 0:0', note: '这是旧版固定比分及旧版二次规则的评估，保留用于对照；不代表当前推荐的正确率。' }

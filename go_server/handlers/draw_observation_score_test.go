@@ -47,7 +47,8 @@ func TestDrawScoreRecommendationUsesRowAwareSecondaryDecision(t *testing.T) {
 		{"NaN", func(r *drawObservationItem) { v := math.NaN(); r.FrozenDrawSignal.Score = &v }, "unavailable"},
 		{"Inf", func(r *drawObservationItem) { v := math.Inf(1); r.FrozenDrawSignal.Score = &v }, "unavailable"},
 		{"outside score range", func(r *drawObservationItem) { v := 1.1; r.FrozenDrawSignal.Score = &v }, "unavailable"},
-		{"four H2H", func(r *drawObservationItem) { r.HeadToHead.Sample = 4 }, "not_selected"},
+		{"four H2H can use actual BF quotes", func(r *drawObservationItem) { r.HeadToHead.Sample = 4 }, "recommended"},
+		{"missing H2H can use actual BF quotes", func(r *drawObservationItem) { r.HeadToHead = drawObservationRecent{} }, "recommended"},
 		{"missing original SPF", func(r *drawObservationItem) { r.CompanyQuotes = r.CompanyQuotes[1:] }, "not_selected"},
 	}
 	for _, tt := range tests {

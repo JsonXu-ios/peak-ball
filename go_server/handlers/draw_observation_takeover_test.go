@@ -31,6 +31,10 @@ func TestResearchTakeoverStoredDayUpgradeAndRecovery(t *testing.T) {
 	if !drawResearchStoredDayReady(old, now.Add(365*24*time.Hour)) {
 		t.Fatal("durable healthy day was discarded by wall clock")
 	}
+	old.Items[0].SecondaryDecision.Version = "secondary-v2-input-guards"
+	if drawResearchStoredDayReady(old, now) {
+		t.Fatal("cached H2H-filtered decisions bypassed the quotes-only rule upgrade")
+	}
 }
 
 func TestResearchTakeoverPageCountsDoNotDoubleCountWrites(t *testing.T) {

@@ -138,6 +138,7 @@ export interface DrawSecondaryDecision {
   reasons?: string[]
   reasonCodes?: string[]
   headToHeadSample: number
+  /** Compatibility metadata: zero means no H2H minimum in the current rule. */
   minimumHeadToHead: number
   sportteryQuotesAvailable: boolean
 }

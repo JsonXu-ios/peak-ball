@@ -1,6 +1,6 @@
 import type { DrawObservation } from '@/types/drawHistory'
 
-export const SECONDARY_DRAW_VERSION = 'secondary-v2-input-guards'
+export const SECONDARY_DRAW_VERSION = 'secondary-v3-quotes-only'
 export const SECONDARY_DRAW_THRESHOLD = 0.225
 
 export type SecondaryDrawDecision = 'retained' | 'rejected' | 'not_selected' | 'unavailable' | 'out_of_scope'
@@ -27,7 +27,7 @@ type SecondaryDrawResultInput = SecondaryDrawInput & Pick<DrawObservation, 'sett
 const validScore = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 1
 const decisions: SecondaryDrawDecision[] = ['retained', 'rejected', 'not_selected', 'unavailable', 'out_of_scope']
 
-/** The server owns quote/history guards. The browser never reconstructs a
+/** The server owns quote and score guards. The browser never reconstructs a
  * secondary decision from the model score, current-page odds or final result. */
 export function classifySecondaryDraw(row: SecondaryDrawInput): SecondaryDrawClassification {
   const base = { version: SECONDARY_DRAW_VERSION, threshold: SECONDARY_DRAW_THRESHOLD, reasons: [] as string[] }

@@ -47,7 +47,7 @@ function fixture(official = [-10, 5, 20], simulated = [5, -10, 20], extra = {}) 
   return {
     jingcaiId: '周四001',
     frozenDrawSignal: { state: 'selected', score: .3, modelVersion: 'sporttery-draw-observation-v1' },
-    secondaryDecision: { version: 'secondary-v2-input-guards', decision: extra.frozenDrawSignal?.state === 'not_selected' ? 'not_selected' : extra.frozenDrawSignal?.score < .225 ? 'rejected' : 'retained', threshold: .225, reason: '离线展示用二次判定', headToHeadSample: 8, minimumHeadToHead: 5, sportteryQuotesAvailable: true },
+    secondaryDecision: { version: 'secondary-v3-quotes-only', decision: extra.frozenDrawSignal?.state === 'not_selected' ? 'not_selected' : extra.frozenDrawSignal?.score < .225 ? 'rejected' : 'retained', threshold: .225, reason: '离线展示用二次判定', headToHeadSample: 8, minimumHeadToHead: 0, sportteryQuotesAvailable: true },
     frontendAnalysis: { weightedFeatureInputs: { homeHeat: null, officialProfitRates: official }, roiSimulation: { totalStake: 100, markets: [simulation(simulated)] } },
     settled: false, regulationSettled: false, homeScore: 0, awayScore: 0,
     ...extra,
@@ -85,7 +85,7 @@ function stats(rows, predicate, draws) {
 function fixtureMetrics() {
   const group = (selected, hits) => ({ selected, settled: selected, hits, misses: selected - hits, pending: 0, precision: selected ? hits / selected : null, coverage: hits / 135 })
   return {
-    status: 'available', secondaryVersion: 'secondary-v2-input-guards', modelAvailable: 552, modelUnavailable: 0, secondaryUnavailable: 0, outOfScope: 0,
+    status: 'available', secondaryVersion: 'secondary-v3-quotes-only', modelAvailable: 552, modelUnavailable: 0, secondaryUnavailable: 0, outOfScope: 0,
     scopeMatches: 552, eligibleMatches: 552, eligibleSettled: 552, eligibleDraws: 135,
     original: group(341, 129), secondary: group(305, 125), rejected: group(36, 4),
     profitSupport: { version: 'profit-support-v1', status: 'available', secondaryComparable: group(296, 124), secondarySupported: group(141, 66), secondaryNotSupported: group(155, 58), secondaryUnavailable: group(9, 1) },
@@ -93,7 +93,7 @@ function fixtureMetrics() {
 }
 
 async function main() {
-  for (const [file, expected] of Object.entries(originals)) equal(sha(file), expected, `existing model and second-stage rules unchanged: ${file}`)
+  for (const [file, expected] of Object.entries(originals)) equal(sha(file), expected, `existing original model unchanged: ${file}`)
   equal(support.DRAW_PROFIT_SUPPORT_VERSION, 'profit-support-v1', 'version frozen')
   equal(support.DRAW_PROFIT_SUPPORT_EPS, 1e-9, 'tie tolerance frozen')
   const matched = classify(fixture())
@@ -261,7 +261,7 @@ async function main() {
   rendered.push({ name: '完整窗口对照统计', html: metricsHTML })
   const page = read('admin/src/views/statistics/DrawHistory.vue')
   check(page.includes('<DrawProfitSupportSignal') && page.includes('<DrawFrozenSignal') && page.includes('<DrawSecondarySignal'), 'new feature is displayed alongside original model and secondary choices')
-  equal((page.match(/colspan="20"/g) || []).length, 2, 'expanded and empty rows span all 20 columns including the two-score baseline')
+  equal((page.match(/colspan="21"/g) || []).length, 2, 'expanded and empty rows span all 21 columns including the market alternative')
   check(page.includes('盈亏分歧'), 'feature column is discoverable')
   fs.mkdirSync(folder, { recursive: true })
   fs.writeFileSync(path.join(folder, 'states.html'), '<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>盈亏方向分歧增强标签核对</title><style>body{background:#151515;color:#eee;font:14px system-ui;margin:24px}section{border:1px solid #555;border-radius:6px;padding:16px;margin:16px 0}h2{font-size:16px}.text-caption{font-size:12px}.text-medium-emphasis{color:#aaa}table{border-collapse:collapse}th,td{border:1px solid #555;padding:8px}.mt-1,.mt-2{margin-top:8px}</style>' + rendered.map(x => `<section><h2>${x.name}</h2>${x.html}</section>`).join('\n') + '</html>', 'utf8')

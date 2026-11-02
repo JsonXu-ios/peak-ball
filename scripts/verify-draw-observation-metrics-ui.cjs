@@ -25,7 +25,7 @@ new Function('require', 'module', 'exports', compiled)(name => name === '@/utils
 const component = loaded.exports.default
 const zero = { selected: 0, settled: 0, hits: 0, misses: 0, pending: 0, precision: null, coverage: null }
 const fixture = {
-  status: 'available', modelVersion: 'frozen-v1', secondaryVersion: 'secondary-v2-input-guards', secondaryThreshold: .225,
+  status: 'available', modelVersion: 'frozen-v1', secondaryVersion: 'secondary-v3-quotes-only', secondaryThreshold: .225,
   scopeMatches: 100, settledMatches: 80, settledDraws: 40,
   eligibleMatches: 6, eligibleSettled: 4, eligibleDraws: 2,
   modelAvailable: 6, modelUnavailable: 0, outOfScope: 94, secondaryUnavailable: 0,

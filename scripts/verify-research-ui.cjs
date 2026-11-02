@@ -23,7 +23,7 @@ function load(source, imports = {}) {
 const secondary = load(read('admin/src/utils/drawSecondarySignal.ts'))
 const score = load(read('admin/src/utils/drawScoreRecommendation.ts'), { './drawSecondarySignal': secondary })
 const fixture = extra => ({ jingcaiId: '202610305002', frozenDrawSignal: { state: 'selected', score: .3 },
-  secondaryDecision: { version: 'secondary-v2-input-guards', decision: 'retained', threshold: .225, score: .3, reason: '报价完整，赛前交锋8场', headToHeadSample: 8, minimumHeadToHead: 5, sportteryQuotesAvailable: true },
+  secondaryDecision: { version: 'secondary-v3-quotes-only', decision: 'retained', threshold: .225, score: .3, reason: '报价完整且分数达标', headToHeadSample: 8, minimumHeadToHead: 0, sportteryQuotesAvailable: true },
   scoreRecommendation: { version: 'draw-score-dynamic-v2', state: 'recommended', source: 'sporttery_score_odds', scores: [{ home: 2, away: 2 }, { home: 1, away: 1 }], reason: '按本场竞彩比分报价排序' },
   settled: false, regulationSettled: false, homeScore: 0, awayScore: 0, ...extra })
 const choose = input => score.recommendDrawScores(input)
@@ -51,7 +51,7 @@ async function main() {
     ['hit', fixture({ settled: true, regulationSettled: true, homeScore: 2, awayScore: 2 }), ['首选命中']],
     ['second_hit', fixture({ settled: true, regulationSettled: true, homeScore: 1, awayScore: 1 }), ['次选命中（前二命中）']],
     ['miss', fixture({ settled: true, regulationSettled: true, homeScore: 0, awayScore: 0 }), ['前二未命中']],
-    ['not_selected', fixture({ secondaryDecision: { ...fixture().secondaryDecision, decision: 'rejected', reason: '赛前交锋不足5场' } }), ['未二次入选']],
+    ['not_selected', fixture({ secondaryDecision: { ...fixture().secondaryDecision, decision: 'rejected', reason: '竞彩报价不完整' } }), ['未二次入选']],
     ['out_of_scope', fixture({ jingcaiId: '' }), ['非竞彩']],
     ['old_backend', fixture({ secondaryDecision: undefined }), ['待更新']],
     ['missing_score', fixture({ scoreRecommendation: undefined }), ['待更新']],
@@ -71,7 +71,7 @@ async function main() {
   check(page.includes('<DrawScoreRecommendation :row="row"'), 'existing shared list displays the new score component')
   check(page.includes('<DrawResearchTakeover v-if="report" :status="report.researchTakeover"'), 'list shows the actual response takeover state')
   check(page.includes('<DrawResearchSource :row="row"'), 'archive source is visible without creating another table column')
-  equal((page.match(/colspan="20"/g) || []).length, 2, 'expanded and empty rows span the complete 20-column list')
+  equal((page.match(/colspan="21"/g) || []).length, 2, 'expanded and empty rows span the complete 21-column list')
   check(read('admin/src/router/index.ts').includes('statistics/research-store'), 'research overview has an authenticated admin route')
   check(read('admin/src/layouts/AdminLayout.vue').includes('/statistics/research-store'), 'research overview is discoverable in the menu')
   const research = read('admin/src/views/statistics/ResearchStore.vue')
@@ -136,6 +136,10 @@ async function main() {
   equal(evaluationUtils.isResearchScoreRankMetrics({ version: 'research-evaluation-v3-dynamic-scores', metrics: { scoreMethod: 'draw-score-dynamic-v2' } }), true, 'v3 dynamic ranks are recognized')
   equal(evaluationUtils.isResearchScoreRankMetrics({ version: 'research-evaluation-v3-dynamic-scores', metrics: { scoreMethod: 'draw-score-baseline-v1' } }), false, 'conflicting score method cannot masquerade as dynamic accuracy')
   equal(evaluationUtils.researchScoreMethod({ version: 'research-evaluation-v2-score-ranks', metrics: {} }).kind, 'historical-baseline', 'old fixed scores are explicitly labelled historical')
+  const currentRuleNote = evaluationUtils.researchScoreMethod({ version: 'research-evaluation-v3-dynamic-scores', metrics: { scoreMethod: 'draw-score-dynamic-v2', secondaryVersion: 'secondary-v3-quotes-only' } }).note
+  check(currentRuleNote.includes('交锋场次仅供观察') && !currentRuleNote.includes('交锋至少5场'), 'current evaluation describes quote/score guards without an H2H minimum')
+  const historicalRuleNote = evaluationUtils.researchScoreMethod({ version: 'research-evaluation-v3-dynamic-scores', metrics: { scoreMethod: 'draw-score-dynamic-v2', secondaryVersion: 'secondary-v2-input-guards' } }).note
+  check(historicalRuleNote.includes('旧版二次条件') && historicalRuleNote.includes('交锋至少5场'), 'historical v2 evaluations preserve their original H2H condition')
   evaluationStates.push({ id: 4, scope: 'semantic-legacy-baseline', version: 'research-evaluation-v2-score-ranks', createdAt: '2026-10-29T12:00:00Z', metrics: { groups: { secondary: { ...emptyGroup, scoreCandidates: 100, firstScoreHits: 20, firstScoreHitRate: .2, scoreHits: 32, scoreHitRate: .32 } }, scoreMethod: 'draw-score-baseline-v1', historicalAssociationOnly: true } })
   evaluationStates.push({ id: 5, scope: 'semantic-method-conflict', version: 'research-evaluation-v3-dynamic-scores', createdAt: '2026-10-29T12:00:00Z', metrics: { groups: { secondary: { ...emptyGroup, scoreCandidates: 100, firstScoreHits: 20, firstScoreHitRate: .2, scoreHits: 32, scoreHitRate: .32 } }, scoreMethod: 'draw-score-baseline-v1', historicalAssociationOnly: true } })
 

@@ -87,7 +87,7 @@ async function main() {
   const page = read('admin/src/views/statistics/DrawHistory.vue')
   check(page.includes('<DrawResearchTakeover v-if="report"'), 'successful data response retains the provenance notice')
   check(!page.includes('report?.researchTakeover?.mode ===') && !page.includes('researchTakeover.mode !=='), 'serving provenance does not hide or filter list rows')
-  equal((page.match(/colspan="20"/g) || []).length, 2, 'no extra wide provenance column is added')
+  equal((page.match(/colspan="21"/g) || []).length, 2, 'expanded and empty rows span all 21 columns including the market alternative')
   const scoreSource = read('admin/src/views/statistics/DrawScoreRecommendation.vue')
   check(scoreSource.includes("index === 0 ? '首选' : '次选'"), 'both ordered choices are explicit')
   const evaluation = read('admin/src/views/statistics/ResearchEvaluationTable.vue')

@@ -38,7 +38,7 @@ func (b *takeoverReadOnlyBackend) write(context.Context, drawObservationItem, dr
 // can only read: any miss, fallback, legacy callback or attempted write fails.
 func TestDrawResearchCurrentSourceReadOnlyTakeover(t *testing.T) {
 	if os.Getenv("DRAW_TAKEOVER_INTEGRATION") != "1" {
-		t.Skip("set DRAW_TAKEOVER_INTEGRATION=1 only after current secondary-v2/dynamic-score inputs have been explicitly archived")
+		t.Skip("set DRAW_TAKEOVER_INTEGRATION=1 only after current secondary-v3/dynamic-score inputs have been explicitly archived")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
@@ -375,7 +375,7 @@ ORDER BY p.predicted_at,p.id`, drawmodeldata.Version(), drawObservationSecondary
 // does not invoke the production secondary classifier or read the target score.
 func independentTakeoverSecondary(row drawObservationItem) bool {
 	s := row.FrozenDrawSignal
-	if strings.TrimSpace(row.JingcaiID) == "" || s == nil || s.State != "selected" || s.Score == nil || math.IsNaN(*s.Score) || math.IsInf(*s.Score, 0) || *s.Score < .225 || *s.Score > 1 || row.HeadToHead.Sample < 5 {
+	if strings.TrimSpace(row.JingcaiID) == "" || s == nil || s.State != "selected" || s.Score == nil || math.IsNaN(*s.Score) || math.IsInf(*s.Score, 0) || *s.Score < .225 || *s.Score > 1 {
 		return false
 	}
 	n := 0

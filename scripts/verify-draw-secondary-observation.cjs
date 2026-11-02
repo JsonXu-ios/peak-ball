@@ -1,4 +1,4 @@
-// Offline contract and actual Vue SSR checks for secondary-v2 and ranked scores.
+// Offline contract and actual Vue SSR checks for secondary-v3 and ranked scores.
 // No service, database, browser, network or model training is used.
 const fs = require('node:fs')
 const path = require('node:path')
@@ -24,8 +24,8 @@ function load(source, imports = {}) {
 }
 const secondary = load(read('admin/src/utils/drawSecondarySignal.ts'))
 const score = load(read('admin/src/utils/drawScoreRecommendation.ts'), { './drawSecondarySignal': secondary })
-const decision = extra => ({ version: 'secondary-v2-input-guards', decision: 'retained', threshold: .225, score: .3,
-  reason: '报价完整，赛前交锋8场，二次保留', headToHeadSample: 8, minimumHeadToHead: 5, sportteryQuotesAvailable: true, ...extra })
+const decision = extra => ({ version: 'secondary-v3-quotes-only', decision: 'retained', threshold: .225, score: .3,
+  reason: '报价完整且分数达标，二次保留', headToHeadSample: 8, minimumHeadToHead: 0, sportteryQuotesAvailable: true, ...extra })
 const recommendation = extra => ({ version: 'draw-score-dynamic-v2', state: 'recommended', source: 'sporttery_score_odds',
   scores: [{ home: 2, away: 2 }, { home: 1, away: 1 }], reason: '按本场竞彩比分报价排序', ...extra })
 const fixture = extra => ({ jingcaiId: '202610305002', frozenDrawSignal: { state: 'selected', score: .3 },
@@ -37,12 +37,12 @@ async function render(component, row, warnings) {
   return renderToString(app)
 }
 async function main() {
-  equal(secondary.SECONDARY_DRAW_VERSION, 'secondary-v2-input-guards', 'current secondary contract is versioned')
+  equal(secondary.SECONDARY_DRAW_VERSION, 'secondary-v3-quotes-only', 'current secondary contract is versioned')
   equal(score.DRAW_SCORE_RECOMMENDATION_VERSION, 'draw-score-dynamic-v2', 'dynamic score contract is versioned')
   equal(crypto.createHash('sha256').update(fs.readFileSync(path.join(root, 'go_server/internal/drawmodeldata/observation_v1.json'))).digest('hex'),
     'e7cb7d50668a76e916d2f86a6ab598a6bcb23ab5e6c961dbd972875346afd987', 'original frozen model is unchanged')
   equal(secondary.classifySecondaryDraw(fixture()).decision, 'retained', 'current backend retention is accepted')
-  for (const payload of [undefined, null, decision({ version: 'secondary-v1' }), decision({ version: 'unknown' }), decision({ decision: 'SELECTED' }), decision({ threshold: .2 })]) {
+  for (const payload of [undefined, null, decision({ version: 'secondary-v1' }), decision({ version: 'secondary-v2-input-guards' }), decision({ version: 'unknown' }), decision({ decision: 'SELECTED' }), decision({ threshold: .2 })]) {
     const row = fixture({ secondaryDecision: payload, frozenDrawSignal: { state: 'selected', score: .99 } })
     equal(secondary.classifySecondaryDraw(row).decision, 'unavailable', 'old/missing/invalid backend decision never falls back to high score')
     equal(secondary.secondaryDrawPresentation(row).label, '待更新', 'old contract is visibly waiting for update')
@@ -50,7 +50,6 @@ async function main() {
   }
   const causes = [
     ['quotes', '竞彩初盘或即时盘报价不完整', { sportteryQuotesAvailable: false, reasonCodes: ['sporttery_quotes_missing'] }],
-    ['history', '赛前交锋仅2场，少于5场', { headToHeadSample: 2, reasonCodes: ['head_to_head_insufficient'] }],
     ['score', '模型分数0.2100低于二次门槛0.225', { score: .21, reasonCodes: ['score_below_threshold'] }],
   ]
   for (const [name, reason, fields] of causes) {
@@ -59,15 +58,20 @@ async function main() {
     equal(score.recommendDrawScores(row).state, 'not_selected', `${name}: rejected candidate cannot receive recommendation`)
     equal(row.frozenDrawSignal.state, 'selected', `${name}: original model marker is not erased`)
   }
-  const multipleReasons = secondary.classifySecondaryDraw(fixture({ secondaryDecision: decision({ decision: 'rejected', reason: '条件不足', reasons: ['竞彩报价不完整', '赛前交锋仅2场'] }) }))
-  check(multipleReasons.reason.includes('竞彩报价不完整') && multipleReasons.reason.includes('赛前交锋仅2场'), 'all independent rejection reasons stay visible')
+  for (const headToHeadSample of [0, 4]) {
+    const row = fixture({ secondaryDecision: decision({ headToHeadSample }) })
+    equal(secondary.classifySecondaryDraw(row).decision, 'retained', `${headToHeadSample} H2H rows: frontend preserves backend retention`)
+    equal(score.recommendDrawScores(row).scores, ['2:2', '1:1'], `${headToHeadSample} H2H rows: real score quotes remain displayable`)
+  }
+  const multipleReasons = secondary.classifySecondaryDraw(fixture({ secondaryDecision: decision({ decision: 'rejected', reason: '条件不足', reasons: ['竞彩报价不完整', '报价来源无法确认'] }) }))
+  check(multipleReasons.reason.includes('竞彩报价不完整') && multipleReasons.reason.includes('报价来源无法确认'), 'all independent backend rejection reasons stay visible')
   const onlyInputs = new Proxy(fixture(), { get(target, key) {
     if (!['frozenDrawSignal', 'secondaryDecision'].includes(key)) throw new Error(`Secondary accessed target/current-page field ${String(key)}`)
     return target[key]
   } })
   equal(secondary.classifySecondaryDraw(onlyInputs).decision, 'retained', 'secondary consumes only backend decision, never current-page history/odds/outcomes')
   equal(secondary.classifySecondaryDraw(fixture({ frozenDrawSignal: { state: 'not_selected', score: .9 } })).decision, 'unavailable', 'contradictory backend cannot promote original non-selection')
-  const low = fixture({ secondaryDecision: decision({ decision: 'rejected', reason: causes[2][1], score: .21 }) })
+  const low = fixture({ secondaryDecision: decision({ decision: 'rejected', reason: causes[1][1], score: .21 }) })
   for (const outcome of [{ settled: true, regulationSettled: true, homeScore: 2, awayScore: 2 }, { settled: true, regulationSettled: true, homeScore: 5, awayScore: 0 }]) {
     equal(secondary.classifySecondaryDraw({ ...low, ...outcome }), secondary.classifySecondaryDraw(low), 'outcomes cannot change rejection')
     equal(score.recommendDrawScores({ ...fixture(), ...outcome }), score.recommendDrawScores(fixture()), 'outcomes cannot reorder scores')
@@ -102,11 +106,13 @@ async function main() {
     equal(score.drawScorePresentation(fixture(extra)).outcomeLabel, '待赛果核对', 'ambiguous or invalid results do not settle recommendations')
   }
   const components = {
-    secondary: load(compileScript(parse(read('admin/src/views/statistics/DrawSecondarySignal.vue')).descriptor, { id: 'secondary-v2-offline', inlineTemplate: true }).content, { '@/utils/drawSecondarySignal': secondary }).default,
+    secondary: load(compileScript(parse(read('admin/src/views/statistics/DrawSecondarySignal.vue')).descriptor, { id: 'secondary-v3-offline', inlineTemplate: true }).content, { '@/utils/drawSecondarySignal': secondary }).default,
     scores: load(compileScript(parse(read('admin/src/views/statistics/DrawScoreRecommendation.vue')).descriptor, { id: 'scores-v2-offline', inlineTemplate: true }).content, { '@/utils/drawScoreRecommendation': score }).default,
   }
   const cases = [
     ['retained', fixture(), '二次入选', '首选'],
+    ['missing H2H', fixture({ secondaryDecision: decision({ headToHeadSample: 0 }) }), '二次入选', '首选'],
+    ['four H2H', fixture({ secondaryDecision: decision({ headToHeadSample: 4 }) }), '二次入选', '首选'],
     ...causes.map(([name, reason, fields]) => [name, fixture({ secondaryDecision: decision({ ...fields, decision: 'rejected', reason }) }), reason, '未二次入选']),
     ['legacy', fixture({ secondaryDecision: undefined }), '待更新', '待更新'],
     ['no scores', fixture({ scoreRecommendation: undefined }), '二次入选', '待更新'],
@@ -127,7 +133,7 @@ async function main() {
   equal(warnings, [], 'real Vue components render all decision and score states without warnings')
   const page = read('admin/src/views/statistics/DrawHistory.vue')
   check(page.includes('<DrawFrozenSignal :row="row"') && page.includes('<DrawResearchSource :row="row"'), 'original model marker and research provenance are preserved')
-  check(page.includes('赛前交锋至少5场') && !page.includes('二次筛选 v1'), 'shared list explains current guards')
+  check(page.includes('交锋场次仅供观察') && !page.includes('赛前交锋至少5场') && !page.includes('二次筛选 v1'), 'shared list explains that H2H is observational')
   check(!page.includes('固定推荐1:1、0:0'), 'shared list has no fixed-score claim')
   const realPath = process.env.DRAW_CURRENT_RESPONSE_JSON || path.join(os.tmpdir(), 'peak-ball-20261031-current-api-review.json')
   let realReview = { status: 'skipped', reason: 'No actual response supplied; no substitute is fabricated.' }
@@ -137,7 +143,7 @@ async function main() {
     let oldPending = 0, current = 0, retained = 0, rejected = 0, recommended = 0, higherDraws = 0
     for (const row of response.items) {
       const result = secondary.classifySecondaryDraw(row)
-      if (row.secondaryDecision?.version !== secondary.SECONDARY_DRAW_VERSION) { equal(result.decision, 'unavailable', 'actual old API row cannot masquerade as v2'); oldPending++ }
+      if (row.secondaryDecision?.version !== secondary.SECONDARY_DRAW_VERSION) { equal(result.decision, 'unavailable', 'actual old API row cannot masquerade as v3'); oldPending++ }
       else { equal(result.decision, row.secondaryDecision.decision, 'actual current API uses backend decision'); current++ }
       const html = await render(components.secondary, row, warnings)
       check(html.includes(secondary.secondaryDrawPresentation(row).label), 'actual API decision renders correctly')
@@ -165,8 +171,8 @@ async function main() {
   }
   const report = { status: 'passed', checks, version: secondary.SECONDARY_DRAW_VERSION, scoreVersion: score.DRAW_SCORE_RECOMMENDATION_VERSION,
     renderedStates: cases.length, actualResponse: realReview, servicesStarted: false, networkRequests: false, originalModelChanged: false, vueWarnings: warnings }
-  fs.writeFileSync(path.join(os.tmpdir(), 'peak-ball-secondary-v2-ui-review.json'), JSON.stringify(report, null, 2))
-  fs.writeFileSync(path.join(os.tmpdir(), 'peak-ball-secondary-v2-ui-states.html'), '<!doctype html><meta charset="utf-8">' + rendered.map(x => `<section><h2>${x.name}</h2>${x.secondaryHTML}${x.scoresHTML}</section>`).join('\n'))
+  fs.writeFileSync(path.join(os.tmpdir(), 'peak-ball-secondary-v3-ui-review.json'), JSON.stringify(report, null, 2))
+  fs.writeFileSync(path.join(os.tmpdir(), 'peak-ball-secondary-v3-ui-states.html'), '<!doctype html><meta charset="utf-8">' + rendered.map(x => `<section><h2>${x.name}</h2>${x.secondaryHTML}${x.scoresHTML}</section>`).join('\n'))
   console.log(JSON.stringify(report, null, 2))
 }
 main().catch(error => { console.error(error); process.exitCode = 1 })

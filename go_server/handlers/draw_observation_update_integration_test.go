@@ -55,7 +55,10 @@ func TestDrawObservationUpdatedCurrentDayReadOnly(t *testing.T) {
 				t.Fatalf("missing current contracts for %s", row.MatchID)
 			}
 			retained := row.SecondaryDecision.Decision == "retained"
-			if retained && (!drawObservationSecondarySportteryQuotes(row) || row.HeadToHead.Sample < 5) {
+			if row.SecondaryDecision.MinimumHeadToHead != 0 || row.SecondaryDecision.HeadToHeadSample != row.HeadToHead.Sample {
+				t.Fatalf("history metadata must not impose a secondary gate: %s", row.MatchID)
+			}
+			if retained && !drawObservationSecondarySportteryQuotes(row) {
 				t.Fatalf("invalid candidate passed the guards: %s", row.MatchID)
 			}
 			if !retained && len(row.ScoreRecommendation.Scores) != 0 {
@@ -74,7 +77,7 @@ func TestDrawObservationUpdatedCurrentDayReadOnly(t *testing.T) {
 			if input == nil {
 				t.Fatalf("missing exact source projection for %s", row.MatchID)
 			}
-			// Verify v2 guards, BF evidence, exact raw-input identity and ordered
+			// Verify current quote guards, BF evidence, exact raw-input identity and ordered
 			// scores can all survive the same archive lookup used by production.
 			now := time.Now().UTC().Truncate(time.Microsecond)
 			_, body, key, prepareErr := prepareDrawResearchInput(row, input, now)

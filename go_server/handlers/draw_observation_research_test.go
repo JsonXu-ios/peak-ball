@@ -138,7 +138,7 @@ func TestResearchTakeoverFallbackNeverLosesOriginalDecision(t *testing.T) {
 		}},
 		{"old rule", func(b *drawResearchFakeBackend, k drawResearchKey, body []byte, n time.Time) {
 			b.record = drawResearchFakeRecord(k, body, drawResearchFakeSignal(), n)
-			b.record.prediction.RuleVersion = "secondary-v1+profit-support-v1"
+			b.record.prediction.RuleVersion = "secondary-v2-input-guards+profit-support-v1"
 			p := b.record.prediction
 			p.PredictedAt = time.Time{}
 			b.record.predictionHash = researchstore.HashBytes(researchJSON(p))

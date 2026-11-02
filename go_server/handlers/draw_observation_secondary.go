@@ -6,13 +6,12 @@ import (
 	"strings"
 )
 
-const drawObservationSecondaryVersion = "secondary-v2-input-guards"
+const drawObservationSecondaryVersion = "secondary-v3-quotes-only"
 const drawObservationSecondaryThreshold = 0.225
-const drawObservationSecondaryMinimumHeadToHead = 5
 
 // Secondary screening does not change the frozen model's state or score. It
-// only admits candidates with original sporttery quotes and a safe H2H sample.
-// HeadToHead is the same strictly pre-match window supplied to the model/list.
+// requires original sporttery quotes, but no head-to-head sample minimum.
+// HeadToHead remains an observed model/list input, not a hard selection gate.
 type drawObservationSecondarySignal struct {
 	Version                  string   `json:"version"`
 	Decision                 string   `json:"decision"`
@@ -22,7 +21,7 @@ type drawObservationSecondarySignal struct {
 	Reasons                  []string `json:"reasons,omitempty"`
 	ReasonCodes              []string `json:"reasonCodes,omitempty"`
 	HeadToHeadSample         int      `json:"headToHeadSample"`
-	MinimumHeadToHead        int      `json:"minimumHeadToHead"`
+	MinimumHeadToHead        int      `json:"minimumHeadToHead"` // zero: no H2H hard filter
 	SportteryQuotesAvailable bool     `json:"sportteryQuotesAvailable"`
 }
 
@@ -63,13 +62,13 @@ func drawObservationSecondarySportteryQuotes(row drawObservationItem) bool {
 }
 
 // The decision deliberately never reads this match's score, settled state,
-// profit fields, or score recommendations. Missing quote/history guards have
-// their own reasons, rather than being described as a low model score.
+// profit fields, or score recommendations. Missing quotes have their own
+// reason, rather than being described as a low model score.
 func drawObservationSecondaryDecision(row drawObservationItem) drawObservationSecondarySignal {
 	result := drawObservationSecondarySignal{
 		Version: drawObservationSecondaryVersion, Decision: "unavailable",
 		Threshold:        drawObservationSecondaryThreshold,
-		HeadToHeadSample: row.HeadToHead.Sample, MinimumHeadToHead: drawObservationSecondaryMinimumHeadToHead,
+		HeadToHeadSample: row.HeadToHead.Sample, MinimumHeadToHead: 0,
 		SportteryQuotesAvailable: drawObservationSecondarySportteryQuotes(row),
 	}
 	finish := func(decision, reason, code string) drawObservationSecondarySignal {
@@ -104,10 +103,6 @@ func drawObservationSecondaryDecision(row drawObservationItem) drawObservationSe
 		result.Reasons = append(result.Reasons, "竞彩报价不完整：需要真实初盘及即时盘胜平负")
 		result.ReasonCodes = append(result.ReasonCodes, "sporttery_quotes_incomplete")
 	}
-	if row.HeadToHead.Sample < drawObservationSecondaryMinimumHeadToHead {
-		result.Reasons = append(result.Reasons, "赛前历史交锋不足5场")
-		result.ReasonCodes = append(result.ReasonCodes, "head_to_head_insufficient")
-	}
 	if len(result.Reasons) > 0 {
 		result.Decision, result.Reason = "rejected", strings.Join(result.Reasons, "；")
 		return result
@@ -115,7 +110,7 @@ func drawObservationSecondaryDecision(row drawObservationItem) drawObservationSe
 	if *result.Score < drawObservationSecondaryThreshold {
 		return finish("rejected", "原模型分数低于固定二次门槛0.225", "score_below_threshold")
 	}
-	return finish("retained", "原模型入选，竞彩初即时报价完整、赛前交锋至少5场且分数达到0.225", "retained")
+	return finish("retained", "原模型入选，竞彩初即时报价完整且分数达到0.225", "retained")
 }
 
 func drawObservationSecondaryRetained(row drawObservationItem) bool {
