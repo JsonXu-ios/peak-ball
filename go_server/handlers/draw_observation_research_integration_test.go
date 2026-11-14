@@ -38,7 +38,7 @@ func (b *takeoverReadOnlyBackend) write(context.Context, drawObservationItem, dr
 // can only read: any miss, fallback, legacy callback or attempted write fails.
 func TestDrawResearchCurrentSourceReadOnlyTakeover(t *testing.T) {
 	if os.Getenv("DRAW_TAKEOVER_INTEGRATION") != "1" {
-		t.Skip("set DRAW_TAKEOVER_INTEGRATION=1 only after current secondary-v3/dynamic-score inputs have been explicitly archived")
+		t.Skip("set DRAW_TAKEOVER_INTEGRATION=1 only after current H2H-guarded secondary-v4/dynamic-score inputs have been explicitly archived")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
@@ -72,7 +72,7 @@ func TestDrawResearchCurrentSourceReadOnlyTakeover(t *testing.T) {
 	legacyCalls, served, settled := 0, 0, 0
 	for _, row := range data.Rows {
 		item := researchTakeoverItem(row)
-		expected := drawObservationModelSignal(item, &row)
+		expected := drawObservationApplySelectionEligibility(item, drawObservationModelSignal(item, &row))
 		got, decision := resolveDrawResearchSignalWithBackend(ctx, backend, item, &row, func() *drawObservationFrozenSignal { legacyCalls++; return expected }, time.Now().UTC())
 		if decision.Source != "research" {
 			t.Fatalf("current source is not already prepared: %s source=%s reason=%s writes=%d legacy=%d", row.MatchID, decision.Source, decision.Reason, backend.writeAttempts, legacyCalls)
@@ -120,7 +120,10 @@ func TestDrawResearchCurrentSourceReadOnlyTakeover(t *testing.T) {
 			t.Fatalf("actual HTTP row lacks verified library source: %s", row.MatchID)
 		}
 	}
-	day := drawObservationStoredDay{Version: response.DataVersion, Date: response.Date, TakeoverVersion: drawResearchTakeoverVersion, AllSummary: response.Summary, SportterySummary: response.Summary, Items: response.Items, DrawIDs: map[string]bool{}}
+	day := drawObservationStoredDay{Version: response.DataVersion, Date: response.Date, TakeoverVersion: drawResearchTakeoverVersion, SelectionVersion: drawObservationSelectionVersion, AllSummary: response.Summary, SportterySummary: response.Summary, Items: response.Items, DrawIDs: map[string]bool{}}
+	if !drawObservationSelectionStoredDayReady(day) {
+		t.Fatal("actual HTTP fixture lacks the current validated H2H selection contract")
+	}
 	for _, row := range day.Items {
 		if row.Settled && row.RegulationSettled != nil && *row.RegulationSettled && row.HomeScore == row.AwayScore {
 			day.DrawIDs[row.MatchID] = true
@@ -128,8 +131,14 @@ func TestDrawResearchCurrentSourceReadOnlyTakeover(t *testing.T) {
 	}
 	base := drawObservationQuery{date: response.Date, scope: "sporttery", mode: "today", page: 1, size: 200}
 	whole := day.filter(base)
-	expectedSecondary, expectedHits := 0, 0
+	expectedOriginal, expectedOriginalHits, expectedSecondary, expectedHits := 0, 0, 0, 0
 	for _, row := range day.Items {
+		if independentTakeoverOriginal(row) {
+			expectedOriginal++
+			if drawObservationMetricSettled(row) && row.HomeScore == row.AwayScore {
+				expectedOriginalHits++
+			}
+		}
 		if independentTakeoverSecondary(row) {
 			expectedSecondary++
 			if drawObservationMetricSettled(row) && row.HomeScore == row.AwayScore {
@@ -137,7 +146,7 @@ func TestDrawResearchCurrentSourceReadOnlyTakeover(t *testing.T) {
 			}
 		}
 	}
-	if whole.ObservationMetrics == nil || whole.ObservationMetrics.Original.Selected != 21 || whole.ObservationMetrics.Original.Hits != 10 || whole.ObservationMetrics.Secondary.Selected != expectedSecondary || whole.ObservationMetrics.Secondary.Hits != expectedHits {
+	if whole.ObservationMetrics == nil || whole.ObservationMetrics.Original.Selected != expectedOriginal || whole.ObservationMetrics.Original.Hits != expectedOriginalHits || whole.ObservationMetrics.Secondary.Selected != expectedSecondary || whole.ObservationMetrics.Secondary.Hits != expectedHits {
 		t.Fatal("day-level original/secondary metrics changed")
 	}
 	for _, mode := range []string{"today", "history"} {
@@ -171,7 +180,7 @@ func TestDrawResearchCurrentSourceReadOnlyTakeover(t *testing.T) {
 			}
 		}
 	}
-	t.Logf("actual HTTP day32/32 research; today/history tabs and 5-row paging preserve original21/10, guarded secondary %d/%d; no writes or listener", expectedHits, expectedSecondary)
+	t.Logf("actual HTTP day32/32 research; today/history tabs and 5-row paging preserve H2H-eligible original %d/%d, guarded secondary %d/%d; no writes or listener", expectedOriginalHits, expectedOriginal, expectedHits, expectedSecondary)
 }
 
 // This opt-in gate reads every available archived lottery prediction. It never
@@ -261,14 +270,15 @@ ORDER BY p.predicted_at,p.id`, drawmodeldata.Version(), drawObservationSecondary
 			t.Fatal(err)
 		}
 		computed := drawmodeldata.Predict(raw)
-		if !score.Valid || math.Abs(score.Float64-computed.Score) > 1e-12 || !threshold.Valid || threshold.Float64 != drawmodeldata.Threshold() || (state == "selected") != computed.Selected {
+		item := researchTakeoverItem(row)
+		expectedSelection := takeoverGatedModelSignal(item, computed)
+		if !score.Valid || math.Abs(score.Float64-computed.Score) > 1e-12 || !threshold.Valid || threshold.Float64 != drawmodeldata.Threshold() || state != expectedSelection.State {
 			t.Fatalf("original inference differs: %s/%d score=%.17g expected=%.17g", matchID, predictionID, score.Float64, computed.Score)
 		}
-		if served.Score == nil || *served.Score != score.Float64 || served.State != state || served.Threshold != threshold.Float64 {
+		if served.Score == nil || *served.Score != score.Float64 || served.State != state || served.Threshold != threshold.Float64 || served.SelectionVersion != expectedSelection.SelectionVersion || served.MinimumHeadToHead != expectedSelection.MinimumHeadToHead || served.HeadToHeadSample != expectedSelection.HeadToHeadSample {
 			t.Fatalf("reader changed authoritative prediction: %s/%d", matchID, predictionID)
 		}
-		item := researchTakeoverItem(row)
-		item.FrozenDrawSignal = &drawObservationFrozenSignal{ModelVersion: drawmodeldata.Version(), State: state, Score: &computed.Score, Threshold: drawmodeldata.Threshold(), ObservedInputs: computed.ObservedFeatures, UsedInputs: computed.UsedFeatures}
+		item.FrozenDrawSignal = expectedSelection
 		expectedSecondary := independentTakeoverSecondary(item)
 		if secondary != expectedSecondary {
 			t.Fatalf("secondary decision differs: %s/%d", matchID, predictionID)
@@ -290,7 +300,7 @@ ORDER BY p.predicted_at,p.id`, drawmodeldata.Version(), drawObservationSecondary
 		if err := json.Unmarshal(payload, &saved); err != nil {
 			t.Fatal(err)
 		}
-		if saved.Original == nil || saved.Original.Score == nil || saved.Original.ModelVersion != drawmodeldata.Version() || saved.Original.State != state || math.Abs(*saved.Original.Score-computed.Score) > 1e-12 || saved.Original.ObservedInputs != computed.ObservedFeatures || saved.Original.UsedInputs != computed.UsedFeatures {
+		if saved.Original == nil || saved.Original.Score == nil || saved.Original.ModelVersion != drawmodeldata.Version() || saved.Original.State != state || math.Abs(*saved.Original.Score-computed.Score) > 1e-12 || saved.Original.ObservedInputs != computed.ObservedFeatures || saved.Original.UsedInputs != computed.UsedFeatures || saved.Original.SelectionVersion != expectedSelection.SelectionVersion || saved.Original.MinimumHeadToHead != expectedSelection.MinimumHeadToHead || saved.Original.HeadToHeadSample != expectedSelection.HeadToHeadSample {
 			t.Fatalf("stored signal payload differs: %s/%d", matchID, predictionID)
 		}
 		object["homeScore"], object["awayScore"], object["result"], object["settled"] = json.RawMessage("9"), json.RawMessage("8"), json.RawMessage("2"), json.RawMessage("true")
@@ -375,7 +385,7 @@ ORDER BY p.predicted_at,p.id`, drawmodeldata.Version(), drawObservationSecondary
 // does not invoke the production secondary classifier or read the target score.
 func independentTakeoverSecondary(row drawObservationItem) bool {
 	s := row.FrozenDrawSignal
-	if strings.TrimSpace(row.JingcaiID) == "" || s == nil || s.State != "selected" || s.Score == nil || math.IsNaN(*s.Score) || math.IsInf(*s.Score, 0) || *s.Score < .225 || *s.Score > 1 {
+	if strings.TrimSpace(row.JingcaiID) == "" || s == nil || s.State != "selected" || s.Score == nil || math.IsNaN(*s.Score) || math.IsInf(*s.Score, 0) || *s.Score < .225 || *s.Score > 1 || drawObservationHeadToHeadSample(row) < drawObservationMinimumHeadToHead {
 		return false
 	}
 	n := 0
@@ -403,4 +413,17 @@ func independentTakeoverSecondary(row drawObservationItem) bool {
 		}
 	}
 	return n == 1
+}
+
+func independentTakeoverOriginal(row drawObservationItem) bool {
+	s := row.FrozenDrawSignal
+	return strings.TrimSpace(row.JingcaiID) != "" && s != nil && (s.State == "selected" || s.State == "not_selected") && s.Score != nil && !math.IsNaN(*s.Score) && !math.IsInf(*s.Score, 0) && *s.Score >= drawmodeldata.Threshold() && *s.Score <= 1 && drawObservationHeadToHeadSample(row) >= drawObservationMinimumHeadToHead
+}
+
+func takeoverGatedModelSignal(row drawObservationItem, prediction drawmodeldata.Result) *drawObservationFrozenSignal {
+	state := "not_selected"
+	if prediction.Selected {
+		state = "selected"
+	}
+	return drawObservationApplySelectionEligibility(row, &drawObservationFrozenSignal{ModelVersion: drawmodeldata.Version(), State: state, Score: &prediction.Score, Threshold: drawmodeldata.Threshold(), ObservedInputs: prediction.ObservedFeatures, UsedInputs: prediction.UsedFeatures})
 }

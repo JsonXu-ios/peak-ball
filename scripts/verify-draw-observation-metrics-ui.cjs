@@ -17,15 +17,18 @@ const compiled = ts.transpileModule(script.content, { compilerOptions: { module:
 const profitSupportModule = { exports: {} }
 const profitSupportCompiled = ts.transpileModule(fs.readFileSync(path.join(root, 'admin/src/utils/drawProfitSupport.ts'), 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 } }).outputText
 new Function('require', 'module', 'exports', profitSupportCompiled)(adminRequire, profitSupportModule, profitSupportModule.exports)
+const frozenModule = { exports: {} }
+const frozenCompiled = ts.transpileModule(fs.readFileSync(path.join(root, 'admin/src/utils/drawFrozenSignal.ts'), 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 } }).outputText
+new Function('require', 'module', 'exports', frozenCompiled)(adminRequire, frozenModule, frozenModule.exports)
 const secondaryModule = { exports: {} }
 const secondaryCompiled = ts.transpileModule(fs.readFileSync(path.join(root, 'admin/src/utils/drawSecondarySignal.ts'), 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 } }).outputText
-new Function('require', 'module', 'exports', secondaryCompiled)(adminRequire, secondaryModule, secondaryModule.exports)
+new Function('require', 'module', 'exports', secondaryCompiled)(name => name === './drawFrozenSignal' ? frozenModule.exports : adminRequire(name), secondaryModule, secondaryModule.exports)
 const loaded = { exports: {} }
 new Function('require', 'module', 'exports', compiled)(name => name === '@/utils/drawProfitSupport' ? profitSupportModule.exports : name === '@/utils/drawSecondarySignal' ? secondaryModule.exports : adminRequire(name), loaded, loaded.exports)
 const component = loaded.exports.default
 const zero = { selected: 0, settled: 0, hits: 0, misses: 0, pending: 0, precision: null, coverage: null }
 const fixture = {
-  status: 'available', modelVersion: 'frozen-v1', secondaryVersion: 'secondary-v3-quotes-only', secondaryThreshold: .225,
+  status: 'available', modelVersion: 'frozen-v1', secondaryVersion: 'secondary-v4-h2h-required', secondaryThreshold: .225,
   scopeMatches: 100, settledMatches: 80, settledDraws: 40,
   eligibleMatches: 6, eligibleSettled: 4, eligibleDraws: 2,
   modelAvailable: 6, modelUnavailable: 0, outOfScope: 94, secondaryUnavailable: 0,

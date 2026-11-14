@@ -136,7 +136,7 @@ func PrimeDrawResearchTakeover(ctx context.Context, db *gorm.DB) (DrawResearchTa
 		}
 		r.Eligible++
 		item := researchTakeoverItem(row)
-		expected := drawObservationModelSignal(item, &row)
+		expected := drawObservationApplySelectionEligibility(item, drawObservationModelSignal(item, &row))
 		got, decision := resolveDrawResearchSignalWithStore(ctx, store, item, &row, func() *drawObservationFrozenSignal { return expected })
 		if !drawResearchSignalsEqual(expected, got) {
 			r.Mismatches++

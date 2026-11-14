@@ -20,8 +20,10 @@ export function isResearchScoreRankMetrics(evaluation: Pick<ResearchEvaluation, 
 
 export function researchScoreMethod(evaluation: Pick<ResearchEvaluation, 'version' | 'metrics'>) {
   if (isResearchScoreRankMetrics(evaluation) && evaluation.version === 'research-evaluation-v3-dynamic-scores') {
-    const secondaryNote = evaluation.metrics.secondaryVersion === 'secondary-v3-quotes-only'
-      ? '二次候选要求分数达标且竞彩报价完整；交锋场次仅供观察。'
+    const secondaryNote = evaluation.metrics.secondaryVersion === 'secondary-v4-h2h-required'
+      ? '竞彩原入选要求原模型分数达标且至少1场有效赛前交锋；二次保留另需真实竞彩初即时盘完整且分数至少0.225。'
+      : evaluation.metrics.secondaryVersion === 'secondary-v3-quotes-only'
+        ? '此记录采用旧版v3：二次候选要求分数达标且竞彩报价完整；交锋场次仅供观察。'
       : evaluation.metrics.secondaryVersion === 'secondary-v2-input-guards'
         ? '此记录采用旧版二次条件：报价完整且赛前交锋至少5场。'
         : '二次筛选以该评估记录的规则版本为准。'

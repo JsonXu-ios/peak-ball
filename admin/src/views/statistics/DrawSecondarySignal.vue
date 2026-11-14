@@ -8,7 +8,7 @@ const presentation = computed(() => secondaryDrawPresentation(props.row))
 const hasScore = computed(() => typeof presentation.value.score === 'number')
 const scoreText = computed(() => presentation.value.score?.toFixed(4) || '')
 const note = computed(() => [
-  '原模型入选后，模型分数不少于0.225，竞彩初盘和即时盘报价完整，才二次保留。交锋场次仅供观察。',
+  '竞彩原入选要求原模型分数达标且至少1场有效赛前交锋；二次保留另需真实竞彩初盘和即时盘完整，且模型分数不少于0.225。',
   '分数不是平局概率。比赛结果只用于赛后核对。',
   presentation.value.reason,
 ].join('\n'))

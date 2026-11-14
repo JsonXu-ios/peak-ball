@@ -55,8 +55,11 @@ func TestDrawObservationUpdatedCurrentDayReadOnly(t *testing.T) {
 				t.Fatalf("missing current contracts for %s", row.MatchID)
 			}
 			retained := row.SecondaryDecision.Decision == "retained"
-			if row.SecondaryDecision.MinimumHeadToHead != 0 || row.SecondaryDecision.HeadToHeadSample != row.HeadToHead.Sample {
-				t.Fatalf("history metadata must not impose a secondary gate: %s", row.MatchID)
+			if row.SecondaryDecision.MinimumHeadToHead != drawObservationMinimumHeadToHead || row.SecondaryDecision.HeadToHeadSample != drawObservationHeadToHeadSample(row) {
+				t.Fatalf("secondary history metadata does not match validated records: %s", row.MatchID)
+			}
+			if retained && row.SecondaryDecision.HeadToHeadSample < drawObservationMinimumHeadToHead {
+				t.Fatalf("candidate without valid prior head-to-head passed: %s", row.MatchID)
 			}
 			if retained && !drawObservationSecondarySportteryQuotes(row) {
 				t.Fatalf("invalid candidate passed the guards: %s", row.MatchID)

@@ -43,6 +43,7 @@ func drawResearchFakeInput() (drawObservationItem, *drawFeatureStudyRow, time.Ti
 	now := time.Date(2026, 10, 29, 16, 0, 0, 0, time.UTC)
 	kickoff := now.Add(-24 * time.Hour)
 	item := drawObservationItem{MatchID: "498177797", JingcaiID: "202610246021", MatchTime: kickoff, Date: "2026-10-28", Home: "主队", Guest: "客队", HomeRecent: drawObservationRecent{Sample: 10, Draws: 3}, AwayRecent: drawObservationRecent{Sample: 10, Draws: 2}, HeadToHead: drawObservationRecent{Sample: 5}, CompanyQuotes: []drawObservationCompanyQuotes{drawSecondaryGuardQuoteFixture()}}
+	item.HeadToHead = drawEligibilityHistory(item, 5)
 	item.ScoreInputs = &drawScoreInputs{MatchID: item.MatchID, Source: "sporttery_score_odds", Quotes: []drawScoreQuote{{Home: 1, Away: 1, Odds: 6, SourceField: "sd11"}, {Home: 2, Away: 2, Odds: 5, SourceField: "sd22"}}}
 	input := &drawFeatureStudyRow{MatchID: item.MatchID, MatchTime: kickoff, Date: item.Date, JingcaiID: item.JingcaiID, Home: item.Home, Guest: item.Guest, CompanyQuotes: item.CompanyQuotes, ScoreInputs: item.ScoreInputs, Opening: drawFeatureStudyPhase{Average: []float64{2.3, 3.1, 2.9}}}
 	return item, input, now
@@ -50,7 +51,8 @@ func drawResearchFakeInput() (drawObservationItem, *drawFeatureStudyRow, time.Ti
 
 func drawResearchFakeSignal() *drawObservationFrozenSignal {
 	score := .323789458480385
-	return &drawObservationFrozenSignal{ModelVersion: drawmodeldata.Version(), State: "selected", Score: &score, Threshold: drawmodeldata.Threshold(), ObservedInputs: 202, UsedInputs: 202}
+	item, _, _ := drawResearchFakeInput()
+	return drawObservationApplySelectionEligibility(item, &drawObservationFrozenSignal{ModelVersion: drawmodeldata.Version(), State: "selected", Score: &score, Threshold: drawmodeldata.Threshold(), ObservedInputs: 202, UsedInputs: 202})
 }
 
 func drawResearchFakeRecord(key drawResearchKey, body []byte, signal *drawObservationFrozenSignal, now time.Time) *drawResearchStoredRecord {
@@ -90,7 +92,7 @@ func TestResearchTakeoverReadsVerifiedArchiveWithoutRunningLegacy(t *testing.T) 
 	}
 	var picks []drawRecommendedScore
 	if json.Unmarshal(b.record.prediction.Scorelines, &picks) != nil || !b.record.prediction.Secondary || !reflect.DeepEqual(picks, []drawRecommendedScore{{Home: 2, Away: 2}, {Home: 1, Away: 1}}) {
-		t.Fatalf("fake input must exercise a retained dynamic recommendation: %s", b.record.prediction.Scorelines)
+		t.Fatalf("fake input must exercise a retained dynamic recommendation: scores=%s payload=%s", b.record.prediction.Scorelines, b.record.prediction.Payload)
 	}
 }
 
@@ -135,6 +137,16 @@ func TestResearchTakeoverFallbackNeverLosesOriginalDecision(t *testing.T) {
 		{"wrong secondary", func(b *drawResearchFakeBackend, k drawResearchKey, body []byte, n time.Time) {
 			b.record = drawResearchFakeRecord(k, body, drawResearchFakeSignal(), n)
 			b.record.prediction.Secondary = false
+		}},
+		{"missing selection policy metadata", func(b *drawResearchFakeBackend, k drawResearchKey, body []byte, n time.Time) {
+			signal := *drawResearchFakeSignal()
+			signal.SelectionVersion, signal.MinimumHeadToHead, signal.HeadToHeadSample = "", 0, 0
+			b.record = drawResearchFakeRecord(k, body, &signal, n)
+		}},
+		{"stale validated head-to-head count", func(b *drawResearchFakeBackend, k drawResearchKey, body []byte, n time.Time) {
+			signal := *drawResearchFakeSignal()
+			signal.HeadToHeadSample++
+			b.record = drawResearchFakeRecord(k, body, &signal, n)
 		}},
 		{"old rule", func(b *drawResearchFakeBackend, k drawResearchKey, body []byte, n time.Time) {
 			b.record = drawResearchFakeRecord(k, body, drawResearchFakeSignal(), n)

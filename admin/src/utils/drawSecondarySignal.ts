@@ -1,7 +1,9 @@
 import type { DrawObservation } from '@/types/drawHistory'
+import { hasCurrentJcDrawSelectionMetadata } from './drawFrozenSignal'
 
-export const SECONDARY_DRAW_VERSION = 'secondary-v3-quotes-only'
+export const SECONDARY_DRAW_VERSION = 'secondary-v4-h2h-required'
 export const SECONDARY_DRAW_THRESHOLD = 0.225
+export const SECONDARY_DRAW_MINIMUM_HEAD_TO_HEAD = 1
 
 export type SecondaryDrawDecision = 'retained' | 'rejected' | 'not_selected' | 'unavailable' | 'out_of_scope'
 
@@ -22,12 +24,12 @@ export interface SecondaryDrawPresentation extends SecondaryDrawClassification {
   outcomeColor?: string
 }
 
-type SecondaryDrawInput = Pick<DrawObservation, 'frozenDrawSignal' | 'secondaryDecision'>
+type SecondaryDrawInput = Pick<DrawObservation, 'jingcaiId' | 'frozenDrawSignal' | 'secondaryDecision'>
 type SecondaryDrawResultInput = SecondaryDrawInput & Pick<DrawObservation, 'settled' | 'regulationSettled' | 'homeScore' | 'awayScore'>
 const validScore = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 1
 const decisions: SecondaryDrawDecision[] = ['retained', 'rejected', 'not_selected', 'unavailable', 'out_of_scope']
 
-/** The server owns quote and score guards. The browser never reconstructs a
+/** The server owns H2H, quote and score guards. The browser never reconstructs a
  * secondary decision from the model score, current-page odds or final result. */
 export function classifySecondaryDraw(row: SecondaryDrawInput): SecondaryDrawClassification {
   const base = { version: SECONDARY_DRAW_VERSION, threshold: SECONDARY_DRAW_THRESHOLD, reasons: [] as string[] }
@@ -35,8 +37,17 @@ export function classifySecondaryDraw(row: SecondaryDrawInput): SecondaryDrawCla
   if (!recorded || recorded.version !== SECONDARY_DRAW_VERSION) {
     return { ...base, decision: 'unavailable', needsUpdate: true, reason: '二次筛选结果待更新' }
   }
-  if (!decisions.includes(recorded.decision) || recorded.threshold !== SECONDARY_DRAW_THRESHOLD) {
+  if (!decisions.includes(recorded.decision) || recorded.threshold !== SECONDARY_DRAW_THRESHOLD
+    || recorded.minimumHeadToHead !== SECONDARY_DRAW_MINIMUM_HEAD_TO_HEAD
+    || !Number.isInteger(recorded.headToHeadSample) || recorded.headToHeadSample < 0) {
     return { ...base, decision: 'unavailable', needsUpdate: true, reason: '二次筛选结果待更新，请重新查询' }
+  }
+  if (row.jingcaiId?.trim() && row.frozenDrawSignal && ['selected', 'not_selected'].includes(row.frozenDrawSignal.state)
+    && !hasCurrentJcDrawSelectionMetadata(row.frozenDrawSignal)) {
+    return { ...base, decision: 'unavailable', needsUpdate: true, reason: '竞彩原入选规则待更新，请重新查询' }
+  }
+  if (recorded.decision === 'retained' && recorded.headToHeadSample < SECONDARY_DRAW_MINIMUM_HEAD_TO_HEAD) {
+    return { ...base, decision: 'unavailable', needsUpdate: true, reason: '交锋入选信息尚未一致，请重新查询' }
   }
   if (recorded.decision === 'retained' && row.frozenDrawSignal?.state !== 'selected') {
     return { ...base, decision: 'unavailable', needsUpdate: true, reason: '原模型与二次筛选结果尚未一致，请重新查询' }

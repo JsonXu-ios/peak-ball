@@ -27,12 +27,14 @@ function load(source, imports = {}) {
   return module.exports
 }
 const support = load(read('admin/src/utils/drawProfitSupport.ts'))
-const secondary = load(read('admin/src/utils/drawSecondarySignal.ts'))
+const selectionContract = load(read('admin/src/utils/drawFrozenSignal.ts'))
+const currentModel = extra => ({ selectionVersion: 'jc-h2h-required-v1', minimumHeadToHead: 1, headToHeadSample: 8, ...extra })
+const secondary = load(read('admin/src/utils/drawSecondarySignal.ts'), { './drawFrozenSignal': selectionContract })
 const frozen = load(read('admin/src/utils/drawFrozenSignal.ts'))
 const profit = load(read('admin/src/utils/drawProfit.ts'))
 const originals = {
-  'admin/src/utils/drawFrozenSignal.ts': 'd68476cd87630c2ca69198963ead381c3e03f8092f63ef4c753d7976048d3358',
-  'admin/src/views/statistics/DrawFrozenSignal.vue': '82540784e4b58cbe6b175ac146c9be010132adf5b26df11fb4a1a415fa555f14',
+  'admin/src/utils/drawFrozenSignal.ts': 'f6932de0b5621a3036df030f07bd5ae7946950b812e5d5172a31b8618853287a',
+  'admin/src/views/statistics/DrawFrozenSignal.vue': '0ccf840dfb588c7261a40f4aebfba5059e91d80f7d3bc56e333349e2345898c6',
   'go_server/internal/drawmodeldata/observation_v1.json': 'e7cb7d50668a76e916d2f86a6ab598a6bcb23ab5e6c961dbd972875346afd987',
 }
 
@@ -46,8 +48,8 @@ function simulation(values, extra = {}) {
 function fixture(official = [-10, 5, 20], simulated = [5, -10, 20], extra = {}) {
   return {
     jingcaiId: '周四001',
-    frozenDrawSignal: { state: 'selected', score: .3, modelVersion: 'sporttery-draw-observation-v1' },
-    secondaryDecision: { version: 'secondary-v3-quotes-only', decision: extra.frozenDrawSignal?.state === 'not_selected' ? 'not_selected' : extra.frozenDrawSignal?.score < .225 ? 'rejected' : 'retained', threshold: .225, reason: '离线展示用二次判定', headToHeadSample: 8, minimumHeadToHead: 0, sportteryQuotesAvailable: true },
+    frozenDrawSignal: currentModel({ state: 'selected', score: .3, modelVersion: 'sporttery-draw-observation-v1' }),
+    secondaryDecision: { version: 'secondary-v4-h2h-required', decision: extra.frozenDrawSignal?.state === 'not_selected' ? 'not_selected' : extra.frozenDrawSignal?.score < .225 ? 'rejected' : 'retained', threshold: .225, reason: '离线展示用二次判定', headToHeadSample: 8, minimumHeadToHead: 1, sportteryQuotesAvailable: true },
     frontendAnalysis: { weightedFeatureInputs: { homeHeat: null, officialProfitRates: official }, roiSimulation: { totalStake: 100, markets: [simulation(simulated)] } },
     settled: false, regulationSettled: false, homeScore: 0, awayScore: 0,
     ...extra,
@@ -85,7 +87,7 @@ function stats(rows, predicate, draws) {
 function fixtureMetrics() {
   const group = (selected, hits) => ({ selected, settled: selected, hits, misses: selected - hits, pending: 0, precision: selected ? hits / selected : null, coverage: hits / 135 })
   return {
-    status: 'available', secondaryVersion: 'secondary-v3-quotes-only', modelAvailable: 552, modelUnavailable: 0, secondaryUnavailable: 0, outOfScope: 0,
+    status: 'available', secondaryVersion: 'secondary-v4-h2h-required', modelAvailable: 552, modelUnavailable: 0, secondaryUnavailable: 0, outOfScope: 0,
     scopeMatches: 552, eligibleMatches: 552, eligibleSettled: 552, eligibleDraws: 135,
     original: group(341, 129), secondary: group(305, 125), rejected: group(36, 4),
     profitSupport: { version: 'profit-support-v1', status: 'available', secondaryComparable: group(296, 124), secondarySupported: group(141, 66), secondaryNotSupported: group(155, 58), secondaryUnavailable: group(9, 1) },
@@ -144,7 +146,7 @@ async function main() {
   const immutable = fixture(); Object.freeze(immutable.frontendAnalysis.weightedFeatureInputs.officialProfitRates); Object.freeze(immutable.frontendAnalysis.roiSimulation.markets[0].bookmakerByOutcome); Object.freeze(immutable)
   equal(classify(immutable).state, 'supported', 'classification works on immutable source rows')
   for (const state of ['selected', 'not_selected', 'unavailable', 'out_of_scope']) for (const score of [.21, .225, .9]) for (const result of [[0, 0, false], [1, 1, true], [2, 0, true]]) {
-    const input = fixture(undefined, undefined, { frozenDrawSignal: { state, score }, homeScore: result[0], awayScore: result[1], settled: result[2], regulationSettled: result[2], result: result[0] === result[1] ? 1 : 0 })
+    const input = fixture(undefined, undefined, { frozenDrawSignal: currentModel({ state, score }), homeScore: result[0], awayScore: result[1], settled: result[2], regulationSettled: result[2], result: result[0] === result[1] ? 1 : 0 })
     const before = JSON.stringify(input), priorFrozen = frozen.frozenDrawPresentation(input), priorSecondary = secondary.classifySecondaryDraw(input)
     equal(classify(input).state, 'supported', 'model choice and target score cannot change feature input classification')
     equal(JSON.stringify(input), before, 'tag cannot mutate model or target row')
@@ -224,8 +226,8 @@ async function main() {
   const component = load(componentScript.content, imports).default
   const displayRows = [
     ['支持且二次保留', fixture()],
-    ['支持但二次剔除', fixture(undefined, undefined, { frozenDrawSignal: { state: 'selected', score: .21 } })],
-    ['支持但原未入选', fixture(undefined, undefined, { frozenDrawSignal: { state: 'not_selected', score: .9 } })],
+    ['支持但二次剔除', fixture(undefined, undefined, { frozenDrawSignal: currentModel({ state: 'selected', score: .21 }) })],
+    ['支持但原未入选', fixture(undefined, undefined, { frozenDrawSignal: currentModel({ state: 'not_selected', score: .9 }) })],
     ['支持但模型未知', fixture(undefined, undefined, { frozenDrawSignal: undefined })],
     ['最低方向相同', fixture([-10, 5, 20], [-10, 5, 20])],
     ['并列最低有共同方向', fixture([0, 0, 5], [5, 0, 5])],
@@ -261,7 +263,8 @@ async function main() {
   rendered.push({ name: '完整窗口对照统计', html: metricsHTML })
   const page = read('admin/src/views/statistics/DrawHistory.vue')
   check(page.includes('<DrawProfitSupportSignal') && page.includes('<DrawFrozenSignal') && page.includes('<DrawSecondarySignal'), 'new feature is displayed alongside original model and secondary choices')
-  equal((page.match(/colspan="21"/g) || []).length, 2, 'expanded and empty rows span all 21 columns including the market alternative')
+  check(page.includes('const observationColumnCount = 23'), 'full-width rows include the independent non-sporttery and totals columns')
+  equal((page.match(/:colspan="observationColumnCount"/g) || []).length, 2, 'expanded and empty rows share the complete 23-column span')
   check(page.includes('盈亏分歧'), 'feature column is discoverable')
   fs.mkdirSync(folder, { recursive: true })
   fs.writeFileSync(path.join(folder, 'states.html'), '<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>盈亏方向分歧增强标签核对</title><style>body{background:#151515;color:#eee;font:14px system-ui;margin:24px}section{border:1px solid #555;border-radius:6px;padding:16px;margin:16px 0}h2{font-size:16px}.text-caption{font-size:12px}.text-medium-emphasis{color:#aaa}table{border-collapse:collapse}th,td{border:1px solid #555;padding:8px}.mt-1,.mt-2{margin-top:8px}</style>' + rendered.map(x => `<section><h2>${x.name}</h2>${x.html}</section>`).join('\n') + '</html>', 'utf8')

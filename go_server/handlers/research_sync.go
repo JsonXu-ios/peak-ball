@@ -592,7 +592,7 @@ func runResearchSync(ctx context.Context) (err error) {
 			return err
 		}
 		item := researchTakeoverItem(row)
-		signal := drawObservationModelSignal(item, &row)
+		signal := drawObservationApplySelectionEligibility(item, drawObservationModelSignal(item, &row))
 		item.FrozenDrawSignal = signal
 		scores := drawObservationScoreRecommendation(item)
 		secondaryDecision := drawObservationSecondaryDecision(item)

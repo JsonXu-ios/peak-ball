@@ -10,7 +10,7 @@ import (
 	"gorm.io/gorm"
 )
 
-var drawObservationHeaderColumns = []string{"match_id", "jingcai_id", "date", "match_time", "league", "league_name", "league_id", "home", "guest", "home_team_id", "guest_team_id", "status", "match_state", "display_state", "home_score", "guest_score", "home_ot_score", "guest_ot_score", "home_ot_penalty", "guest_ot_penalty"}
+var drawObservationHeaderColumns = []string{"match_id", "jingcai_id", "date", "match_time", "league", "league_name", "league_id", "home", "guest", "home_logo", "guest_logo", "home_team_id", "guest_team_id", "status", "match_state", "display_state", "home_score", "guest_score", "home_ot_score", "guest_ot_score", "home_ot_penalty", "guest_ot_penalty"}
 
 func drawObservationProjection(schema drawObservationSchema, table string, wanted []string) []string {
 	columns := []string{}

@@ -18,6 +18,14 @@ func SetupPublicRoutes(r *gin.Engine) {
 
 // SetupProtectedRoutes sets up protected routes (authentication required)
 func SetupProtectedRoutes(r *gin.RouterGroup) {
+	// Fully separate public-source database, collector and analysis module.
+	r.GET("/public-sources/overview", handlers.GetPublicSourceOverview)
+	r.GET("/public-sources/match", handlers.GetPublicSourceMatch)
+	r.GET("/public-sources/raw", handlers.GetPublicSourceRaw)
+	r.POST("/public-sources/collect", handlers.RunPublicSourceCollection)
+	r.PUT("/public-sources/mapping", handlers.UpdatePublicSourceMapping)
+	r.PUT("/public-sources/company-mapping", handlers.UpdatePublicSourceCompanyMapping)
+
 	// User management
 	r.GET("/user/info", handlers.GetUserInfo)
 	r.GET("/users", handlers.GetUsers)

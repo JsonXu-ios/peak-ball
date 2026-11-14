@@ -81,15 +81,19 @@ type drawObservationStoredBase struct {
 	Schema  drawObservationSchema
 }
 type drawObservationStoredDay struct {
-	TakeoverVersion  string                 `json:"takeoverVersion,omitempty"`
-	Version          string                 `json:"version"`
-	Date             string                 `json:"date"`
-	GeneratedAt      time.Time              `json:"generatedAt"`
-	AllSummary       drawObservationSummary `json:"allSummary"`
-	SportterySummary drawObservationSummary `json:"sportterySummary"`
-	DrawIDs          map[string]bool        `json:"drawIds"`
-	Items            []drawObservationItem  `json:"items"`
-	Notes            []string               `json:"notes"`
+	TakeoverVersion      string                 `json:"takeoverVersion,omitempty"`
+	NonSportteryVersion  string                 `json:"nonSportteryVersion,omitempty"`
+	ComprehensiveVersion string                 `json:"comprehensiveVersion,omitempty"`
+	TotalsVersion        string                 `json:"totalsVersion,omitempty"`
+	SelectionVersion     string                 `json:"selectionVersion,omitempty"`
+	Version              string                 `json:"version"`
+	Date                 string                 `json:"date"`
+	GeneratedAt          time.Time              `json:"generatedAt"`
+	AllSummary           drawObservationSummary `json:"allSummary"`
+	SportterySummary     drawObservationSummary `json:"sportterySummary"`
+	DrawIDs              map[string]bool        `json:"drawIds"`
+	Items                []drawObservationItem  `json:"items"`
+	Notes                []string               `json:"notes"`
 }
 type drawObservationResultFlight struct {
 	done chan struct{}
@@ -239,7 +243,7 @@ func (reader *drawObservationResultReader) buildDayWithLoaders(q drawObservation
 	if err != nil {
 		return nil, err
 	}
-	saved := &drawObservationStoredDay{Version: source.Day, Date: q.date, GeneratedAt: time.Now().UTC(), AllSummary: core.summary, SportterySummary: core.sportterySummary, DrawIDs: map[string]bool{}, Items: []drawObservationItem{}}
+	saved := &drawObservationStoredDay{Version: source.Day, NonSportteryVersion: drawObservationNonSportteryVersion, TotalsVersion: drawTotalsServingVersion(), SelectionVersion: drawObservationSelectionVersion, Date: q.date, GeneratedAt: time.Now().UTC(), AllSummary: core.summary, SportterySummary: core.sportterySummary, DrawIDs: map[string]bool{}, Items: []drawObservationItem{}}
 	if loaders.research {
 		saved.TakeoverVersion = drawResearchTakeoverVersion
 	}
@@ -389,6 +393,15 @@ func (reader *drawObservationResultReader) storedDay(key, date, version string) 
 	if drawObservationUnpack(data, func(r io.Reader) error { return json.NewDecoder(r).Decode(&saved) }) != nil || saved.Version != version || saved.Date != date {
 		return nil, nil
 	}
+	if !drawNonSportteryStoredDayReady(saved) {
+		return nil, nil
+	}
+	if !drawTotalsStoredDayReady(saved) {
+		return nil, nil
+	}
+	if !drawObservationSelectionStoredDayReady(saved) {
+		return nil, nil
+	}
 	if reader.loaders.research && !drawResearchStoredDayReady(saved, time.Now().UTC()) {
 		return nil, nil
 	}
@@ -396,6 +409,12 @@ func (reader *drawObservationResultReader) storedDay(key, date, version string) 
 }
 
 func (saved *drawObservationStoredDay) filter(q drawObservationQuery) drawObservationResponse {
+	if q.matchStatus == "" {
+		q.matchStatus = "all"
+	}
+	if q.selection == "" {
+		q.selection = "all"
+	}
 	page, size := q.page, q.size
 	if page < 1 {
 		page = 1
@@ -407,8 +426,9 @@ func (saved *drawObservationStoredDay) filter(q drawObservationQuery) drawObserv
 		size = 200
 	}
 	generated := saved.GeneratedAt
-	response := drawObservationResponse{ScheduleTimezone: drawSourceLocation.String(), Mode: q.mode, Scope: q.scope, Date: saved.Date, Page: page, PageSize: size, Summary: saved.AllSummary, Leagues: []string{}, Items: []drawObservationItem{}, Notes: append([]string{}, saved.Notes...), DataVersion: saved.Version, GeneratedAt: &generated}
+	response := drawObservationResponse{ScheduleTimezone: drawSourceLocation.String(), Mode: q.mode, Scope: q.scope, MatchStatus: q.matchStatus, Selection: q.selection, Date: saved.Date, Page: page, PageSize: size, Summary: saved.AllSummary, Leagues: []string{}, Items: []drawObservationItem{}, Notes: append([]string{}, saved.Notes...), DataVersion: saved.Version, GeneratedAt: &generated}
 	response.ObservationMetrics = buildDrawObservationMetrics(saved.Items, q)
+	response.MatchStatusOptions = drawObservationMatchStatusOptions(saved.Items, q.scope)
 	if q.scope == "sporttery" {
 		response.Summary = saved.SportterySummary
 	}
@@ -427,6 +447,9 @@ func (saved *drawObservationStoredDay) filter(q drawObservationQuery) drawObserv
 			response.Summary.TotalMatches++
 		}
 		leagues[row.League] = true
+		if !drawObservationListStatusMatches(row, q) {
+			continue
+		}
 		if q.league != "" && q.league != "all" && q.league != row.League {
 			continue
 		}
@@ -436,6 +459,9 @@ func (saved *drawObservationStoredDay) filter(q drawObservationQuery) drawObserv
 		if !q.homeDraws.matches(row.HomeRecent) || !q.awayDraws.matches(row.AwayRecent) || !q.h2hDraws.matches(row.HeadToHead) {
 			continue
 		}
+		// The abandoned full-input draw experiment is offline only. Ignore its
+		// cached projection while preserving the original models and day data.
+		row.ComprehensiveSignal = nil
 		selected = append(selected, row)
 	}
 	for league := range leagues {

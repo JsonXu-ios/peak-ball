@@ -151,6 +151,7 @@ type drawObservationFrontendEnrichment struct {
 	companies     []drawObservationCompanyQuotes
 	euro          drawObservationEuroOdds
 	modelInput    *drawFeatureStudyRow
+	totalsInputs  *drawTotalsInputs
 	studyResponse *analysisMatchResponse
 }
 
@@ -181,7 +182,7 @@ func buildDrawObservationFrontend(match models.Money, history models.HistoryMone
 	analysis.ComparisonStages = drawObservationComparisonStages(odds, predictions)
 	analysis.Basis = drawObservationBasis(odds, pankou)
 	analysis.WeightedFeatureInputs = drawObservationWeightedInputs(odds, pankou, analysis.RoiSimulation)
-	return drawObservationFrontendEnrichment{analysis: analysis, companies: drawObservationCompanies(odds, pankou), euro: drawObservationEuro(odds), studyResponse: &response}
+	return drawObservationFrontendEnrichment{analysis: analysis, companies: drawObservationCompanies(odds, pankou), euro: drawObservationEuro(odds), studyResponse: &response, totalsInputs: drawObservationBuildTotalsInputs(match.MatchId, odds)}
 }
 
 // Frontend enrichment happens after count filters and pagination. All inputs
@@ -286,10 +287,10 @@ func drawObservationReadFrontend(db *gorm.DB, schema drawObservationSchema, targ
 		value := buildDrawObservationFrontend(main[id], historyByID[id], oddsByID[id], pankouByID[id])
 		// Reuse the already loaded batch and the shared market calculation. No
 		// per-match query or external Python/model process is necessary.
-		if strings.TrimSpace(main[id].JingcaiID) != "" {
-			input := drawFeatureStudyBuildRowWithEnrichment(main[id], historyByID[id], oddsByID[id], pankouByID[id], value)
-			value.modelInput = &input
-		}
+		// Both scoped columns consume this same loaded batch. The separate
+		// non-sporttery signal does not add a query or borrow a lottery identity.
+		input := drawFeatureStudyBuildRowWithEnrichment(main[id], historyByID[id], oddsByID[id], pankouByID[id], value)
+		value.modelInput = &input
 		// The full response is needed only while projecting the frozen inputs.
 		// Avoid retaining a second copy of the analysis payload in the cache.
 		value.studyResponse = nil

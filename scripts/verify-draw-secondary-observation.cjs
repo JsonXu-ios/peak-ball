@@ -1,4 +1,4 @@
-// Offline contract and actual Vue SSR checks for secondary-v3 and ranked scores.
+// Offline contract and actual Vue SSR checks for secondary-v4 and ranked scores.
 // No service, database, browser, network or model training is used.
 const fs = require('node:fs')
 const path = require('node:path')
@@ -22,13 +22,15 @@ function load(source, imports = {}) {
   new Function('require', 'module', 'exports', compiled)(name => name in imports ? imports[name] : adminRequire(name), module, module.exports)
   return module.exports
 }
-const secondary = load(read('admin/src/utils/drawSecondarySignal.ts'))
+const selectionContract = load(read('admin/src/utils/drawFrozenSignal.ts'))
+const currentModel = extra => ({ selectionVersion: 'jc-h2h-required-v1', minimumHeadToHead: 1, headToHeadSample: 8, ...extra })
+const secondary = load(read('admin/src/utils/drawSecondarySignal.ts'), { './drawFrozenSignal': selectionContract })
 const score = load(read('admin/src/utils/drawScoreRecommendation.ts'), { './drawSecondarySignal': secondary })
-const decision = extra => ({ version: 'secondary-v3-quotes-only', decision: 'retained', threshold: .225, score: .3,
-  reason: '报价完整且分数达标，二次保留', headToHeadSample: 8, minimumHeadToHead: 0, sportteryQuotesAvailable: true, ...extra })
+const decision = extra => ({ version: 'secondary-v4-h2h-required', decision: 'retained', threshold: .225, score: .3,
+  reason: '报价完整且分数达标，二次保留', headToHeadSample: 8, minimumHeadToHead: 1, sportteryQuotesAvailable: true, ...extra })
 const recommendation = extra => ({ version: 'draw-score-dynamic-v2', state: 'recommended', source: 'sporttery_score_odds',
   scores: [{ home: 2, away: 2 }, { home: 1, away: 1 }], reason: '按本场竞彩比分报价排序', ...extra })
-const fixture = extra => ({ jingcaiId: '202610305002', frozenDrawSignal: { state: 'selected', score: .3 },
+const fixture = extra => ({ jingcaiId: '202610305002', frozenDrawSignal: currentModel({ state: 'selected', score: .3 }),
   secondaryDecision: decision(), scoreRecommendation: recommendation(), settled: false, regulationSettled: false, homeScore: 0, awayScore: 0, ...extra })
 async function render(component, row, warnings) {
   const app = vue.createSSRApp({ render: () => vue.h(component, { row }) })
@@ -37,13 +39,14 @@ async function render(component, row, warnings) {
   return renderToString(app)
 }
 async function main() {
-  equal(secondary.SECONDARY_DRAW_VERSION, 'secondary-v3-quotes-only', 'current secondary contract is versioned')
+  equal(secondary.SECONDARY_DRAW_VERSION, 'secondary-v4-h2h-required', 'current secondary contract is versioned')
+  equal(secondary.SECONDARY_DRAW_MINIMUM_HEAD_TO_HEAD, 1, 'current secondary contract records at least one effective H2H')
   equal(score.DRAW_SCORE_RECOMMENDATION_VERSION, 'draw-score-dynamic-v2', 'dynamic score contract is versioned')
   equal(crypto.createHash('sha256').update(fs.readFileSync(path.join(root, 'go_server/internal/drawmodeldata/observation_v1.json'))).digest('hex'),
     'e7cb7d50668a76e916d2f86a6ab598a6bcb23ab5e6c961dbd972875346afd987', 'original frozen model is unchanged')
   equal(secondary.classifySecondaryDraw(fixture()).decision, 'retained', 'current backend retention is accepted')
-  for (const payload of [undefined, null, decision({ version: 'secondary-v1' }), decision({ version: 'secondary-v2-input-guards' }), decision({ version: 'unknown' }), decision({ decision: 'SELECTED' }), decision({ threshold: .2 })]) {
-    const row = fixture({ secondaryDecision: payload, frozenDrawSignal: { state: 'selected', score: .99 } })
+  for (const payload of [undefined, null, decision({ version: 'secondary-v1' }), decision({ version: 'secondary-v2-input-guards' }), decision({ version: 'secondary-v3-quotes-only' }), decision({ version: 'unknown' }), decision({ decision: 'SELECTED' }), decision({ threshold: .2 }), decision({ minimumHeadToHead: 0 }), decision({ headToHeadSample: undefined })]) {
+    const row = fixture({ secondaryDecision: payload, frozenDrawSignal: currentModel({ state: 'selected', score: .99 }) })
     equal(secondary.classifySecondaryDraw(row).decision, 'unavailable', 'old/missing/invalid backend decision never falls back to high score')
     equal(secondary.secondaryDrawPresentation(row).label, '待更新', 'old contract is visibly waiting for update')
     equal(score.recommendDrawScores(row).scores, [], 'old secondary cannot receive scores')
@@ -58,19 +61,28 @@ async function main() {
     equal(score.recommendDrawScores(row).state, 'not_selected', `${name}: rejected candidate cannot receive recommendation`)
     equal(row.frozenDrawSignal.state, 'selected', `${name}: original model marker is not erased`)
   }
-  for (const headToHeadSample of [0, 4]) {
+  for (const headToHeadSample of [1, 4]) {
     const row = fixture({ secondaryDecision: decision({ headToHeadSample }) })
     equal(secondary.classifySecondaryDraw(row).decision, 'retained', `${headToHeadSample} H2H rows: frontend preserves backend retention`)
     equal(score.recommendDrawScores(row).scores, ['2:2', '1:1'], `${headToHeadSample} H2H rows: real score quotes remain displayable`)
   }
+  const missingH2H = fixture({ frozenDrawSignal: currentModel({ state: 'not_selected', score: .8, headToHeadSample: 0, reason: '暂无至少1场有效赛前交锋，未入选' }),
+    secondaryDecision: decision({ decision: 'not_selected', score: .8, headToHeadSample: 0, reason: '竞彩原入选未通过有效交锋条件' }) })
+  equal(secondary.classifySecondaryDraw(missingH2H).decision, 'not_selected', 'zero H2H follows authoritative server non-selection despite a high numeric score')
+  equal(score.recommendDrawScores(missingH2H).scores, [], 'a server H2H non-candidate gets no score recommendation')
+  equal(missingH2H.frozenDrawSignal.score, .8, 'H2H selection gate never rewrites frozen model score')
+  equal(secondary.classifySecondaryDraw(fixture({ secondaryDecision: decision({ headToHeadSample: 0 }) })).needsUpdate, true, 'contradictory retained zero-H2H metadata waits for service update, not browser rejection')
+  equal(secondary.classifySecondaryDraw(fixture({ headToHead: { sample: 0 }, secondaryDecision: decision({ headToHeadSample: 1 }) })).decision, 'retained', 'browser never reselects using the UI history sample')
+  equal(secondary.classifySecondaryDraw(fixture({ frozenDrawSignal: currentModel({ state: 'selected', selectionVersion: undefined }) })).needsUpdate, true, 'missing original JC contract cannot masquerade as the current rule')
+  equal(secondary.classifySecondaryDraw(fixture({ jingcaiId: '', frozenDrawSignal: { state: 'selected', score: .3 }, secondaryDecision: decision({ decision: 'out_of_scope', reason: '仅对竞彩二次筛选' }) })).decision, 'out_of_scope', 'non-JC is not mistaken for a stale JC selection contract')
   const multipleReasons = secondary.classifySecondaryDraw(fixture({ secondaryDecision: decision({ decision: 'rejected', reason: '条件不足', reasons: ['竞彩报价不完整', '报价来源无法确认'] }) }))
   check(multipleReasons.reason.includes('竞彩报价不完整') && multipleReasons.reason.includes('报价来源无法确认'), 'all independent backend rejection reasons stay visible')
   const onlyInputs = new Proxy(fixture(), { get(target, key) {
-    if (!['frozenDrawSignal', 'secondaryDecision'].includes(key)) throw new Error(`Secondary accessed target/current-page field ${String(key)}`)
+    if (!['jingcaiId', 'frozenDrawSignal', 'secondaryDecision'].includes(key)) throw new Error(`Secondary accessed target/current-page field ${String(key)}`)
     return target[key]
   } })
   equal(secondary.classifySecondaryDraw(onlyInputs).decision, 'retained', 'secondary consumes only backend decision, never current-page history/odds/outcomes')
-  equal(secondary.classifySecondaryDraw(fixture({ frozenDrawSignal: { state: 'not_selected', score: .9 } })).decision, 'unavailable', 'contradictory backend cannot promote original non-selection')
+  equal(secondary.classifySecondaryDraw(fixture({ frozenDrawSignal: currentModel({ state: 'not_selected', score: .9 }) })).decision, 'unavailable', 'contradictory backend cannot promote original non-selection')
   const low = fixture({ secondaryDecision: decision({ decision: 'rejected', reason: causes[1][1], score: .21 }) })
   for (const outcome of [{ settled: true, regulationSettled: true, homeScore: 2, awayScore: 2 }, { settled: true, regulationSettled: true, homeScore: 5, awayScore: 0 }]) {
     equal(secondary.classifySecondaryDraw({ ...low, ...outcome }), secondary.classifySecondaryDraw(low), 'outcomes cannot change rejection')
@@ -106,12 +118,15 @@ async function main() {
     equal(score.drawScorePresentation(fixture(extra)).outcomeLabel, '待赛果核对', 'ambiguous or invalid results do not settle recommendations')
   }
   const components = {
-    secondary: load(compileScript(parse(read('admin/src/views/statistics/DrawSecondarySignal.vue')).descriptor, { id: 'secondary-v3-offline', inlineTemplate: true }).content, { '@/utils/drawSecondarySignal': secondary }).default,
+    frozen: load(compileScript(parse(read('admin/src/views/statistics/DrawFrozenSignal.vue')).descriptor, { id: 'frozen-jc-h2h-offline', inlineTemplate: true }).content, { '@/utils/drawFrozenSignal': selectionContract }).default,
+    secondary: load(compileScript(parse(read('admin/src/views/statistics/DrawSecondarySignal.vue')).descriptor, { id: 'secondary-v4-offline', inlineTemplate: true }).content, { '@/utils/drawSecondarySignal': secondary }).default,
     scores: load(compileScript(parse(read('admin/src/views/statistics/DrawScoreRecommendation.vue')).descriptor, { id: 'scores-v2-offline', inlineTemplate: true }).content, { '@/utils/drawScoreRecommendation': score }).default,
   }
   const cases = [
     ['retained', fixture(), '二次入选', '首选'],
-    ['missing H2H', fixture({ secondaryDecision: decision({ headToHeadSample: 0 }) }), '二次入选', '首选'],
+    ['missing H2H', missingH2H, '原模型未入选', '未二次入选'],
+    ['one H2H', fixture({ secondaryDecision: decision({ headToHeadSample: 1 }) }), '二次入选', '首选'],
+    ['inconsistent H2H', fixture({ secondaryDecision: decision({ headToHeadSample: 0 }) }), '待更新', '待更新'],
     ['four H2H', fixture({ secondaryDecision: decision({ headToHeadSample: 4 }) }), '二次入选', '首选'],
     ...causes.map(([name, reason, fields]) => [name, fixture({ secondaryDecision: decision({ ...fields, decision: 'rejected', reason }) }), reason, '未二次入选']),
     ['legacy', fixture({ secondaryDecision: undefined }), '待更新', '待更新'],
@@ -122,6 +137,10 @@ async function main() {
     ['second hit', fixture({ settled: true, regulationSettled: true, homeScore: 1, awayScore: 1 }), '命中平局', '次选命中'],
   ]
   const warnings = [], rendered = []
+  const missingH2HHTML = await render(components.frozen, missingH2H, warnings)
+  check(missingH2HHTML.includes('signal-reason') && missingH2HHTML.includes(missingH2H.frozenDrawSignal.reason), 'a non-selected original displays its backend H2H reason on a visible detail line')
+  const noReasonHTML = await render(components.frozen, fixture({ frozenDrawSignal: currentModel({ state: 'not_selected', reason: '' }) }), warnings)
+  check(!noReasonHTML.includes('signal-reason'), 'a non-selected original without a reason reserves no empty detail line')
   for (const [name, row, secondText, scoreText] of cases) {
     const a = await render(components.secondary, row, warnings), b = await render(components.scores, row, warnings)
     check(a.includes(secondText), `${name}: backend secondary reason/decision is visible`)
@@ -133,7 +152,8 @@ async function main() {
   equal(warnings, [], 'real Vue components render all decision and score states without warnings')
   const page = read('admin/src/views/statistics/DrawHistory.vue')
   check(page.includes('<DrawFrozenSignal :row="row"') && page.includes('<DrawResearchSource :row="row"'), 'original model marker and research provenance are preserved')
-  check(page.includes('交锋场次仅供观察') && !page.includes('赛前交锋至少5场') && !page.includes('二次筛选 v1'), 'shared list explains that H2H is observational')
+  check(page.includes('至少1场有效赛前交锋') && !page.includes('交锋场次仅供观察') && page.includes('非竞彩保留原有选平逻辑'), 'shared list distinguishes the JC H2H gate and unchanged non-JC logic')
+  check(page.includes('<DrawTotalsPrediction :row="row"'), 'existing independent totals column is retained')
   check(!page.includes('固定推荐1:1、0:0'), 'shared list has no fixed-score claim')
   const realPath = process.env.DRAW_CURRENT_RESPONSE_JSON || path.join(os.tmpdir(), 'peak-ball-20261031-current-api-review.json')
   let realReview = { status: 'skipped', reason: 'No actual response supplied; no substitute is fabricated.' }
@@ -143,7 +163,7 @@ async function main() {
     let oldPending = 0, current = 0, retained = 0, rejected = 0, recommended = 0, higherDraws = 0
     for (const row of response.items) {
       const result = secondary.classifySecondaryDraw(row)
-      if (row.secondaryDecision?.version !== secondary.SECONDARY_DRAW_VERSION) { equal(result.decision, 'unavailable', 'actual old API row cannot masquerade as v3'); oldPending++ }
+      if (row.secondaryDecision?.version !== secondary.SECONDARY_DRAW_VERSION) { equal(result.decision, 'unavailable', 'actual old API row cannot masquerade as v4'); oldPending++ }
       else { equal(result.decision, row.secondaryDecision.decision, 'actual current API uses backend decision'); current++ }
       const html = await render(components.secondary, row, warnings)
       check(html.includes(secondary.secondaryDrawPresentation(row).label), 'actual API decision renders correctly')

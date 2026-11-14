@@ -6,12 +6,11 @@ import (
 	"strings"
 )
 
-const drawObservationSecondaryVersion = "secondary-v3-quotes-only"
+const drawObservationSecondaryVersion = "secondary-v4-h2h-required"
 const drawObservationSecondaryThreshold = 0.225
 
 // Secondary screening does not change the frozen model's state or score. It
-// requires original sporttery quotes, but no head-to-head sample minimum.
-// HeadToHead remains an observed model/list input, not a hard selection gate.
+// requires original sporttery quotes and the current H2H eligibility guard.
 type drawObservationSecondarySignal struct {
 	Version                  string   `json:"version"`
 	Decision                 string   `json:"decision"`
@@ -21,7 +20,7 @@ type drawObservationSecondarySignal struct {
 	Reasons                  []string `json:"reasons,omitempty"`
 	ReasonCodes              []string `json:"reasonCodes,omitempty"`
 	HeadToHeadSample         int      `json:"headToHeadSample"`
-	MinimumHeadToHead        int      `json:"minimumHeadToHead"` // zero: no H2H hard filter
+	MinimumHeadToHead        int      `json:"minimumHeadToHead"`
 	SportteryQuotesAvailable bool     `json:"sportteryQuotesAvailable"`
 }
 
@@ -68,7 +67,7 @@ func drawObservationSecondaryDecision(row drawObservationItem) drawObservationSe
 	result := drawObservationSecondarySignal{
 		Version: drawObservationSecondaryVersion, Decision: "unavailable",
 		Threshold:        drawObservationSecondaryThreshold,
-		HeadToHeadSample: row.HeadToHead.Sample, MinimumHeadToHead: 0,
+		HeadToHeadSample: drawObservationHeadToHeadSample(row), MinimumHeadToHead: drawObservationMinimumHeadToHead,
 		SportteryQuotesAvailable: drawObservationSecondarySportteryQuotes(row),
 	}
 	finish := func(decision, reason, code string) drawObservationSecondarySignal {
@@ -98,6 +97,10 @@ func drawObservationSecondaryDecision(row drawObservationItem) drawObservationSe
 	}
 	if result.Score == nil {
 		return finish("unavailable", "原固定模型分数缺失或无效", "score_unavailable")
+	}
+	if result.HeadToHeadSample < drawObservationMinimumHeadToHead {
+		result.Reasons = append(result.Reasons, "无有效赛前交锋记录：至少需要1场")
+		result.ReasonCodes = append(result.ReasonCodes, "head_to_head_missing")
 	}
 	if !result.SportteryQuotesAvailable {
 		result.Reasons = append(result.Reasons, "竞彩报价不完整：需要真实初盘及即时盘胜平负")

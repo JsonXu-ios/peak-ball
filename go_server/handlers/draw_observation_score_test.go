@@ -47,8 +47,8 @@ func TestDrawScoreRecommendationUsesRowAwareSecondaryDecision(t *testing.T) {
 		{"NaN", func(r *drawObservationItem) { v := math.NaN(); r.FrozenDrawSignal.Score = &v }, "unavailable"},
 		{"Inf", func(r *drawObservationItem) { v := math.Inf(1); r.FrozenDrawSignal.Score = &v }, "unavailable"},
 		{"outside score range", func(r *drawObservationItem) { v := 1.1; r.FrozenDrawSignal.Score = &v }, "unavailable"},
-		{"four H2H can use actual BF quotes", func(r *drawObservationItem) { r.HeadToHead.Sample = 4 }, "recommended"},
-		{"missing H2H can use actual BF quotes", func(r *drawObservationItem) { r.HeadToHead = drawObservationRecent{} }, "recommended"},
+		{"one real H2H can use actual BF quotes", func(r *drawObservationItem) { r.HeadToHead.Matches = r.HeadToHead.Matches[:1] }, "recommended"},
+		{"missing H2H cannot bypass eligibility with BF quotes", func(r *drawObservationItem) { r.HeadToHead = drawObservationRecent{} }, "not_selected"},
 		{"missing original SPF", func(r *drawObservationItem) { r.CompanyQuotes = r.CompanyQuotes[1:] }, "not_selected"},
 	}
 	for _, tt := range tests {
@@ -97,9 +97,9 @@ func TestDrawScoreRealPricesPermitTwoTwoAndThreeThree(t *testing.T) {
 	}
 	row.HomeRecent.Matches = nil
 	row.AwayRecent.Matches = nil
-	row.HeadToHead.Matches = nil
+	row.HeadToHead.Matches = row.HeadToHead.Matches[:1]
 	if again := drawObservationScoreRecommendation(row); !reflect.DeepEqual(again, got) {
-		t.Fatal("BF quotes wrongly require fallback history")
+		t.Fatal("BF quotes wrongly require the five-record fallback history after meeting one-record eligibility")
 	}
 	row.HomeScore, row.AwayScore, row.Settled, row.Status = 8, 0, true, -1
 	if again := drawObservationScoreRecommendation(row); !reflect.DeepEqual(again, got) {
@@ -205,14 +205,15 @@ func TestDrawScorePoissonFallbackRequiresEvidence(t *testing.T) {
 	tests := []struct {
 		name   string
 		mutate func(*drawObservationItem)
+		want   string
 	}{
-		{"home fewer than five", func(r *drawObservationItem) { r.HomeRecent.Matches = r.HomeRecent.Matches[:4] }},
-		{"away fewer than five", func(r *drawObservationItem) { r.AwayRecent.Matches = r.AwayRecent.Matches[:4] }},
-		{"h2h actual records fewer than five", func(r *drawObservationItem) { r.HeadToHead.Matches = r.HeadToHead.Matches[:4] }},
-		{"unknown kickoff", func(r *drawObservationItem) { r.MatchTime = time.Time{} }},
-		{"no real line", func(r *drawObservationItem) { r.CompanyQuotes[1].GoalsLine.Source = "history_moneys" }},
-		{"unknown team venue", func(r *drawObservationItem) { r.HomeRecent.Matches[0].Venue = "" }},
-		{"unfinished marker", func(r *drawObservationItem) { r.HomeRecent.Matches[0].Result = "" }},
+		{"home fewer than five", func(r *drawObservationItem) { r.HomeRecent.Matches = r.HomeRecent.Matches[:4] }, "unavailable"},
+		{"away fewer than five", func(r *drawObservationItem) { r.AwayRecent.Matches = r.AwayRecent.Matches[:4] }, "unavailable"},
+		{"h2h actual records fewer than five", func(r *drawObservationItem) { r.HeadToHead.Matches = r.HeadToHead.Matches[:4] }, "unavailable"},
+		{"unknown kickoff fails selection eligibility first", func(r *drawObservationItem) { r.MatchTime = time.Time{} }, "not_selected"},
+		{"no real line", func(r *drawObservationItem) { r.CompanyQuotes[1].GoalsLine.Source = "history_moneys" }, "unavailable"},
+		{"unknown team venue", func(r *drawObservationItem) { r.HomeRecent.Matches[0].Venue = "" }, "unavailable"},
+		{"unfinished marker", func(r *drawObservationItem) { r.HomeRecent.Matches[0].Result = "" }, "unavailable"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -220,7 +221,7 @@ func TestDrawScorePoissonFallbackRequiresEvidence(t *testing.T) {
 			row.ScoreInputs = nil
 			tt.mutate(&row)
 			got := drawObservationScoreRecommendation(row)
-			if got.State != "unavailable" || len(got.Scores) != 0 {
+			if got.State != tt.want || len(got.Scores) != 0 {
 				t.Fatalf("missing evidence silently recommended: %+v", got)
 			}
 		})

@@ -47,6 +47,15 @@ async function main() {
   check(signal.frozenDrawPresentation({ ...base, frozenDrawSignal: model('out_of_scope') }).label === '非竞彩', 'scope preserved even for draw')
   check(signal.frozenDrawPresentation({ ...base }).label === '暂无模型数据', 'old service reports missing model data')
   check(signal.frozenDrawPresentation({ ...base, frozenDrawSignal: model('invalid') }).label === '暂无模型数据', 'unknown state cannot produce a selection')
+  const currentModel = extra => ({ ...model('selected'), selectionVersion: 'jc-h2h-required-v1', minimumHeadToHead: 1, headToHeadSample: 1, ...extra })
+  check(signal.JC_DRAW_SELECTION_VERSION === 'jc-h2h-required-v1', 'JC serving selection gate has an independent version')
+  check(signal.frozenDrawPresentation({ ...base, jingcaiId: '202611054001', frozenDrawSignal: currentModel() }).label === '命中平局', 'current JC selection displays server-selected result')
+  check(signal.frozenDrawPresentation({ ...base, jingcaiId: '202611054001', frozenDrawSignal: currentModel({ state: 'not_selected', score: .9, headToHeadSample: 0 }) }).label === '未入选', 'zero-H2H server rejection preserves high numeric score without browser promotion')
+  for (const metadata of [{ selectionVersion: undefined }, { selectionVersion: 'legacy' }, { minimumHeadToHead: 0 }, { headToHeadSample: undefined }, { headToHeadSample: -1 }, { headToHeadSample: 1.5 }, { headToHeadSample: 0 }]) {
+    check(signal.frozenDrawPresentation({ ...base, jingcaiId: '202611054001', frozenDrawSignal: currentModel(metadata) }).label === '等待分析服务更新', 'old/malformed JC metadata cannot look like current selection')
+  }
+  check(signal.frozenDrawPresentation({ ...base, jingcaiId: '', frozenDrawSignal: model('selected') }).label === '命中平局', 'non-JC common helper is not forced through JC metadata')
+  check(signal.frozenDrawPresentation({ ...base, jingcaiId: '202611054001', headToHead: { sample: 0 }, frozenDrawSignal: currentModel() }).label === '命中平局', 'browser does not reselect from current UI H2H history')
 
   const pending = []
   const { descriptor } = parse(fs.readFileSync(path.join(root, 'admin/src/views/statistics/DrawScheduleDate.vue'), 'utf8'))

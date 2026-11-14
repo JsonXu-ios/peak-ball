@@ -52,9 +52,15 @@ export interface DrawFrontendLoadState {
   error: string
 }
 
+export type DrawMatchStatusFilter = 'all' | 'finished' | 'unfinished' | 'unknown' | `state:${string}`
+export interface DrawMatchStatusOption { title: string; value: DrawMatchStatusFilter }
+export type DrawSelectionFilter = 'all' | 'sporttery' | 'non_sporttery'
+
 export interface DrawObservationQuery {
   mode?: 'today' | 'history'
   scope?: 'all' | 'sporttery'
+  match_status?: DrawMatchStatusFilter
+  selection?: DrawSelectionFilter
   date?: string
   /** Compatibility with older history handlers; both bounds are the same selected day. */
   start_date?: string
@@ -119,13 +125,58 @@ export interface DrawCompanyQuote {
   goalsLine: DrawObservedLine
 }
 
-/** Fixed model selection is computed without the target match result. */
+/** Server-owned selection; frozen numeric model plus the JC history gate. */
 export interface FrozenDrawSignal {
   modelVersion: string
   state: 'selected' | 'not_selected' | 'unavailable' | 'out_of_scope'
   score?: number
   threshold?: number
   reason?: string
+  /** JC serving contract; absent on older services and non-JC model signals. */
+  selectionVersion?: string
+  minimumHeadToHead?: number
+  headToHeadSample?: number
+}
+
+export interface DrawComprehensivePathStep {
+  feature: string
+  label: string
+  module: string
+  value: number | null
+  usedValue: number
+  threshold: number
+  imputed: boolean
+  wentLeft: boolean
+}
+
+export interface DrawComprehensiveModuleCoverage {
+  key: string
+  label: string
+  available: number
+  total: number
+  /** Inputs referenced anywhere in the two trees, not per-match importance. */
+  used: number
+}
+
+/** An independent full-input tree comparison; it never replaces old signals. */
+export interface DrawComprehensiveSignal {
+  modelVersion: string
+  inputVersion: string
+  state: 'selected' | 'not_selected' | 'unavailable'
+  /** Leaf training frequency / tree score; not a calibrated match probability. */
+  score?: number
+  threshold: number
+  alternativeDirection?: 'home' | 'away' | null
+  alternativeScores?: { home: number; away: number }
+  drawLeafSamples: number
+  alternativeLeafSamples: number
+  observedInputs: number
+  totalInputs: number
+  drawPath: DrawComprehensivePathStep[]
+  alternativePath: DrawComprehensivePathStep[]
+  moduleCoverage: DrawComprehensiveModuleCoverage[]
+  reason: string
+  alternativeReason?: string
 }
 
 /** Server-owned secondary screening; target results only annotate this decision. */
@@ -138,7 +189,7 @@ export interface DrawSecondaryDecision {
   reasons?: string[]
   reasonCodes?: string[]
   headToHeadSample: number
-  /** Compatibility metadata: zero means no H2H minimum in the current rule. */
+  /** Current v4 requires one effective pre-match H2H; older versions retain their own metadata. */
   minimumHeadToHead: number
   sportteryQuotesAvailable: boolean
 }
@@ -180,6 +231,17 @@ export interface DrawObservationDatesResponse {
   dates: Array<{ date: string; count: number; matchCount: number; drawCount: number }>
 }
 
+/** Independent server recommendation; results only annotate its settlement. */
+export interface DrawTotalsPrediction {
+  modelVersion: string
+  state: 'recommended' | 'unavailable' | 'out_of_scope'
+  direction?: 'over' | 'under'
+  line?: number
+  overWater?: number
+  underWater?: number
+  reason: string
+}
+
 export interface DrawObservation {
   matchId: string
   jingcaiId?: string
@@ -188,6 +250,8 @@ export interface DrawObservation {
   league: string
   home: string
   guest: string
+  homeLogo?: string
+  guestLogo?: string
   homeScore: number
   awayScore: number
   displayState: string
@@ -204,8 +268,12 @@ export interface DrawObservation {
   companyQuotes?: DrawCompanyQuote[] | null
   frontendAnalysis?: DrawFrontendAnalysis | null
   frozenDrawSignal?: FrozenDrawSignal | null
+  /** Separate non-sporttery observation; never replaces the original JC signal. */
+  nonSportterySignal?: FrozenDrawSignal | null
+  comprehensiveSignal?: DrawComprehensiveSignal | null
   secondaryDecision?: DrawSecondaryDecision | null
   scoreRecommendation?: DrawScoreRecommendationSignal | null
+  totalsPrediction?: DrawTotalsPrediction | null
   researchDecision?: DrawResearchDecision | null
   sources: string[]
   warnings: string[]
@@ -261,6 +329,10 @@ export interface DrawObservationsResponse {
   generatedAt?: string
   scheduleTimezone?: string | null
   scope?: 'all' | 'sporttery'
+  matchStatus?: DrawMatchStatusFilter
+  /** Actual source states from the full schedule day, before list filtering. */
+  matchStatusOptions?: DrawMatchStatusOption[]
+  selection?: DrawSelectionFilter
   mode: 'today' | 'history'
   date: string
   /** Absent on services that have not loaded the current-window metrics update. */

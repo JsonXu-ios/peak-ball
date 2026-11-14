@@ -61,6 +61,8 @@ type drawObservationItem struct {
 	League              string                           `json:"league"`
 	Home                string                           `json:"home"`
 	Guest               string                           `json:"guest"`
+	HomeLogo            string                           `json:"homeLogo,omitempty"`
+	GuestLogo           string                           `json:"guestLogo,omitempty"`
 	HomeScore           int                              `json:"homeScore"`
 	AwayScore           int                              `json:"awayScore"`
 	Status              int                              `json:"status"`
@@ -78,9 +80,12 @@ type drawObservationItem struct {
 	Sources             []string                         `json:"sources"`
 	Warnings            []string                         `json:"warnings"`
 	FrozenDrawSignal    *drawObservationFrozenSignal     `json:"frozenDrawSignal,omitempty"`
+	NonSportterySignal  *drawObservationFrozenSignal     `json:"nonSportterySignal,omitempty"`
+	ComprehensiveSignal *drawComprehensiveSignal         `json:"comprehensiveSignal,omitempty"`
 	SecondaryDecision   *drawObservationSecondarySignal  `json:"secondaryDecision,omitempty"`
 	ScoreInputs         *drawScoreInputs                 `json:"scoreInputs,omitempty"`
 	ScoreRecommendation *drawScoreRecommendation         `json:"scoreRecommendation,omitempty"`
+	TotalsPrediction    *drawObservationTotalsPrediction `json:"totalsPrediction,omitempty"`
 	ResearchDecision    *drawObservationResearchDecision `json:"researchDecision,omitempty"`
 }
 
@@ -97,6 +102,9 @@ type drawObservationResponse struct {
 	ScheduleTimezone   string                           `json:"scheduleTimezone"`
 	Mode               string                           `json:"mode"`
 	Scope              string                           `json:"scope"`
+	MatchStatus        string                           `json:"matchStatus"`
+	MatchStatusOptions []drawObservationStatusOption    `json:"matchStatusOptions"`
+	Selection          string                           `json:"selection"`
 	Date               string                           `json:"date"`
 	Summary            drawObservationSummary           `json:"summary"`
 	ObservationMetrics *drawObservationMetrics          `json:"observationMetrics,omitempty"`
@@ -111,6 +119,7 @@ type drawObservationResponse struct {
 
 type drawObservationQuery struct {
 	mode, date, scope              string
+	matchStatus, selection         string
 	start, end, league, search     string
 	page, size                     int
 	refresh                        bool
@@ -160,13 +169,24 @@ func parseDrawObservationRange(c *gin.Context, prefix string, ceiling int) (draw
 }
 
 func parseDrawObservationQuery(c *gin.Context) (drawObservationQuery, error) {
-	q := drawObservationQuery{mode: c.DefaultQuery("mode", "today"), scope: c.DefaultQuery("scope", "all"), date: c.Query("date"), start: c.Query("start_date"), end: c.Query("end_date"), league: c.Query("league"), search: strings.ToLower(strings.TrimSpace(c.Query("search"))), page: 1, size: 50, refresh: c.Query("refresh") == "1"}
+	q := drawObservationQuery{mode: c.DefaultQuery("mode", "today"), scope: c.DefaultQuery("scope", "all"), matchStatus: c.DefaultQuery("match_status", "all"), selection: c.DefaultQuery("selection", "all"), date: c.Query("date"), start: c.Query("start_date"), end: c.Query("end_date"), league: c.Query("league"), search: strings.ToLower(strings.TrimSpace(c.Query("search"))), page: 1, size: 50, refresh: c.Query("refresh") == "1"}
 	q = normalizeDrawObservationQuery(q)
 	if q.mode != "today" && q.mode != "history" {
 		return q, fmt.Errorf("mode 应为 today 或 history")
 	}
 	if q.scope != "all" && q.scope != "sporttery" {
 		return q, fmt.Errorf("scope 应为 all 或 sporttery")
+	}
+	status, statusErr := normalizeDrawObservationMatchStatus(q.matchStatus)
+	if statusErr != nil {
+		return q, statusErr
+	}
+	q.matchStatus = status
+	if q.selection != "all" && q.selection != "sporttery" && q.selection != "non_sporttery" {
+		return q, fmt.Errorf("selection 应为 all、sporttery 或 non_sporttery")
+	}
+	if q.date == "" && (q.matchStatus != "all" || q.selection != "all") {
+		return q, fmt.Errorf("比赛状态和入选筛选请使用 date 指定单个赛程日")
 	}
 	for _, value := range []string{q.date, q.start, q.end} {
 		if value != "" {
@@ -217,6 +237,7 @@ func GetDrawObservations(c *gin.Context) {
 	// Older durable days are regenerated before reaching this point; never
 	// fabricate a fixed score pair when source evidence is unavailable.
 	for i := range response.Items {
+		response.Items[i].FrozenDrawSignal = drawObservationApplySelectionEligibility(response.Items[i], response.Items[i].FrozenDrawSignal)
 		decision := drawObservationSecondaryDecision(response.Items[i])
 		response.Items[i].SecondaryDecision = &decision
 		recommendation := drawObservationScoreRecommendation(response.Items[i])
@@ -238,6 +259,12 @@ func normalizeDrawObservationQueryAt(q drawObservationQuery, now time.Time) draw
 	}
 	if q.scope == "" {
 		q.scope = "all"
+	}
+	if q.matchStatus == "" {
+		q.matchStatus = "all"
+	}
+	if q.selection == "" {
+		q.selection = "all"
 	}
 	if q.date != "" {
 		q.start, q.end = "", ""
@@ -775,7 +802,7 @@ func drawObservationEuro(odds models.OddsMoney) drawObservationEuroOdds {
 func buildDrawObservations(data drawObservationData, q drawObservationQuery) drawObservationResponse {
 	q = normalizeDrawObservationQuery(q)
 	q.search = strings.ToLower(strings.TrimSpace(q.search))
-	response := drawObservationResponse{ScheduleTimezone: drawSourceLocation.String(), Mode: q.mode, Scope: q.scope, Date: q.date, Page: q.page, PageSize: q.size, Leagues: []string{}, Items: []drawObservationItem{}, Notes: []string{"比赛列表及总数仅来自 money/moneys 主比赛表，按比赛 ID 去重，当前表优先。", "日期按北京时间源站赛程日筛选，默认当天；开赛时间以标准 UTC 时间传输。", "今日模式列出所选赛程日全部比赛；历史模式仅列出主表常规时间完赛平局。", "竞彩范围仅按主比赛表非空竞彩编号筛选；双方历史输入保留所有赛事。", "双方战绩仅作为近 10 场输入，按该场开赛前已完赛记录统计，不扩展为列表比赛。", "赔率、盘口与水位保留单家公司原文，缺失留空，不跨公司补齐。"}}
+	response := drawObservationResponse{ScheduleTimezone: drawSourceLocation.String(), Mode: q.mode, Scope: q.scope, MatchStatus: q.matchStatus, Selection: q.selection, Date: q.date, Page: q.page, PageSize: q.size, Leagues: []string{}, Items: []drawObservationItem{}, Notes: []string{"比赛列表及总数仅来自 money/moneys 主比赛表，按比赛 ID 去重，当前表优先。", "日期按北京时间源站赛程日筛选，默认当天；开赛时间以标准 UTC 时间传输。", "今日模式列出所选赛程日全部比赛；历史模式仅列出主表常规时间完赛平局。", "竞彩范围仅按主比赛表非空竞彩编号筛选；双方历史输入保留所有赛事。", "双方战绩仅作为近 10 场输入，按该场开赛前已完赛记录统计，不扩展为列表比赛。", "赔率、盘口与水位保留单家公司原文，缺失留空，不跨公司补齐。"}}
 	if response.Page < 1 {
 		response.Page = 1
 	}
@@ -795,6 +822,7 @@ func buildDrawObservations(data drawObservationData, q drawObservationQuery) dra
 	}
 	marketCache := map[string]drawObservationQuotesBundle{}
 	leagues := map[string]bool{}
+	statusItems := []drawObservationItem{}
 	selected := []drawObservationTarget{}
 	filterCounts := q.homeDraws.enabled() || q.awayDraws.enabled() || q.h2hDraws.enabled()
 	windowsByID := map[string]drawObservationWindows{}
@@ -812,7 +840,11 @@ func buildDrawObservations(data drawObservationData, q drawObservationQuery) dra
 			response.Summary.DrawMatches++
 		}
 		date := drawObservationDate(m)
-		if !drawObservationDateMatches(date, q) || q.mode == "history" && !isDraw {
+		if !drawObservationDateMatches(date, q) {
+			continue
+		}
+		statusItems = append(statusItems, drawObservationItem{JingcaiID: m.JingcaiID, DisplayState: m.DisplayState, Settled: drawCompleted(m)})
+		if q.mode == "history" && !isDraw {
 			continue
 		}
 		coverage, found := data.coverage[m.MatchId]
@@ -844,6 +876,7 @@ func buildDrawObservations(data drawObservationData, q drawObservationQuery) dra
 		}
 		selected = append(selected, target)
 	}
+	response.MatchStatusOptions = drawObservationMatchStatusOptions(statusItems, q.scope)
 	for league := range leagues {
 		response.Leagues = append(response.Leagues, league)
 	}
@@ -886,7 +919,7 @@ func buildDrawObservations(data drawObservationData, q drawObservationQuery) dra
 			warnings = append(warnings, fmt.Sprintf("客队赛前可核对记录仅 %d 场", away.Sample))
 		}
 		_, _, regulationSettled := drawRegulationResult(m)
-		response.Items = append(response.Items, drawObservationItem{MatchID: g.ID, JingcaiID: m.JingcaiID, Date: drawObservationDate(m), MatchTime: g.Kickoff, League: drawObservationLeague(m), Home: m.Home, Guest: m.Guest, HomeScore: m.HomeScore, AwayScore: m.GuestScore, Status: m.Status, DisplayState: m.DisplayState, Settled: drawCompleted(m), RegulationSettled: &regulationSettled, HomeRecent: home, AwayRecent: away, HeadToHead: windows.h2h, AsianHandicap: ah, GoalsLine: gl, EuroOdds: drawObservationEuro(data.Odds[g.ID]), Sources: append([]string{}, target.Sources...), Warnings: warnings})
+		response.Items = append(response.Items, drawObservationItem{MatchID: g.ID, JingcaiID: m.JingcaiID, Date: drawObservationDate(m), MatchTime: g.Kickoff, League: drawObservationLeague(m), Home: m.Home, Guest: m.Guest, HomeLogo: m.HomeLogo, GuestLogo: m.GuestLogo, HomeScore: m.HomeScore, AwayScore: m.GuestScore, Status: m.Status, DisplayState: m.DisplayState, Settled: drawCompleted(m), RegulationSettled: &regulationSettled, HomeRecent: home, AwayRecent: away, HeadToHead: windows.h2h, AsianHandicap: ah, GoalsLine: gl, EuroOdds: drawObservationEuro(data.Odds[g.ID]), Sources: append([]string{}, target.Sources...), Warnings: warnings})
 	}
 	return response
 }

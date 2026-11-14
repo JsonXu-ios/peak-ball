@@ -21,13 +21,15 @@ function load(source, imports = {}) {
   new Function('require', 'module', 'exports', compiled)(name => name in imports ? imports[name] : adminRequire(name), module, module.exports)
   return module.exports
 }
+const selectionContract = load(read('admin/src/utils/drawFrozenSignal.ts'))
+const currentModel = extra => ({ selectionVersion: 'jc-h2h-required-v1', minimumHeadToHead: 1, headToHeadSample: 8, ...extra })
 const frontend = load(read('admin/src/utils/drawFrontend.ts'))
-const alternative = load(read('admin/src/utils/drawAlternativeOutcome.ts'), { './drawFrontend': frontend })
+const alternative = load(read('admin/src/utils/drawAlternativeOutcome.ts'), { './drawFrontend': frontend, './drawFrozenSignal': selectionContract })
 const fixture = extra => ({
   matchId: 'alternative-fixture', jingcaiId: '202611017001', home: '主队', guest: '客队',
-  frozenDrawSignal: { state: 'selected', score: .3, modelVersion: 'sporttery-draw-observation-v1' },
+  frozenDrawSignal: currentModel({ state: 'selected', score: .3, modelVersion: 'sporttery-draw-observation-v1' }),
   frontendAnalysis: { averageEuroOdds: [2.2, 3.3, 3.1] },
-  secondaryDecision: { version: 'secondary-v3-quotes-only', decision: 'rejected', threshold: .225 },
+  secondaryDecision: { version: 'secondary-v4-h2h-required', decision: 'rejected', threshold: .225 },
   settled: false, regulationSettled: false, homeScore: 0, awayScore: 0,
   ...extra,
 })
@@ -48,18 +50,25 @@ async function main() {
   equal(recommend(quote([4.1, 3.2, 1.95])).direction, 'away', 'lower latest average away price chooses away')
   equal(recommend(quote([2.2, null, 3.1])).direction, 'home', 'draw quote is not an input to a home/away alternative')
   equal(recommend(fixture()).source, 'average_euro_latest', 'actual latest average quote source is explicit')
-  equal(recommend(fixture({ frozenDrawSignal: { state: 'not_selected', score: .99 } })).state, 'not_selected', 'original non-selection is never promoted by a high score')
+  equal(recommend(fixture({ frozenDrawSignal: currentModel({ state: 'not_selected', score: .99 }) })).state, 'not_selected', 'original non-selection is never promoted by a high score')
   for (const signal of [undefined, null, { state: 'unavailable' }]) {
     equal(recommend(fixture({ frozenDrawSignal: signal })).state, 'unavailable', 'missing original selection cannot receive a choice')
   }
-  equal(recommend(fixture({ frozenDrawSignal: { state: 'out_of_scope' } })).state, 'out_of_scope', 'model scope is preserved')
+  equal(recommend(fixture({ frozenDrawSignal: currentModel({ state: 'out_of_scope' }) })).state, 'out_of_scope', 'model scope is preserved')
   for (const jingcaiId of [undefined, null, '', '  ']) {
     equal(recommend(fixture({ jingcaiId })).state, 'out_of_scope', 'non-jingcai rows have no market alternative')
   }
   for (const secondaryDecision of [undefined, null, { decision: 'rejected' }, { version: 'secondary-v2-input-guards', decision: 'rejected' }]) {
     equal(recommend(fixture({ secondaryDecision })), recommend(fixture()), 'secondary rejection or an old API contract does not erase the original model alternative')
   }
-  equal(recommend(fixture({ frozenDrawSignal: { state: 'selected', score: .21 } })).state, 'recommended', 'authoritative original selection does not acquire the secondary .225 gate')
+  equal(recommend(fixture({ frozenDrawSignal: currentModel({ state: 'selected', score: .21 }) })).state, 'recommended', 'authoritative original selection does not acquire the secondary .225 gate')
+  for (const metadata of [{ selectionVersion: undefined }, { selectionVersion: 'old-rule' }, { minimumHeadToHead: 0 }, { headToHeadSample: undefined }, { headToHeadSample: 0 }]) {
+    const row = fixture({ frozenDrawSignal: currentModel({ state: 'selected', ...metadata }) })
+    equal(recommend(row).state, 'unavailable', 'old or contradictory JC selection cannot receive a current alternative')
+    check(recommend(row).reason.includes('等待分析服务更新'), 'old JC contract gives an actionable update message')
+  }
+  equal(recommend(fixture({ frozenDrawSignal: currentModel({ state: 'not_selected', score: .99, headToHeadSample: 0 }), headToHead: { sample: 8 } })).state, 'not_selected', 'backend zero-H2H non-selection wins over a high score and UI history')
+  equal(recommend(fixture({ headToHead: { sample: 0 } })).state, 'recommended', 'the browser never recomputes eligibility from displayed H2H history')
   for (const odds of [undefined, null, [], [null, 3, 2], [2, 3, null]]) {
     equal(recommend(quote(odds)).state, 'unavailable', 'missing latest real home/away quotes remain unavailable')
   }
@@ -117,7 +126,7 @@ async function main() {
     { settled: 1 }, { regulationSettled: 1 }, { homeScore: -1 }, { awayScore: -1 },
     { homeScore: 1.5 }, { awayScore: 1.5 }, { homeScore: NaN }, { awayScore: Infinity }, { homeScore: '2' },
   ]) equal(presentation(completed(2, 1, invalid)).outcomeState, 'pending', 'unconfirmed or malformed regulation results do not settle the pick')
-  equal(presentation(completed(2, 1, { frozenDrawSignal: { state: 'not_selected' } })).outcomeState, 'none', 'a non-candidate has no hypothetical hit marker')
+  equal(presentation(completed(2, 1, { frozenDrawSignal: currentModel({ state: 'not_selected' }) })).outcomeState, 'none', 'a non-candidate has no hypothetical hit marker')
 
   const component = load(compileScript(parse(read('admin/src/views/statistics/DrawAlternativeOutcome.vue')).descriptor, {
     id: 'draw-alternative-outcome-offline', inlineTemplate: true,
@@ -131,7 +140,7 @@ async function main() {
     ['secondary rejected', fixture({ secondaryDecision: { decision: 'rejected' } }), '次选 主胜', '待赛果核对'],
     ['same price', quote([2.5, 3, 2.5]), '暂无', '主客同价'],
     ['missing quote', quote(null), '暂无', '缺少有效'],
-    ['original not selected', fixture({ frozenDrawSignal: { state: 'not_selected' } }), '未入选', '原模型未入选'],
+    ['original not selected', fixture({ frozenDrawSignal: currentModel({ state: 'not_selected' }) }), '未入选', '原模型未入选'],
     ['non jingcai', fixture({ jingcaiId: '' }), '非竞彩', '仅为原模型入选'],
   ]
   const warnings = [], rendered = []
@@ -156,7 +165,8 @@ async function main() {
       const choice = recommend(row), view = presentation(row)
       const prices = row.frontendAnalysis?.averageEuroOdds
       // This independently checks actual latest-mean rows, without the utility helper.
-      if (row.jingcaiId?.trim() && row.frozenDrawSignal?.state === 'selected' && Array.isArray(prices)
+      if (row.jingcaiId?.trim() && row.frozenDrawSignal?.state === 'selected'
+        && selectionContract.hasCurrentJcDrawSelectionMetadata(row.frozenDrawSignal) && Array.isArray(prices)
         && Number.isFinite(prices[0]) && prices[0] > 1 && Number.isFinite(prices[2]) && prices[2] > 1
         && Math.abs(prices[0] - prices[2]) > 1e-9) {
         equal(choice.direction, prices[0] < prices[2] ? 'home' : 'away', `actual ${row.matchId}: direction agrees with independent quote comparison`)
@@ -175,6 +185,10 @@ async function main() {
     for (const [id, direction, outcome] of todayExamples) {
       const row = response.items.find(x => String(x.matchId) === id)
       if (!row) continue
+      if (!selectionContract.hasCurrentJcDrawSelectionMetadata(row.frozenDrawSignal)) {
+        verifiedExamples.push({ matchId: id, status: 'awaiting_current_JC_selection_contract' })
+        continue
+      }
       equal(recommend(row).direction, direction, `today ${id}: result cannot change the observed home alternative`)
       equal(presentation(row).outcomeState, outcome, `today ${id}: actual decisive outcome is correctly audited`)
       verifiedExamples.push({ matchId: id, home: row.home, guest: row.guest, odds: row.frontendAnalysis.averageEuroOdds,

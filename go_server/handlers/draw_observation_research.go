@@ -87,6 +87,10 @@ func drawResearchPooledStore(ctx context.Context) (*researchstore.Store, error) 
 // revision and frozen versions. A miss computes once, seals, then reads it back.
 // The legacy closure is never executed on a verified research read hit.
 func ResolveDrawResearchSignal(ctx context.Context, item drawObservationItem, input *drawFeatureStudyRow, legacy func() *drawObservationFrozenSignal) (*drawObservationFrozenSignal, *drawObservationResearchDecision) {
+	compute := legacy
+	legacy = func() *drawObservationFrozenSignal {
+		return drawObservationApplySelectionEligibility(item, compute())
+	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -144,6 +148,10 @@ func prepareDrawResearchInput(item drawObservationItem, input *drawFeatureStudyR
 }
 
 func resolveDrawResearchSignalWithBackend(ctx context.Context, backend drawResearchBackend, item drawObservationItem, input *drawFeatureStudyRow, legacy func() *drawObservationFrozenSignal, now time.Time) (*drawObservationFrozenSignal, *drawObservationResearchDecision) {
+	compute := legacy
+	legacy = func() *drawObservationFrozenSignal {
+		return drawObservationApplySelectionEligibility(item, compute())
+	}
 	now = now.UTC().Truncate(time.Microsecond)
 	if strings.TrimSpace(item.JingcaiID) == "" || input == nil {
 		return legacy(), drawResearchDecision("not_applicable", "仅接管具有有效输入的竞彩模型计算")
@@ -273,9 +281,6 @@ func validateDrawResearchRecord(r *drawResearchStoredRecord, key drawResearchKey
 		if signal.Score == nil || math.IsNaN(*signal.Score) || math.IsInf(*signal.Score, 0) || *signal.Score < 0 || *signal.Score > 1 {
 			return nil, errors.New("invalid model score")
 		}
-		if (signal.State == "selected") != (*signal.Score >= signal.Threshold) {
-			return nil, errors.New("model state disagrees with score")
-		}
 	} else if signal.State != "unavailable" && signal.State != "out_of_scope" {
 		return nil, errors.New("invalid model state")
 	}
@@ -284,6 +289,19 @@ func validateDrawResearchRecord(r *drawResearchStoredRecord, key drawResearchKey
 		return nil, errors.New("invalid archived secondary and score inputs")
 	}
 	item := researchTakeoverItem(inputRow)
+	// V4 stores the current serving eligibility as well as the unchanged
+	// numeric score. Reconstruct the numeric decision before checking the gate.
+	numeric := signal
+	if signal.State == "selected" || signal.State == "not_selected" {
+		numeric.State = "not_selected"
+		if *signal.Score >= signal.Threshold {
+			numeric.State = "selected"
+		}
+	}
+	expectedSelection := drawObservationApplySelectionEligibility(item, &numeric)
+	if expectedSelection.State != signal.State || expectedSelection.SelectionVersion != signal.SelectionVersion || expectedSelection.MinimumHeadToHead != signal.MinimumHeadToHead || expectedSelection.HeadToHeadSample != signal.HeadToHeadSample {
+		return nil, errors.New("model state or eligibility disagrees with source inputs")
+	}
 	item.FrozenDrawSignal = &signal
 	if p.Secondary != drawObservationSecondaryRetained(item) {
 		return nil, errors.New("secondary decision changed")
@@ -378,7 +396,7 @@ func drawResearchSignalsEqual(a, b *drawObservationFrozenSignal) bool {
 	if a == nil || b == nil {
 		return a == b
 	}
-	if a.ModelVersion != b.ModelVersion || a.State != b.State || a.Threshold != b.Threshold || a.Reason != b.Reason || a.ObservedInputs != b.ObservedInputs || a.UsedInputs != b.UsedInputs {
+	if a.ModelVersion != b.ModelVersion || a.State != b.State || a.Threshold != b.Threshold || a.Reason != b.Reason || a.ObservedInputs != b.ObservedInputs || a.UsedInputs != b.UsedInputs || a.SelectionVersion != b.SelectionVersion || a.MinimumHeadToHead != b.MinimumHeadToHead || a.HeadToHeadSample != b.HeadToHeadSample {
 		return false
 	}
 	if a.Score == nil || b.Score == nil {

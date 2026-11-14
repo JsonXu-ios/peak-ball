@@ -261,22 +261,27 @@ func (cache *drawObservationCache) read(q drawObservationQuery) (drawObservation
 	}
 	for i := range response.Items {
 		var modelInput *drawFeatureStudyRow
+		var totalsInputs *drawTotalsInputs
 		quote := quotes[response.Items[i].MatchID]
 		response.Items[i].AsianHandicap, response.Items[i].GoalsLine, response.Items[i].EuroOdds = quote.asian, quote.total, quote.euro
 		if value, exists := frontend[response.Items[i].MatchID]; exists {
 			response.Items[i].FrontendAnalysis = value.analysis
 			response.Items[i].CompanyQuotes = value.companies
 			modelInput = value.modelInput
+			totalsInputs = value.totalsInputs
 			if modelInput != nil {
 				response.Items[i].ScoreInputs = modelInput.ScoreInputs
 			}
 		}
 		item := response.Items[i]
+		response.Items[i].TotalsPrediction = drawObservationTotalsSignal(item, totalsInputs)
+		response.Items[i].NonSportterySignal = drawObservationNonSportterySignal(item, modelInput)
 		if cache.loaders.research {
 			response.Items[i].FrozenDrawSignal, response.Items[i].ResearchDecision = ResolveDrawResearchSignal(context.Background(), item, modelInput, func() *drawObservationFrozenSignal { return drawObservationModelSignal(item, modelInput) })
 		} else {
 			response.Items[i].FrozenDrawSignal = drawObservationModelSignal(item, modelInput)
 		}
+		response.Items[i].FrozenDrawSignal = drawObservationApplySelectionEligibility(item, response.Items[i].FrozenDrawSignal)
 		decision := drawObservationSecondaryDecision(response.Items[i])
 		response.Items[i].SecondaryDecision = &decision
 		recommendation := drawObservationScoreRecommendation(response.Items[i])

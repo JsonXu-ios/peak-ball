@@ -20,7 +20,7 @@ func drawSecondaryGuardQuoteFixture() drawObservationCompanyQuotes {
 	return drawObservationCompanyQuotes{Key: "sporttery", EuroOdds: drawObservationEuroOdds{Source: "odds_moneys", OpeningStatus: "available", Opening: prices(), Latest: prices()}}
 }
 
-func TestDrawObservationSecondaryOriginalQuotesWithoutHistoryGuard(t *testing.T) {
+func TestDrawObservationSecondaryOriginalQuotesAndValidatedHistoryGuard(t *testing.T) {
 	tests := []struct {
 		name           string
 		mutate         func(*drawObservationItem)
@@ -39,16 +39,18 @@ func TestDrawObservationSecondaryOriginalQuotesWithoutHistoryGuard(t *testing.T)
 		{"duplicate sporttery is ambiguous", func(r *drawObservationItem) {
 			r.CompanyQuotes = append(r.CompanyQuotes, drawSecondaryGuardQuoteFixture())
 		}, "rejected", "sporttery_quotes_incomplete"},
-		{"four h2h retained", func(r *drawObservationItem) { r.HeadToHead.Sample = 4 }, "retained", "retained"},
-		{"missing h2h retained", func(r *drawObservationItem) { r.HeadToHead = drawObservationRecent{} }, "retained", "retained"},
-		{"missing h2h still requires score", func(r *drawObservationItem) {
+		{"one actual h2h retained", func(r *drawObservationItem) { r.HeadToHead = drawEligibilityHistory(*r, 1) }, "retained", "retained"},
+		{"four actual h2h retained", func(r *drawObservationItem) { r.HeadToHead = drawEligibilityHistory(*r, 4) }, "retained", "retained"},
+		{"summary does not substitute actual h2h", func(r *drawObservationItem) { r.HeadToHead.Matches = nil }, "rejected", "head_to_head_missing"},
+		{"missing h2h rejected", func(r *drawObservationItem) { r.HeadToHead = drawObservationRecent{} }, "rejected", "head_to_head_missing"},
+		{"missing h2h is distinct from low score", func(r *drawObservationItem) {
 			r.HeadToHead = drawObservationRecent{}
 			r.FrozenDrawSignal.Score = drawMetricScore(.224999)
-		}, "rejected", "score_below_threshold"},
-		{"missing h2h still requires quotes", func(r *drawObservationItem) {
+		}, "rejected", "head_to_head_missing"},
+		{"missing h2h and quotes preserve both reasons", func(r *drawObservationItem) {
 			r.HeadToHead = drawObservationRecent{}
 			r.CompanyQuotes = nil
-		}, "rejected", "sporttery_quotes_incomplete"},
+		}, "rejected", "head_to_head_missing,sporttery_quotes_incomplete"},
 		{"missing lottery identity", func(r *drawObservationItem) { r.JingcaiID = " " }, "out_of_scope", "not_sporttery"},
 		{"missing original model", func(r *drawObservationItem) { r.FrozenDrawSignal = nil }, "unavailable", "model_unavailable"},
 		{"original not selected", func(r *drawObservationItem) { r.FrozenDrawSignal.State = "not_selected"; r.CompanyQuotes = nil }, "not_selected", "model_not_selected"},
@@ -59,7 +61,7 @@ func TestDrawObservationSecondaryOriginalQuotesWithoutHistoryGuard(t *testing.T)
 			row := drawMetricFixture("secondary", "selected", drawMetricScore(.3), 0, 0, false)
 			tt.mutate(&row)
 			got := drawObservationSecondaryDecision(row)
-			if got.Version != "secondary-v3-quotes-only" || got.Threshold != .225 || got.MinimumHeadToHead != 0 || got.HeadToHeadSample != row.HeadToHead.Sample || got.Decision != tt.decision || len(got.ReasonCodes) != 1 || got.ReasonCodes[0] != tt.code || drawObservationSecondaryRetained(row) != (tt.decision == "retained") {
+			if got.Version != "secondary-v4-h2h-required" || got.Threshold != .225 || got.MinimumHeadToHead != drawObservationMinimumHeadToHead || got.HeadToHeadSample != drawObservationHeadToHeadSample(row) || got.Decision != tt.decision || !reflect.DeepEqual(got.ReasonCodes, strings.Split(tt.code, ",")) || drawObservationSecondaryRetained(row) != (tt.decision == "retained") {
 				t.Fatalf("wrong decision: %+v", got)
 			}
 			if _, err := json.Marshal(got); err != nil {
@@ -120,18 +122,19 @@ func TestDrawObservationSecondaryDoesNotReadResultOrAddOtherHardFilters(t *testi
 	}
 }
 
-func TestDrawObservationMetricsCountsQuoteRejectionsAndKeepsSparseHistory(t *testing.T) {
+func TestDrawObservationMetricsCountsQuoteRejectionsAndValidatedSparseHistory(t *testing.T) {
 	kept := drawMetricFixture("kept", "selected", drawMetricScore(.3), 1, 1, true)
 	missingQuote := drawMetricFixture("missing-quote", "selected", drawMetricScore(.3), 0, 2, true)
 	missingQuote.CompanyQuotes = nil
 	shortHistory := drawMetricFixture("short-history", "selected", drawMetricScore(.3), 2, 2, true)
-	shortHistory.HeadToHead.Sample = 4
+	shortHistory.HeadToHead = drawEligibilityHistory(shortHistory, 1)
 	missingHistory := drawMetricFixture("missing-history", "selected", drawMetricScore(.3), 2, 0, true)
 	missingHistory.HeadToHead = drawObservationRecent{}
+	missingHistory.FrozenDrawSignal = drawObservationApplySelectionEligibility(missingHistory, missingHistory.FrozenDrawSignal)
 	got := buildDrawObservationMetrics([]drawObservationItem{kept, missingQuote, shortHistory, missingHistory}, drawObservationQuery{date: kept.Date, scope: "sporttery"})
-	if got.Original.Selected != 4 || got.Original.Hits != 2 || got.Secondary.Selected != 3 || got.Secondary.Hits != 2 || got.Rejected.Selected != 1 || got.Rejected.Hits != 0 || got.SecondaryUnavailable != 0 {
-		t.Fatalf("quote rejection or sparse-history candidates lost original cohort/coverage: %+v", got)
+	if got.Original.Selected != 3 || got.Original.Hits != 2 || got.Secondary.Selected != 2 || got.Secondary.Hits != 2 || got.Rejected.Selected != 1 || got.Rejected.Hits != 0 || got.SecondaryUnavailable != 0 {
+		t.Fatalf("validated H2H eligibility or quote rejection was miscounted: %+v", got)
 	}
-	drawMetricRequireRate(t, got.Secondary.Precision, 2.0/3)
+	drawMetricRequireRate(t, got.Secondary.Precision, 1)
 	drawMetricRequireRate(t, got.Secondary.Coverage, 1)
 }

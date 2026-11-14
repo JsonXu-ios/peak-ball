@@ -5,11 +5,15 @@ import (
 	"math"
 	"reflect"
 	"testing"
+	"time"
 )
 
 func drawMetricFixture(id, state string, score *float64, home, away int, settled bool) drawObservationItem {
 	confirmed := settled
-	return drawObservationItem{MatchID: id, JingcaiID: "周三001", Date: "2026-10-21", League: "League", Home: "Home " + id, Guest: "Guest", HomeScore: home, AwayScore: away, Settled: settled, RegulationSettled: &confirmed, HeadToHead: drawObservationRecent{Sample: 5}, CompanyQuotes: []drawObservationCompanyQuotes{drawSecondaryGuardQuoteFixture()}, FrozenDrawSignal: &drawObservationFrozenSignal{State: state, Score: score}}
+	row := drawObservationItem{MatchID: id, JingcaiID: "周三001", Date: "2026-10-21", MatchTime: time.Date(2026, 10, 21, 12, 0, 0, 0, time.UTC), League: "League", Home: "Home " + id, Guest: "Guest", HomeScore: home, AwayScore: away, Settled: settled, RegulationSettled: &confirmed, CompanyQuotes: []drawObservationCompanyQuotes{drawSecondaryGuardQuoteFixture()}, FrozenDrawSignal: &drawObservationFrozenSignal{State: state, Score: score}}
+	row.HeadToHead = drawEligibilityHistory(row, 5)
+	row.FrozenDrawSignal = drawObservationApplySelectionEligibility(row, row.FrozenDrawSignal)
+	return row
 }
 
 func drawMetricScore(value float64) *float64 { return &value }

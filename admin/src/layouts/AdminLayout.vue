@@ -46,6 +46,14 @@ const menuItems = computed(() => [
     ],
   },
   {
+    title: '国内备选源',
+    icon: 'mdi-database-outline',
+    children: [
+      { title: '采集任务', icon: 'mdi-database-sync', to: '/public-sources/tasks' },
+      { title: '比赛分析', icon: 'mdi-soccer-field', to: '/public-sources/matches' },
+    ],
+  },
+  {
     title: '数据管理',
     icon: 'mdi-database',
     children: [

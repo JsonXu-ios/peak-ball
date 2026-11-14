@@ -236,8 +236,9 @@ func TestResearchReadOnlyIntegration(t *testing.T) {
 		rows, err := store.DB().QueryContext(ctx, `SELECT p.match_id,p.state,p.score,p.secondary_selected,p.scorelines,s.values_json,e.payload
 FROM predictions p JOIN feature_snapshots s ON s.id=p.snapshot_id
 JOIN snapshot_sources ss ON ss.snapshot_id=s.id JOIN ingest_events e ON e.id=ss.event_id AND e.source='local_feature_input'
-WHERE p.model_version=? AND p.state IN ('selected','not_selected')
-ORDER BY CRC32(p.match_id),p.id LIMIT 12`, drawmodeldata.Version())
+WHERE p.model_version=? AND p.rule_version=? AND p.score_method=? AND s.feature_version=?
+AND p.state IN ('selected','not_selected')
+ORDER BY CRC32(p.match_id),p.id LIMIT 12`, drawmodeldata.Version(), drawObservationSecondaryVersion+"+"+drawObservationProfitSupportVersion, drawScoreRecommendationVersion, researchFeatureVersion)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -258,10 +259,17 @@ ORDER BY CRC32(p.match_id),p.id LIMIT 12`, drawmodeldata.Version())
 				t.Fatal(err)
 			}
 			prediction := drawmodeldata.Predict(raw)
-			if !score.Valid || math.Abs(score.Float64-prediction.Score) > 1e-12 || (state == "selected") != prediction.Selected {
+			var inputRow drawFeatureStudyRow
+			if err := json.Unmarshal(input, &inputRow); err != nil {
+				t.Fatal(err)
+			}
+			item := researchTakeoverItem(inputRow)
+			expectedSelection := takeoverGatedModelSignal(item, prediction)
+			if !score.Valid || math.Abs(score.Float64-prediction.Score) > 1e-12 || state != expectedSelection.State {
 				t.Fatalf("frozen model replay mismatch: %s", matchID)
 			}
-			expectedSecondary := prediction.Selected && prediction.Score >= drawObservationSecondaryThreshold
+			item.FrozenDrawSignal = expectedSelection
+			expectedSecondary := independentTakeoverSecondary(item)
 			if secondary != expectedSecondary {
 				t.Fatalf("secondary decision changed: %s", matchID)
 			}
@@ -269,8 +277,8 @@ ORDER BY CRC32(p.match_id),p.id LIMIT 12`, drawmodeldata.Version())
 			if err := json.Unmarshal(scoreJSON, &scores); err != nil {
 				t.Fatalf("scorelines are not a JSON array: %v", err)
 			}
-			if secondary && !reflect.DeepEqual(scores, []drawRecommendedScore{{Home: 1, Away: 1}, {Home: 0, Away: 0}}) || !secondary && len(scores) != 0 {
-				t.Fatalf("two-score baseline leaked onto an unselected match: %s", matchID)
+			if expectedScores := drawObservationScoreRecommendation(item); !reflect.DeepEqual(scores, expectedScores.Scores) {
+				t.Fatalf("current dynamic scores differ from archived source evidence: %s", matchID)
 			}
 			expectedValues, _ := researchFeatureValues(raw)
 			// MySQL's binary JSON parser can round a decimal float by an IEEE
@@ -318,7 +326,10 @@ ORDER BY CRC32(p.match_id),p.id LIMIT 12`, drawmodeldata.Version())
 				}
 			}
 			storedPrediction := drawmodeldata.Predict(storedFeatures)
-			if math.Abs(storedPrediction.Score-score.Float64) > 1e-12 || storedPrediction.Selected != prediction.Selected || (storedPrediction.Selected && storedPrediction.Score >= drawObservationSecondaryThreshold) != secondary {
+			storedSelection := takeoverGatedModelSignal(item, storedPrediction)
+			storedItem := item
+			storedItem.FrozenDrawSignal = storedSelection
+			if math.Abs(storedPrediction.Score-score.Float64) > 1e-12 || storedPrediction.Selected != prediction.Selected || storedSelection.State != expectedSelection.State || independentTakeoverSecondary(storedItem) != secondary {
 				t.Fatalf("database JSON numerical representation changed frozen model inference: %s rawScore=%.17g storedScore=%.17g", matchID, prediction.Score, storedPrediction.Score)
 			}
 			var object map[string]json.RawMessage
@@ -336,7 +347,7 @@ ORDER BY CRC32(p.match_id),p.id LIMIT 12`, drawmodeldata.Version())
 			t.Fatal(err)
 		}
 		if replayed == 0 {
-			t.Skip("PENDING: no available lottery predictions archived yet; numerical replay not performed")
+			t.Skip("PENDING: no available current-rule/current-score lottery predictions archived yet; numerical and serving-policy replay not performed")
 		}
 		t.Logf("replayed=%d snapshotCount=%d; no live cutoff/evidence violations; MySQL JSON last-bit changes=%d maxAbsoluteDifference=%.17g; raw and query-vector model decisions identical", replayed, snapshots, roundTrippedFields, maxJSONRoundTripDifference)
 	})

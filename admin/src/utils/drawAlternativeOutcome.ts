@@ -1,5 +1,6 @@
 import type { DrawObservation } from '@/types/drawHistory'
 import { drawAverageEuroOdds } from './drawFrontend'
+import { hasCurrentJcDrawSelectionMetadata } from './drawFrozenSignal'
 
 export const DRAW_ALTERNATIVE_OUTCOME_VERSION = 'draw-average-alternative-v1'
 const SAME_PRICE_EPSILON = 1e-9
@@ -28,6 +29,10 @@ export function recommendDrawAlternativeOutcome(row: AlternativeInput): DrawAlte
   }
   if (!row.jingcaiId?.trim() || row.frozenDrawSignal?.state === 'out_of_scope') {
     return { ...base, state: 'out_of_scope', reason: '仅为原模型入选的竞彩比赛提供胜负备选' }
+  }
+  if (row.frozenDrawSignal && ['selected', 'not_selected'].includes(row.frozenDrawSignal.state)
+    && !hasCurrentJcDrawSelectionMetadata(row.frozenDrawSignal)) {
+    return { ...base, reason: '等待分析服务更新：竞彩原入选规则尚未确认' }
   }
   if (row.frozenDrawSignal?.state === 'not_selected') {
     return { ...base, state: 'not_selected', reason: '原模型未入选平局' }

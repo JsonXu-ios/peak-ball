@@ -53,6 +53,18 @@ const routes: RouteRecordRaw[] = [
       },
       // Crawler Management
       {
+        path: 'public-sources/tasks',
+        name: 'PublicSourceTasks',
+        component: () => import('@/views/publicSources/PublicSources.vue'),
+        meta: { title: '备选源采集任务', icon: 'mdi-database-sync' },
+      },
+      {
+        path: 'public-sources/matches',
+        name: 'PublicSourceMatches',
+        component: () => import('@/views/publicSources/PublicSources.vue'),
+        meta: { title: '备选源比赛分析', icon: 'mdi-soccer-field' },
+      },
+      {
         path: 'crawler/tasks',
         name: 'CrawlerTask',
         component: () => import('@/views/crawler/CrawlerTask.vue'),
