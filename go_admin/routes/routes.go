@@ -23,6 +23,8 @@ func SetupProtectedRoutes(r *gin.RouterGroup) {
 	r.GET("/public-sources/match", handlers.GetPublicSourceMatch)
 	r.GET("/public-sources/raw", handlers.GetPublicSourceRaw)
 	r.POST("/public-sources/collect", handlers.RunPublicSourceCollection)
+	r.POST("/public-sources/results", handlers.RunPublicSourceResults)
+	r.GET("/public-sources/results/raw", handlers.GetPublicSourceResultRaw)
 	r.PUT("/public-sources/mapping", handlers.UpdatePublicSourceMapping)
 	r.PUT("/public-sources/company-mapping", handlers.UpdatePublicSourceCompanyMapping)
 

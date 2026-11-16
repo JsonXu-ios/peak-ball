@@ -102,6 +102,10 @@ func GetPublicSourceRaw(c *gin.Context) {
 	publicSourceResponse(c, "raw", gin.H{"id": c.Query("id"), "snapshotId": c.Query("snapshotId")})
 }
 
+func GetPublicSourceResultRaw(c *gin.Context) {
+	publicSourceResponse(c, "result-raw", gin.H{"id": c.Query("id"), "snapshotId": c.Query("snapshotId")})
+}
+
 func UpdatePublicSourceMapping(c *gin.Context) {
 	var payload struct {
 		ID      string `json:"id" binding:"required"`
@@ -127,16 +131,24 @@ func UpdatePublicSourceCompanyMapping(c *gin.Context) {
 }
 
 func RunPublicSourceCollection(c *gin.Context) {
+	runPublicSourceJob(c, "enqueue", "请填写采集日期")
+}
+
+func RunPublicSourceResults(c *gin.Context) {
+	runPublicSourceJob(c, "enqueue-results", "请填写赛果更新日期")
+}
+
+func runPublicSourceJob(c *gin.Context, enqueueAction, invalidMessage string) {
 	var payload map[string]any
 	if err := c.ShouldBindJSON(&payload); err != nil {
-		c.JSON(400, gin.H{"error": "请填写采集日期"})
+		c.JSON(400, gin.H{"error": invalidMessage})
 		return
 	}
 	// json.Unmarshal into map turns integers into float64. Python receives a
 	// JSON integer when encoded by Go, so worker validation stays strict.
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 25*time.Second)
 	defer cancel()
-	result, err := callPublicSource(ctx, "enqueue", payload)
+	result, err := callPublicSource(ctx, enqueueAction, payload)
 	if err != nil {
 		c.JSON(400, gin.H{"error": err.Error()})
 		return

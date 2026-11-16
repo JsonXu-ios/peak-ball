@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import type { BookmakerMarket, BookmakerOutcome } from '@/types/drawHistory'
+import { isDrawHandicapProfitMarket } from '@/utils/drawProfit'
 
-defineProps<{ market: BookmakerMarket; totalStake?: number; local?: boolean }>()
+const props = defineProps<{ market: BookmakerMarket; totalStake?: number; local?: boolean }>()
 
 function fixed(value: number, digits = 2) {
   return value.toFixed(digits).replace(/\.0+$/, '').replace(/(\.\d*[1-9])0+$/, '$1')
@@ -31,7 +32,8 @@ function roi(value: number | undefined, available = true) {
 }
 
 function outcome(row: BookmakerOutcome) {
-  return { home: '胜', draw: '平', away: '负' }[row.outcome] || row.outcomeLabel
+  const label = { home: '胜', draw: '平', away: '负' }[row.outcome] || row.outcomeLabel
+  return isDrawHandicapProfitMarket(props.market) ? `让${label}` : label
 }
 
 function valueClass(value: number | undefined, available = true) {
@@ -47,23 +49,24 @@ function odds(row: BookmakerOutcome) {
 <template>
   <v-card variant="outlined" class="profit-card">
     <v-card-title class="d-flex flex-wrap align-center ga-2 text-subtitle-2">
-      {{ local ? '本地庄家盈亏' : `${market.name}交易盈亏` }}
+      {{ local ? '本地庄家盈亏' : `${isDrawHandicapProfitMarket(market) ? '竞彩让球胜平负' : market.name}交易盈亏` }}
       <v-chip v-if="market.simulated" color="warning" size="x-small" variant="tonal">模拟</v-chip>
       <span v-if="market.goal" class="text-caption text-medium-emphasis">让球 {{ market.goal }}</span>
+      <span v-else-if="isDrawHandicapProfitMarket(market)" class="text-caption text-medium-emphasis">让球数待补</span>
       <v-spacer />
-      <span class="text-caption text-medium-emphasis">测算总投注额 {{ money(totalStake) }}</span>
+      <span class="text-caption text-medium-emphasis">假设测算总投注额 {{ money(totalStake) }}</span>
     </v-card-title>
     <v-table density="compact">
-      <thead><tr><th>赛果</th><th>{{ local ? '平均欧赔' : '指数' }}</th><th>{{ local ? '散户心理' : '彩民支持率' }}</th><th>交易额</th><th>庄家赔付</th><th>本地庄家盈亏</th><th>{{ local ? '本地 ROI' : market.simulated ? '模拟庄家盈亏率' : '官方庄家盈亏率' }}</th><th v-if="!local">冷热指数</th></tr></thead>
+      <thead><tr><th>赛果</th><th>{{ local ? '平均欧赔' : '指数' }}</th><th>{{ local ? '散户心理' : market.simulated ? '模拟投注比例' : '彩民支持率' }}</th><th>交易额</th><th>庄家赔付</th><th>本地庄家盈亏</th><th>{{ local ? '本地 ROI' : market.simulated ? '模拟庄家盈亏率' : '源站庄家盈亏率' }}</th><th v-if="!local">冷热指数</th></tr></thead>
       <tbody>
         <tr v-for="row in market.bookmakerByOutcome || []" :key="row.outcome">
           <td class="font-weight-bold">{{ outcome(row) }}</td>
           <td>{{ odds(row) }}</td>
           <td :class="row.retailShare > 65 ? 'text-error font-weight-bold' : ''">{{ percent(row.retailShare) }}</td>
-          <td>{{ money(row.betStake) }}</td>
+          <td>{{ row.available ? money(row.betStake) : '测算数据不足' }}</td>
           <td>{{ row.available ? money(row.payout) : '赔率不足' }}</td>
           <td class="font-weight-bold" :class="valueClass(row.bookmakerProfit, row.available)">{{ signedMoney(row.bookmakerProfit, row.available) }}</td>
-          <td v-if="local" :class="valueClass(row.bookmakerRoi, row.available)">{{ roi(row.bookmakerRoi, row.available) }}</td>
+          <td v-if="local || market.simulated" :class="valueClass(row.bookmakerRoi, row.available)">{{ roi(row.bookmakerRoi, row.available) }}</td>
           <td v-else :class="valueClass(row.officialProfitRate)">{{ roi(row.officialProfitRate) }}</td>
           <td v-if="!local" :class="valueClass(row.hotColdIndex)">{{ Number.isFinite(row.hotColdIndex) ? fixed(Number(row.hotColdIndex)) : '暂无' }}</td>
         </tr>

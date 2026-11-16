@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import type { BookmakerOutcome, DirectionValues, DrawCompanyQuote, DrawFrontendLoadState, DrawObservation, DrawObservedEuroOdds, DrawObservedLine } from '@/types/drawHistory'
-import { isDrawSimulatedResultMarket } from '@/utils/drawProfit'
+import { isDrawProfitDisplayMarket } from '@/utils/drawProfit'
 import DrawProfitTable from './DrawProfitTable.vue'
 import DrawComparisonStages from './DrawComparisonStages.vue'
 
@@ -10,7 +10,7 @@ defineEmits<{ retryAnalysis: []; retryQuotes: [] }>()
 const analysis = computed(() => props.row.frontendAnalysis)
 const markets = computed(() => analysis.value?.roiSimulation?.markets || [])
 const tradeMarkets = computed(() => markets.value.filter((market) => !market.simulated && !['william', 'bet365'].includes(market.key)))
-const simulatedMarkets = computed(() => markets.value.filter(isDrawSimulatedResultMarket))
+const simulatedMarkets = computed(() => markets.value.filter((market) => isDrawProfitDisplayMarket(market, 'simulated', true)))
 const sporttery = computed(() => markets.value.find((market) => market.key === 'sporttery' && !market.simulated))
 const bettingRows = computed(() => sporttery.value?.bettingRatio?.length ? sporttery.value.bettingRatio : sporttery.value?.bookmakerByOutcome || [])
 

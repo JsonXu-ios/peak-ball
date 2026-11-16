@@ -30,8 +30,19 @@ def validate_config(payload):
     return config
 
 
-def enqueue(db, payload):
+def enqueue(db, payload, results=False):
     config = validate_config(payload)
+    if results:
+        if payload.get("zgzcwId"):
+            raise ValueError("赛果更新只使用已核实的本地比赛映射")
+        config = {k: config[k] for k in ("date", "officialId") if k in config}
+        config["kind"] = "results"
+        sql, params = "SELECT 1 FROM ps_matches WHERE business_date=?", [config["date"]]
+        if config.get("officialId"):
+            sql += " AND official_id=?"
+            params.append(config["officialId"])
+        if db.execute(sql, params).fetchone() is None:
+            raise ValueError("此日期或指定比赛没有本地采集记录")
     # Serialize starts across concurrent admin requests and restarts.
     db.execute("BEGIN IMMEDIATE")
     stale = (datetime.now(timezone.utc) - timedelta(minutes=35)).isoformat()
@@ -81,6 +92,61 @@ def import_capture(db, folder):
     return {"id": key, "imported": True}
 
 
+def import_repair(db, folder):
+    """Import actual, timestamped browser evidence into this database only."""
+    from collector import parse_official_page, parse_mapping_index
+    folder = Path(folder).resolve()
+    index = json.loads((folder / "fenxi-index.json").read_text(encoding="utf-8"))
+    rows, documents = [], {}
+    for path in sorted(folder.glob("official-*.json")):
+        official_id = path.stem.removeprefix("official-")
+        existing = db.execute("SELECT * FROM ps_matches WHERE official_id=?", (official_id,)).fetchone()
+        if existing is None:
+            continue
+        document = json.loads(path.read_text(encoding="utf-8"))
+        head, forecast = parse_official_page(document["html"], existing["lottery_number"])
+        row = {"matchId": official_id, "homeTeamAllName": existing["home"], "awayTeamAllName": existing["away"], "_sourceHome": head["home"], "_sourceAway": head["away"]}
+        rows.append((row, None, ""))
+        documents[official_id] = (dict(existing), document, head, forecast)
+    date = next(iter(documents.values()))[0]["business_date"] if documents else ""
+    mappings = parse_mapping_index(index["html"], rows, date)
+    errors, imported = [], 0
+    for row, _, _ in rows:
+        existing, document, head, forecast = documents[row["matchId"]]
+        source_id = mappings.get(row["matchId"])
+        key = save_match(db, {"date": existing["business_date"], "officialId": existing["official_id"], "home": existing["home"], "away": existing["away"], "kickoff": head["kickoff"], "lotteryNumber": existing["lottery_number"], "zgzcwId": source_id})
+        snapshot(db, key, "match_head", "sporttery", document["url"], document["html"], head, document["capturedAt"])
+        aliases = {head["home"]: existing["home"], head["away"]: existing["away"]}
+        for table in forecast["tables"]:
+            for record in table:
+                record[3], record[5] = aliases.get(record[3], record[3]), aliases.get(record[5], record[5])
+        if any(forecast["tables"]):
+            snapshot(db, key, "history", "sporttery", document["url"], document["html"], forecast, document["capturedAt"])
+        for kind in ("euro", "asian", "totals", "history"):
+            path = folder / f"{source_id}-{kind}.json"
+            try:
+                capture = json.loads(path.read_text(encoding="utf-8"))
+                if kind == "history":
+                    if not any(len(t)>2 for t in capture["tables"]):
+                        raise ValueError("来源触发验证码，未返回战绩表格")
+                    normalized = {"tables": capture["tables"], "text": capture["text"]}
+                    for table in normalized["tables"]:
+                        for record in table:
+                            if len(record)>=7:
+                                record[3], record[5] = aliases.get(record[3], record[3]), aliases.get(record[5], record[5])
+                else:
+                    normalized = bookmaker_rows(capture["tables"], kind)
+                snapshot(db, key, kind, "zgzcw", capture["url"], capture["html"], normalized, capture["capturedAt"])
+                imported += 1
+            except (OSError, ValueError) as exc:
+                errors.append({"stage": existing["official_id"]+":"+kind, "message": str(exc) if isinstance(exc,ValueError) else "未取得来源记录"})
+    status = "partial" if errors else "completed"
+    message = f"已修复{len(rows)}场比赛头与映射；补齐{imported}项盘口/战绩。" + ("验证码拦截项保留缺失。" if errors else "本批所需数据全部取得。")
+    db.execute("INSERT INTO ps_jobs(status,config,created_at,started_at,finished_at,heartbeat,processed,errors,message) VALUES(?,?,?,?,?,?,?,?,?)", (status, json.dumps({"date":date,"limit":len(rows),"repair":True}), now(), now(), now(), now(), len(rows), json.dumps(errors,ensure_ascii=False), message))
+    db.commit()
+    return {"repairedMatches":len(rows),"mapped":len(mappings),"importedParts":imported,"errors":errors}
+
+
 def dispatch(db, action, payload):
     if action == "overview":
         date = payload.get("date", "")
@@ -89,18 +155,31 @@ def dispatch(db, action, payload):
         result = overview(db, date)
         from models import enrich
         enrich(db, result["matches"])
+        from results import attach_results
+        attach_results(result["matches"])
         return result
     if action == "detail":
         result = detail(db, str(payload.get("id", "")))
         from models import enrich
         enrich(db, [result["match"]])
         result["models"] = result["match"].pop("models")
+        from results import attach_result
+        result["models"] = attach_result(result["models"], result["result"])
         return result
     if action == "enqueue":
         return enqueue(db, payload)
+    if action == "enqueue-results":
+        return enqueue(db, payload, results=True)
     if action == "collect":
+        job = db.execute("SELECT config FROM ps_jobs WHERE id=?", (int(payload["id"]),)).fetchone()
+        if job and json.loads(job["config"]).get("kind") == "results":
+            from results import collect_results
+            return collect_results(db, int(payload["id"]))
         from collector import collect
         return collect(db, int(payload["id"]))
+    if action == "result-raw":
+        from results import raw_result
+        return raw_result(db, payload)
     if action == "fail-job":
         db.execute("UPDATE ps_jobs SET status='failed',finished_at=?,message='采集进程未正常结束，请检查独立采集运行环境' WHERE id=? AND status IN ('queued','running')", (now(), int(payload["id"])))
         db.commit()
@@ -137,10 +216,10 @@ def main():
     args = parser.parse_args()
     try:
         with connect(args.db) as db:
-            if args.action == "import-capture":
+            if args.action in ("import-capture", "import-repair"):
                 if not args.capture_dir:
                     raise ValueError("缺少--capture-dir")
-                result = import_capture(db, args.capture_dir)
+                result = import_capture(db, args.capture_dir) if args.action == "import-capture" else import_repair(db, args.capture_dir)
             else:
                 payload = json.load(sys.stdin)
                 if not isinstance(payload, dict):

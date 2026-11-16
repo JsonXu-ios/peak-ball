@@ -509,8 +509,8 @@ onBeforeUnmount(() => { sequence++ })
               <td class="heat-cell"><DrawFrontendData :row="row" :analysis-state="frontendStates[row.matchId]" compact heat-only @retry-analysis="supplementAnalysis(report, sequence, true)" /></td>
               <td v-for="stage in (['opening', 'latest'] as const)" :key="stage" class="comparison-cell" :data-comparison-column="stage"><DrawFrontendData :row="row" :analysis-state="frontendStates[row.matchId]" compact :comparison-stage="stage" @retry-analysis="supplementAnalysis(report, sequence, true)" /></td>
               <td class="feature-cell"><DrawFeatureSignal :row="row" :analysis-state="frontendStates[row.matchId]" @retry-analysis="supplementAnalysis(report, sequence, true)" /></td>
-              <td class="profit-cell"><DrawProfitSummary :row="row" kind="sporttery" :analysis-state="frontendStates[row.matchId]" @retry-analysis="supplementAnalysis(report, sequence, true)" /></td>
-              <td class="profit-cell"><DrawProfitSummary :row="row" kind="simulated" :analysis-state="frontendStates[row.matchId]" @retry-analysis="supplementAnalysis(report, sequence, true)" /></td>
+              <td class="profit-cell"><DrawProfitSummary :row="row" kind="sporttery" include-handicap :analysis-state="frontendStates[row.matchId]" @retry-analysis="supplementAnalysis(report, sequence, true)" /></td>
+              <td class="profit-cell"><DrawProfitSummary :row="row" kind="simulated" include-handicap :analysis-state="frontendStates[row.matchId]" @retry-analysis="supplementAnalysis(report, sequence, true)" /></td>
               <td><v-icon :icon="expanded.includes(row.matchId) ? 'mdi-chevron-up' : 'mdi-chevron-down'" size="20" /><div v-if="row.warnings?.length" class="text-caption text-warning">{{ row.warnings.length }} 项说明</div></td>
             </tr>
             <tr v-if="expanded.includes(row.matchId)" class="detail-row">

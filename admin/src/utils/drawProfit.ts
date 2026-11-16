@@ -33,13 +33,24 @@ export function isDrawSimulatedResultMarket(market: BookmakerMarket): boolean {
   return market.simulated === true && !['sportteryRqspf', 'sportteryRqspfSim'].includes(market.key)
 }
 
+export function isDrawHandicapProfitMarket(market: Pick<BookmakerMarket, 'key'>): boolean {
+  return ['sportteryRqspf', 'sportteryRqspfSim'].includes(market.key)
+}
+
+/** Display scope only; keep the result-market selector used by existing decisions unchanged. */
+export function isDrawProfitDisplayMarket(market: BookmakerMarket, kind: DrawProfitKind, includeHandicap = false): boolean {
+  return kind === 'simulated'
+    ? isDrawSimulatedResultMarket(market) || (includeHandicap && market.simulated === true && isDrawHandicapProfitMarket(market))
+    : !market.simulated && (market.key === 'sporttery' || (includeHandicap && market.key === 'sportteryRqspf'))
+}
+
 /** Read existing frontend values only. In particular a simulated sporttery market
  * never supplies the official column, and localMarket is a different calculation. */
-export function drawProfitMarkets(row: DrawObservation, kind: DrawProfitKind): DrawProfitMarket[] {
+export function drawProfitMarkets(row: DrawObservation, kind: DrawProfitKind, includeHandicap = false): DrawProfitMarket[] {
   const simulation = row.frontendAnalysis?.roiSimulation
   const markets = Array.isArray(simulation?.markets) ? simulation.markets : []
   return markets
-    .filter((market) => market && (kind === 'simulated' ? isDrawSimulatedResultMarket(market) : market.key === 'sporttery' && !market.simulated))
+    .filter((market) => market && isDrawProfitDisplayMarket(market, kind, includeHandicap))
     .map((market) => profitMarket(market, simulation?.totalStake))
 }
 
@@ -61,7 +72,7 @@ function profitMarket(market: BookmakerMarket, totalStake: number | undefined): 
       const rate = market.simulated ? amountAvailable ? row!.bookmakerRoi : undefined : priced ? row!.officialProfitRate : undefined
       return {
         outcome,
-        label,
+        label: isDrawHandicapProfitMarket(market) ? `让${label}` : label,
         profit: amountAvailable && finite(row!.bookmakerProfit) ? row!.bookmakerProfit : null,
         rate: finite(rate) ? rate : null,
         unavailableReason: !row ? '暂无本项明细' : !priced ? '赔率不足' : !row.available ? '测算数据不足' : '暂无',

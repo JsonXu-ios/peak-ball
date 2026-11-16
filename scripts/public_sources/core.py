@@ -3,13 +3,36 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import re
 import sqlite3
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from source_policy import SOURCE_POLICY, allows_snapshot, effective_match, parse_acquisition
 
 CHINA = timezone(timedelta(hours=8))
 VERSION = "public-sources-v1"
+PROFIT_BASE = 50_000_000.0
+
+
+def request_timing():
+    interval = float(os.environ.get("PUBLIC_SOURCE_INTERVAL", "5"))
+    jitter = float(os.environ.get("PUBLIC_SOURCE_JITTER", "2"))
+    if not math.isfinite(interval) or not math.isfinite(jitter):
+        raise ValueError("请求间隔必须为有限秒数")
+    return max(3.0, min(60.0, interval)), max(0.0, min(30.0, jitter))
+
+
+def proxy_config():
+    raw = os.environ.get("PUBLIC_SOURCE_PROXIES")
+    path = Path(os.environ.get("PUBLIC_SOURCE_PROXY_FILE", str(Path(__file__).resolve().parents[2] / "data/public-sources/proxies.json")))
+    if raw is None:
+        raw = path.read_text(encoding="utf-8-sig") if path.is_file() else "[]"
+    values = json.loads(raw)
+    from urllib.parse import urlsplit
+    if not isinstance(values,list) or not all(isinstance(v,str) and urlsplit(v).scheme in {"http","https"} and urlsplit(v).hostname for v in values):
+        raise ValueError("代理池配置必须是HTTP(S)代理URL的JSON数组")
+    return values
 
 
 def now():
@@ -38,17 +61,18 @@ def analyze(odds, support, probabilities=None):
     shares = [number(x) for x in support]
     if len(values) != 3 or len(shares) != 3:
         return []
-    inverse = sum(1 / x for x in values) if all(x and x > 1 for x in values) else None
-    implied = [100 / x / inverse for x in values] if inverse else [None] * 3
-    given = [number(x) for x in probabilities] if probabilities else implied
+    # These are source probabilities, not an odds-derived estimate. Missing
+    # source values must stay missing so the UI can identify the actual inputs.
+    given = [number(x) for x in probabilities] if probabilities else [None] * 3
     if len(given) != 3:
-        given = implied
-    given = [value if value is not None else implied[i] for i, value in enumerate(given)]
+        given = [None] * 3
+    given = [value if value is not None and 0 <= value <= 100 else None for value in given]
     # Missing values and zero votes are not a valid distribution.
     valid_share = all(x is not None and 0 <= x <= 100 for x in shares) and abs(sum(shares) - 100) <= 1.1
     return [{"outcome": label, "odds": price, "support": share,
              "probability": probability,
              "profitRate": round((1 - share / 100 * price) * 100, 4) if valid_share and price and price > 1 else None,
+             "profitAmount": round(PROFIT_BASE * (1 - share / 100 * price), 2) if valid_share and price and price > 1 else None,
              "heatDifference": round(share - probability, 4) if valid_share and probability is not None else None}
             for label, price, share, probability in zip(("胜", "平", "负"), values, shares, given)]
 
@@ -132,7 +156,8 @@ def connect(path):
       CREATE TABLE IF NOT EXISTS ps_snapshots (
         id INTEGER PRIMARY KEY, match_id TEXT NOT NULL REFERENCES ps_matches(id), kind TEXT NOT NULL,
         source TEXT NOT NULL, url TEXT NOT NULL, received_at TEXT NOT NULL,
-        source_updated_at TEXT, payload TEXT NOT NULL, normalized TEXT NOT NULL, sha256 TEXT NOT NULL);
+        source_updated_at TEXT, payload TEXT NOT NULL, normalized TEXT NOT NULL, sha256 TEXT NOT NULL,
+        acquisition TEXT NOT NULL DEFAULT '{}');
       CREATE INDEX IF NOT EXISTS ps_snapshot_lookup ON ps_snapshots(match_id,kind,id DESC);
       CREATE TABLE IF NOT EXISTS ps_jobs (
         id INTEGER PRIMARY KEY, status TEXT NOT NULL, config TEXT NOT NULL, created_at TEXT NOT NULL,
@@ -144,7 +169,25 @@ def connect(path):
       CREATE TABLE IF NOT EXISTS ps_model_results (
         match_id TEXT PRIMARY KEY REFERENCES ps_matches(id), fingerprint TEXT NOT NULL,
         result TEXT NOT NULL, calculated_at TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS ps_result_snapshots (
+        id INTEGER PRIMARY KEY, match_id TEXT NOT NULL REFERENCES ps_matches(id),
+        job_id INTEGER REFERENCES ps_jobs(id), source TEXT NOT NULL, url TEXT NOT NULL,
+        received_at TEXT NOT NULL, payload TEXT NOT NULL, normalized TEXT NOT NULL, sha256 TEXT NOT NULL);
+      CREATE INDEX IF NOT EXISTS ps_result_lookup ON ps_result_snapshots(match_id,id DESC);
     """)
+    # Older independent databases have no collection-method evidence. Add the
+    # nullable-in-meaning JSON column without relabelling or rewriting rows.
+    if "acquisition" not in {row["name"] for row in db.execute("PRAGMA table_info(ps_snapshots)")}:
+        db.execute("BEGIN IMMEDIATE")
+        try:
+            # An overview request and a collector may connect concurrently.
+            if "acquisition" not in {row["name"] for row in db.execute("PRAGMA table_info(ps_snapshots)")}:
+                db.execute("ALTER TABLE ps_snapshots ADD COLUMN acquisition TEXT NOT NULL DEFAULT '{}'")
+            db.commit()
+        except Exception:
+            db.rollback()
+            db.close()
+            raise
     return db
 
 
@@ -159,12 +202,15 @@ def save_match(db, data):
     return key
 
 
-def snapshot(db, key, kind, source, url, raw, normalized, received=None):
+def snapshot(db, key, kind, source, url, raw, normalized, received=None, acquisition=None):
     import hashlib
+    if acquisition is not None and not isinstance(acquisition, dict):
+        raise ValueError("采集方式记录必须为JSON对象")
+    acquisition_json = json.dumps(acquisition or {}, ensure_ascii=False, allow_nan=False)
     text = raw if isinstance(raw, str) else json.dumps(raw, ensure_ascii=False)
-    db.execute("INSERT INTO ps_snapshots(match_id,kind,source,url,received_at,source_updated_at,payload,normalized,sha256) VALUES(?,?,?,?,?,?,?,?,?)",
+    db.execute("INSERT INTO ps_snapshots(match_id,kind,source,url,received_at,source_updated_at,payload,normalized,sha256,acquisition) VALUES(?,?,?,?,?,?,?,?,?,?)",
                (key, kind, source, url, received or now(), normalized.get("updatedAt") if isinstance(normalized, dict) else None,
-                text, json.dumps(normalized, ensure_ascii=False), hashlib.sha256(text.encode()).hexdigest()))
+                text, json.dumps(normalized, ensure_ascii=False), hashlib.sha256(text.encode()).hexdigest(), acquisition_json))
     db.execute("UPDATE ps_matches SET updated_at=? WHERE id=?", (now(), key))
     db.commit()
 
@@ -174,11 +220,15 @@ def detail(db, key, at=None):
     if match is None:
         raise ValueError("比赛不存在")
     parts, provenance = {}, {}
-    for row in db.execute("SELECT id,kind,source,url,received_at,source_updated_at,normalized,sha256 FROM ps_snapshots WHERE match_id=? ORDER BY id DESC", (key,)):
+    for row in db.execute("SELECT id,kind,source,url,received_at,source_updated_at,normalized,sha256,acquisition FROM ps_snapshots WHERE match_id=? ORDER BY id DESC", (key,)):
+        if not allows_snapshot(row["kind"], row["source"], row["acquisition"]):
+            continue
         if row["kind"] in parts:
             continue
         parts[row["kind"]] = json.loads(row["normalized"])
         provenance[row["kind"]] = {k: row[k] for k in ("id", "source", "url", "received_at", "source_updated_at", "sha256")}
+        provenance[row["kind"]]["acquisition"] = parse_acquisition(row["acquisition"])
+    match = effective_match(match, parts.get("match_head"))
     bonus = parts.get("bonus", {})
     analysis = {}
     for kind, market in (("support_had", "spf"), ("support_hhad", "rqspf")):
@@ -186,8 +236,11 @@ def detail(db, key, at=None):
         if vote:
             # Calculate using the paired quote published alongside these votes.
             # Do not silently mix its share with a newer unrelated quote.
-            analysis[market] = {"basis": "paired_vote_odds", "rows": analyze(vote["odds"], vote["support"], vote.get("probabilities")),
-                                "latestQuote": bonus.get(market), "source": "derived_from_user_vote", "receivedAt": provenance[kind]["received_at"]}
+            vote_source = provenance[kind]
+            analysis[market] = {"basis": "paired_vote_odds", "goal": vote.get("goal"), "totalStake": PROFIT_BASE, "rows": analyze(vote["odds"], vote["support"], vote.get("probabilities")),
+                                "latestQuote": bonus.get(market), "source": "derived_from_user_vote", "receivedAt": vote_source["received_at"],
+                                "inputSource": {"snapshotId": vote_source["id"], "source": vote_source["source"], "url": vote_source["url"],
+                                                "mode": vote_source["acquisition"].get("mode") or "legacy"}}
     cutoff = None
     if match["kickoff"]:
         try:
@@ -200,22 +253,47 @@ def detail(db, key, at=None):
     for market in ("euro", "asian", "totals"):
         for item in parts.get(market, []):
             item["company"] = mappings.get(item["sourceLabel"], item["sourceLabel"])
-    return {"match": dict(match), "parts": parts, "provenance": provenance, "analysis": analysis,
+    missing = [k for k in ("bonus", "support_had", "support_hhad", "euro", "asian", "totals", "history") if k not in parts]
+    if not match["kickoff"]:
+        missing.insert(0, "kickoff")
+    from results import current_result
+    return {"match": match, "parts": parts, "provenance": provenance, "analysis": analysis,
+            "result": current_result(db, key),
             "cutoff": {"rule": "kickoff", "time": match["kickoff"], "stopped": stopped},
-            "missing": [k for k in ("bonus", "support_had", "support_hhad", "euro", "asian", "totals", "history") if k not in parts], "version": VERSION}
+            "missing": missing, "version": VERSION, "sourcePolicy": SOURCE_POLICY}
 
 
 def overview(db, date=""):
     query, params = (" WHERE business_date=?", (date,)) if date else ("", ())
     matches = [dict(r) for r in db.execute("SELECT * FROM ps_matches" + query + " ORDER BY kickoff,lottery_number LIMIT 500", params)]
     for match in matches:
-        match["parts"] = [r[0] for r in db.execute("SELECT DISTINCT kind FROM ps_snapshots WHERE match_id=?", (match["id"],))]
+        # Same paired vote/quote calculation as detail, available directly in
+        # the list without opening every match or calling the VIPC APIs.
+        match_detail = detail(db, match["id"])
+        match["kickoff"] = match_detail["match"]["kickoff"]
+        match["parts"] = list(match_detail["parts"])
+        match["analysis"] = match_detail["analysis"]
+        match["acquisition"] = {kind: source["acquisition"] for kind, source in match_detail["provenance"].items()}
+        match["missing"] = match_detail["missing"]
+        match["result"] = match_detail["result"]
     jobs = []
+    from collection_report import aggregate_errors
     for row in db.execute("SELECT * FROM ps_jobs ORDER BY id DESC LIMIT 30"):
         job = dict(row)
         job["config"], job["errors"] = json.loads(job["config"]), json.loads(job["errors"])
+        job["errors"] = aggregate_errors(job["errors"])
+        # Older collectors called any handled batch partial, even when no
+        # match had the required data. Keep raw audit rows, correct the view.
+        if job["status"] == "partial" and re.search(r"(?:^|；)数据完整0场", job["message"]):
+            job["status"] = "failed"
         if job["status"] == "running" and job["heartbeat"] and datetime.now(timezone.utc) - datetime.fromisoformat(job["heartbeat"]) > timedelta(minutes=35):
             job["status"] = "interrupted"
             job["message"] = "任务已中断，可重新采集"
         jobs.append(job)
-    return {"matches": matches, "jobs": jobs, "storage": "独立 SQLite / ps_*", "version": VERSION}
+    try:
+        proxy_count = len(proxy_config())
+        interval, jitter = request_timing()
+        network = {"proxyCount": proxy_count, "rotationConfigured": proxy_count > 1, "intervalSeconds": interval, "jitterSeconds": jitter, "forwardedForRandomized": True}
+    except (OSError,ValueError):
+        network = {"proxyCount":0,"rotationConfigured":False,"error":"代理池或间隔配置无效"}
+    return {"matches": matches, "jobs": jobs, "network":network, "storage": "独立 SQLite / ps_*", "version": VERSION, "sourcePolicy": SOURCE_POLICY}

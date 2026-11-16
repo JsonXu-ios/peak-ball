@@ -1,11 +1,16 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import type { DrawFrontendLoadState, DrawObservation } from '@/types/drawHistory'
-import { drawProfitAmount, drawProfitClass, drawProfitMarkets, drawProfitRate, type DrawProfitKind } from '@/utils/drawProfit'
+import { drawProfitAmount, drawProfitClass, drawProfitMarkets, drawProfitRate, isDrawHandicapProfitMarket, type DrawProfitKind, type DrawProfitMarket } from '@/utils/drawProfit'
 
-const props = defineProps<{ row: DrawObservation; kind: DrawProfitKind; analysisState?: DrawFrontendLoadState }>()
+const props = defineProps<{ row: DrawObservation; kind: DrawProfitKind; analysisState?: DrawFrontendLoadState; includeHandicap?: boolean }>()
 defineEmits<{ retryAnalysis: [] }>()
-const markets = computed(() => drawProfitMarkets(props.row, props.kind))
+const markets = computed(() => drawProfitMarkets(props.row, props.kind, props.includeHandicap))
+function marketLabel(market: DrawProfitMarket) {
+  if (!props.includeHandicap) return market.name
+  if (isDrawHandicapProfitMarket(market)) return '竞彩让球胜平负'
+  return ['sporttery', 'sportterySim'].includes(market.key) ? '竞彩胜平负' : market.name
+}
 const emptyText = computed(() => {
   if (props.analysisState?.loading) return '正在读取前台分析…'
   if (props.analysisState?.error) return props.analysisState.error
@@ -19,14 +24,14 @@ const emptyText = computed(() => {
     <template v-if="markets.length">
       <div class="text-medium-emphasis">庄家视角：正为盈利，负为亏损</div>
       <section v-for="market in markets" :key="market.key" class="profit-market" :data-profit-market="market.key" :title="market.note">
-        <div class="font-weight-bold">{{ market.name }}<span v-if="market.simulated" class="text-warning ml-1">模拟</span><span v-if="market.goal" class="text-medium-emphasis ml-1">让球 {{ market.goal }}</span></div>
+        <div class="font-weight-bold">{{ marketLabel(market) }}<span v-if="market.simulated" class="text-warning ml-1">模拟</span><span v-if="market.goal" class="text-medium-emphasis ml-1">让球 {{ market.goal }}</span><span v-else-if="isDrawHandicapProfitMarket(market)" class="text-medium-emphasis ml-1">让球数待补</span></div>
         <div class="profit-row text-medium-emphasis"><span>赛果</span><span>本地测算（元）</span><span>{{ market.simulated ? '模拟 ROI' : '源站盈亏率' }}</span></div>
         <div v-for="outcome in market.outcomes" :key="outcome.outcome" class="profit-row" :data-profit-outcome="outcome.outcome">
           <span class="font-weight-bold">{{ outcome.label }}</span>
           <span :class="drawProfitClass(outcome.profit)" :title="outcome.profit === null ? outcome.unavailableReason : '沿用前台本地测算的庄家盈亏金额'">{{ outcome.profit === null ? outcome.unavailableReason : drawProfitAmount(outcome.profit, true) }}</span>
           <span :class="drawProfitClass(outcome.rate)">{{ drawProfitRate(outcome.rate) }}</span>
         </div>
-        <div class="text-medium-emphasis">测算基数：{{ drawProfitAmount(market.totalStake) }}</div>
+        <div class="text-medium-emphasis">假设测算基数：{{ drawProfitAmount(market.totalStake) }}</div>
         <div v-if="!market.simulated" class="text-medium-emphasis">盈亏率取源站，金额为前台测算</div>
       </section>
     </template>

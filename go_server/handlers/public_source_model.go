@@ -17,16 +17,19 @@ import (
 	"gorm.io/datatypes"
 )
 
-const PublicSourceModelVersion = "public-source-model-v1"
+const PublicSourceModelVersion = "public-source-model-v2"
 
 type PublicSourceModelInput struct {
 	Match struct {
-		ID      string `json:"id"`
-		Date    string `json:"business_date"`
-		Home    string `json:"home"`
-		Away    string `json:"away"`
-		Kickoff string `json:"kickoff"`
-		Lottery string `json:"lottery_number"`
+		ID         string `json:"id"`
+		Date       string `json:"business_date"`
+		Home       string `json:"home"`
+		Away       string `json:"away"`
+		Kickoff    string `json:"kickoff"`
+		Lottery    string `json:"lottery_number"`
+		ZgzcwID    string `json:"zgzcw_id"`
+		SourceHome string `json:"source_home"`
+		SourceAway string `json:"source_away"`
 	} `json:"match"`
 	Parts struct {
 		Euro    []publicSourceQuote `json:"euro"`
@@ -36,9 +39,15 @@ type PublicSourceModelInput struct {
 			Tables [][][]string `json:"tables"`
 		} `json:"history"`
 		Bonus struct {
-			History    map[string][]map[string]interface{} `json:"history"`
-			DrawScores map[string]*float64                 `json:"drawScores"`
-			TotalGoals []*float64                          `json:"totalGoals"`
+			Source        string                              `json:"source"`
+			SourceMatchID string                              `json:"sourceMatchId"`
+			CPMatchID     string                              `json:"cpMatchId"`
+			ZgzcwMatchID  string                              `json:"zgzcwMatchId"`
+			Home          string                              `json:"home"`
+			Away          string                              `json:"away"`
+			History       map[string][]map[string]interface{} `json:"history"`
+			DrawScores    map[string]*float64                 `json:"drawScores"`
+			TotalGoals    []*float64                          `json:"totalGoals"`
 		} `json:"bonus"`
 	} `json:"parts"`
 	Provenance map[string]struct {
@@ -48,21 +57,30 @@ type PublicSourceModelInput struct {
 }
 
 type publicSourceQuote struct {
-	Label        string   `json:"sourceLabel"`
-	Company      string   `json:"company"`
-	Opening      []string `json:"opening"`
-	Latest       []string `json:"latest"`
-	Kelly        []string `json:"kelly"`
-	OpeningKelly []string `json:"openingKelly"`
+	Label              string               `json:"sourceLabel"`
+	Company            string               `json:"company"`
+	Opening            []string             `json:"opening"`
+	Latest             []string             `json:"latest"`
+	Kelly              []string             `json:"kelly"`
+	OpeningKelly       []string             `json:"openingKelly"`
+	OpeningKellyPrices []string             `json:"openingKellyPrices"`
+	OpeningKellyTime   string               `json:"openingKellyTime"`
+	FullQuoteHistory   [][]string           `json:"fullQuoteHistory"`
+	Source             string               `json:"source"`
+	SourceCompanyID    string               `json:"sourceCompanyId"`
+	SourceMatchID      string               `json:"sourceMatchId"`
+	CPExtras           *publicSourceCPQuote `json:"cpExtras"`
 }
 
 type PublicSourceModelResult struct {
-	Version     string               `json:"version"`
-	State       string               `json:"state"`
-	Reason      string               `json:"reason,omitempty"`
-	Observation *drawObservationItem `json:"observation,omitempty"`
-	Warnings    []string             `json:"warnings"`
-	Sources     map[string]int64     `json:"snapshotIds"`
+	Version       string                     `json:"version"`
+	State         string                     `json:"state"`
+	Reason        string                     `json:"reason,omitempty"`
+	Observation   *drawObservationItem       `json:"observation,omitempty"`
+	Warnings      []string                   `json:"warnings"`
+	Sources       map[string]int64           `json:"snapshotIds"`
+	MarketContext *publicSourceMarketContext `json:"marketContext,omitempty"`
+	InputSources  []publicSourceEuroInput    `json:"inputSources,omitempty"`
 }
 
 func publicSourceJSON(value interface{}) datatypes.JSON { raw, _ := json.Marshal(value); return raw }
@@ -143,6 +161,7 @@ func publicSourceMarkets(input PublicSourceModelInput, match models.Money) (mode
 		if key == "sporttery" || key == "" || counts[key] != 1 {
 			continue
 		}
+		q, _ = publicSourceSelectEuro(input, q, match.MatchTime)
 		id := map[string]string{"bet365": "281", "william": "115", "pinnacle": "16", "average": "0"}[key]
 		row := analysisEuroOdd{CompanyID: id, CompanyName: key, Odds: q.Latest, FirstOdds: q.Opening, Kelly: json.RawMessage(publicSourceJSON(q.Kelly)), FirstKelly: json.RawMessage(publicSourceJSON(q.OpeningKelly))}
 		euros = append(euros, row)
@@ -370,6 +389,8 @@ func AnalyzePublicSourceModel(input PublicSourceModelInput) PublicSourceModelRes
 		history.CapturedAt = &at
 	}
 	odds, lines := publicSourceMarkets(input, match)
+	r.MarketContext = publicSourceBuildMarketContext(input)
+	r.InputSources, r.Warnings = publicSourceEuroSources(input, kickoff)
 	enrichment := buildDrawObservationFrontend(match, history, odds, lines)
 	item := drawObservationItem{MatchID: match.MatchId, JingcaiID: match.JingcaiID, Date: input.Match.Date, MatchTime: kickoff, Home: match.Home, Guest: match.Guest, HomeScore: -1, AwayScore: -1, DisplayState: "未核对赛果", HomeRecent: home, AwayRecent: away, HeadToHead: h2h, FrontendAnalysis: enrichment.analysis, CompanyQuotes: enrichment.companies, EuroOdds: enrichment.euro, Sources: []string{"public_sources_sqlite"}, Warnings: []string{}}
 	for _, q := range item.CompanyQuotes {

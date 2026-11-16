@@ -1,12 +1,15 @@
 """Public HTTP collector with an optional ordinary browser renderer.
 
-No CAPTCHA solving, challenge scripts, forged source-IP headers, or VIPC calls.
-Actual egress rotation uses administrator-configured HTTP(S) proxies only.
+Random X-Forwarded-For headers and paced public requests are enabled by default.
+Optional HTTP(S) proxies remain supported; no VIPC calls or CAPTCHA solving.
 """
 from __future__ import annotations
 
 import json
+import ipaddress
+import http.cookiejar
 import os
+import random
 import re
 import time
 import urllib.error
@@ -16,10 +19,28 @@ from datetime import datetime, timezone, timedelta
 
 from bs4 import BeautifulSoup
 
-from core import bookmaker_rows, now, normalize_bonus, save_match, snapshot, vote_dom, vote_record
+from core import bookmaker_rows, now, normalize_bonus, save_match, snapshot, vote_dom, vote_record, detail, proxy_config, request_timing
+from collection_report import safe_error, aggregate_errors, summarize_collection
 
 OFFICIAL = "https://webapi.sporttery.cn/gateway/uniform/football/"
-ALLOWED = {"webapi.sporttery.cn", "www.sporttery.cn", "static.sporttery.cn", "fenxi.zgzcw.com", "odds.zgzcw.com", "public.zgzcw.com", "saishi.zgzcw.com"}
+ALLOWED = {"webapi.sporttery.cn", "www.sporttery.cn", "static.sporttery.cn", "fenxi.zgzcw.com", "odds.zgzcw.com", "plzx.zgzcw.com", "public.zgzcw.com", "saishi.zgzcw.com", "cp.zgzcw.com"}
+BLOCKED = re.compile(r"安全策略拦截|疑似攻击|Access Verification|人机验证|请求过于频繁|请输入正确的验证码", re.I)
+RANDOM = random.SystemRandom()
+
+
+def random_forwarded_for():
+    while True:
+        address = ipaddress.IPv4Address(RANDOM.getrandbits(32))
+        if address.is_global and not address.is_multicast:
+            return str(address)
+
+
+def browser_request_headers(request, forwarded_for=None):
+    headers = dict(request.headers)
+    if urllib.parse.urlsplit(request.url).hostname in ALLOWED:
+        headers = {k:v for k,v in headers.items() if k.lower() != "x-forwarded-for"}
+        headers["X-Forwarded-For"] = forwarded_for or random_forwarded_for()
+    return headers
 
 
 def check_url(url):
@@ -37,25 +58,56 @@ class SafeRedirect(urllib.request.HTTPRedirectHandler):
 
 class Client:
     def __init__(self):
-        self.delay = max(1.0, float(os.environ.get("PUBLIC_SOURCE_INTERVAL", "1.5")))
-        self.proxies = json.loads(os.environ.get("PUBLIC_SOURCE_PROXIES", "[]"))
+        self.delay, self.jitter = request_timing()
+        self.proxies = proxy_config()
         if not isinstance(self.proxies, list) or not all(isinstance(x, str) and urllib.parse.urlsplit(x).scheme in {"http", "https"} for x in self.proxies):
             raise ValueError("PUBLIC_SOURCE_PROXIES必须是HTTP(S)代理URL的JSON数组")
         self.index, self.last = 0, 0.0
         self.browser_enabled = os.environ.get("PUBLIC_SOURCE_BROWSER", "auto") != "off"
+        self.blocked_hosts = set()
+        self._runtime = None
+        self._sessions = {}
+        self._openers = {}
+        self._page_forwarded_for = None
+        self._navigation_requests = 0
+        self._render_hosts = set()
+
+    def close(self):
+        for browser, _, _ in self._sessions.values():
+            try:
+                browser.close()
+            except Exception:
+                pass
+        self._sessions.clear()
+        if self._runtime is not None:
+            try:
+                self._runtime.stop()
+            except Exception:
+                pass
+            finally:
+                self._runtime = None
+
+    def throttle(self):
+        time.sleep(max(0, self.delay + RANDOM.uniform(0, self.jitter) - (time.monotonic() - self.last)))
+        self.last = time.monotonic()
 
     def pace(self):
-        time.sleep(max(0, self.delay - (time.monotonic() - self.last)))
-        self.last = time.monotonic()
+        self.throttle()
         proxy = self.proxies[self.index % len(self.proxies)] if self.proxies else None
         self.index += 1
         return proxy
 
-    def http(self, url):
+    def http(self, url, form=None):
         check_url(url)
+        if urllib.parse.urlsplit(url).hostname in self.blocked_hosts:
+            raise ValueError("该来源已触发验证，本次任务停止继续请求")
         proxy = self.pace()
-        opener = urllib.request.build_opener(SafeRedirect(), urllib.request.ProxyHandler({"https": proxy, "http": proxy}) if proxy else urllib.request.ProxyHandler())
-        request = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0", "Accept": "application/json,text/html", "Referer": "https://www.sporttery.cn/" if "sporttery.cn" in url else "https://odds.zgzcw.com/odds/oyzs/"})
+        if proxy not in self._openers:
+            self._openers[proxy] = urllib.request.build_opener(SafeRedirect(), urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()), urllib.request.ProxyHandler({"https": proxy, "http": proxy}) if proxy else urllib.request.ProxyHandler())
+        opener = self._openers[proxy]
+        headers = {"User-Agent": "Mozilla/5.0", "Accept": "application/json,text/plain,text/html", "X-Forwarded-For": random_forwarded_for(), "Referer": "https://www.sporttery.cn/" if "sporttery.cn" in url else "https://" + urllib.parse.urlsplit(url).hostname + "/"}
+        encoded = urllib.parse.urlencode(form).encode("utf-8") if form is not None else None
+        request = urllib.request.Request(url, data=encoded, headers=headers)
         try:
             with opener.open(request, timeout=25) as response:
                 data = response.read(8 * 1024 * 1024 + 1)
@@ -65,60 +117,151 @@ class Client:
                 text = data.decode(charset, errors="replace")
         except urllib.error.HTTPError as exc:
             raise ValueError(f"来源HTTP {exc.code}，未取得数据") from None
-        if re.search(r"Please Enable JavaScript|安全策略拦截|验证码|captcha", text, re.I):
+        if BLOCKED.search(text):
+            self.blocked_hosts.add(urllib.parse.urlsplit(url).hostname)
+            raise ValueError("来源触发安全验证，本次任务停止该来源请求")
+        # Ordinary source pages contain login forms mentioning verification
+        # codes. That word alone is not an access challenge for the data.
+        if re.search(r"Please Enable JavaScript|验证您是真人", text, re.I):
             raise ValueError("来源要求浏览器或安全验证，未解析为比赛数据")
         return text
 
-    def render(self, url, date=None, pages=1):
-        if not self.browser_enabled:
-            raise ValueError("浏览器采集已关闭")
-        check_url(url)
-        proxy = self.pace()
+    def _session(self, proxy):
+        if proxy in self._sessions:
+            return self._sessions[proxy]
         try:
             from playwright.sync_api import sync_playwright
         except ImportError:
             raise ValueError("动态页面需安装独立采集依赖：pip install -r scripts/public_sources/requirements.txt") from None
-        with sync_playwright() as runtime:
-            options = {"headless": True, "channel": os.environ.get("PUBLIC_SOURCE_BROWSER_CHANNEL", "msedge")}
-            if proxy:
-                parsed = urllib.parse.urlsplit(proxy)
-                options["proxy"] = {"server": f"{parsed.scheme}://{parsed.hostname}:{parsed.port or 80}"}
-                if parsed.username:
-                    options["proxy"].update(username=urllib.parse.unquote(parsed.username), password=urllib.parse.unquote(parsed.password or ""))
-            browser = runtime.chromium.launch(**options)
-            try:
-                context = browser.new_context(locale="zh-CN", timezone_id="Asia/Shanghai", service_workers="block")
-                page = context.new_page()
-                page.goto(url, wait_until="domcontentloaded", timeout=35000)
-                if date and page.locator("#start_date").count():
-                    if page.locator("#start_date").input_value() != date:
-                        page.locator("#start_date").fill(date)
-                        page.locator("#start_date").press("Escape")
-                        page.locator("body").click(position={"x": 5, "y": 5})
-                selector = ".s_match" if "/jc/zq" in url and "zc/" in url else "table tr"
-                if "webapi.sporttery.cn" not in url:
-                    try:
-                        page.wait_for_function("selector => document.querySelectorAll(selector).length > 2", arg=selector, timeout=15000)
-                    except Exception:
-                        pass
-                content = [page.content()]
-                if re.search(r"安全策略拦截|Please Enable JavaScript|验证您是真人", page.inner_text("body"), re.I):
-                    raise ValueError("浏览器收到安全拦截，保留失败，不绕过验证")
-                # Published paginator, ordinary UI clicks; never invoke hidden
-                # page globals or use its network session to bypass a block.
-                for page_no in range(2, pages + 1):
-                    next_page = page.locator(".m-paging .u-pg2 a").get_by_text(str(page_no), exact=True)
-                    if not next_page.count():
-                        break
-                    time.sleep(self.delay)
-                    next_page.click()
-                    page.wait_for_function("n => document.querySelector('.m-paging .u-pg3 span')?.textContent.trim() === String(n)", arg=page_no, timeout=20000)
-                    content.append(page.content())
-                return "\n<!-- published page boundary -->\n".join(content)
-            finally:
-                browser.close()
+        if self._runtime is None:
+            self._runtime = sync_playwright().start()
+        options = {"headless": True, "channel": os.environ.get("PUBLIC_SOURCE_BROWSER_CHANNEL", "msedge")}
+        if proxy:
+            parsed = urllib.parse.urlsplit(proxy)
+            options["proxy"] = {"server": f"{parsed.scheme}://{parsed.hostname}:{parsed.port or 80}"}
+            if parsed.username:
+                options["proxy"].update(username=urllib.parse.unquote(parsed.username), password=urllib.parse.unquote(parsed.password or ""))
+        browser = self._runtime.chromium.launch(**options)
+        context = browser.new_context(locale="zh-CN", timezone_id="Asia/Shanghai", service_workers="block")
+
+        def route_request(route):
+            request = route.request
+            host = urllib.parse.urlsplit(request.url).hostname
+            if host in self.blocked_hosts:
+                route.abort()
+                return
+            # A data page may embed several CP login/document iframes. Only
+            # repeated navigations of this page's main frame indicate a loop;
+            # counting child frames would incorrectly block their API host.
+            if request.resource_type == "document" and host in ALLOWED and request.frame == page.main_frame:
+                self._navigation_requests += 1
+                if self._navigation_requests > 4:
+                    self.blocked_hosts.add(host)
+                    route.abort()
+                    return
+            # Static assets do not carry match data. Pace document and API
+            # requests as well as top-level calls; keep this task's cookies.
+            if host in ALLOWED and request.resource_type in {"document", "xhr", "fetch"}:
+                self.throttle()
+            if request.resource_type in {"image", "media", "font"}:
+                route.abort()
+                return
+            route.continue_(headers=browser_request_headers(request, self._page_forwarded_for))
+
+        context.route("**/*", route_request)
+        page = context.new_page()
+        self._sessions[proxy] = (browser, context, page)
+        return self._sessions[proxy]
+
+    def _check_block(self, page, url):
+        if urllib.parse.urlsplit(url).hostname in self.blocked_hosts:
+            raise ValueError("来源反复验证或重定向，本次任务停止该来源请求")
+        if not page.locator("body").count():
+            return  # A normal navigation may briefly have no body.
+        body = page.inner_text("body")
+        if BLOCKED.search(body) or re.search(r"Please Enable JavaScript|验证您是真人", body, re.I):
+            self.blocked_hosts.add(urllib.parse.urlsplit(url).hostname)
+            raise ValueError("浏览器收到安全拦截，本次任务停止该来源请求")
+
+    def _wait_ready(self, page, url, date=None, ready=None):
+        self._check_block(page, url)
+        # Vue creates these elements before its data arrives. Waiting only
+        # for selector existence returns an empty match card within 2 seconds.
+        if "webapi.sporttery.cn" in url:
+            predicate = "() => { try { return typeof JSON.parse(document.body.innerText) === 'object' } catch { return false } }"
+            label = "接口JSON"
+        elif "/jc/zqdz/" in url:
+            predicate = r"""() => {
+                const card = document.querySelector('.m-matchCard-Cen');
+                const text = s => card?.querySelector(s)?.textContent.trim() || '';
+                return /周.\d+/.test(text('.u-top')) && text('.u-middleLf') && text('.u-middleRt') && /\d{4}-\d{2}-\d{2} \d{2}:\d{2}/.test(text('.u-btm'));
+            }"""
+            label = "比赛编号、双方球队和开赛时间"
+        elif "/jc/zq" in url and "zc/" in url:
+            predicate = "arg => [...document.querySelectorAll('.s_match')].some(x => (!arg.date || x.innerText.includes(arg.date)) && x.querySelectorAll('tr').length >= 4)"
+            label = "指定日期支持比例"
+        elif re.search(r"/\d+/(?:bjop|ypdb|dxdb)$", urllib.parse.urlsplit(url).path):
+            predicate = r"""() => [...document.querySelectorAll('table tr')].some(row => {
+                const cells = [...row.children].filter(x => x.tagName === 'TD');
+                return cells.length >= 15 && /^\d+$/.test(cells[0].textContent.trim()) && /^\d+(\.\d+)?$/.test(cells[2].textContent.trim());
+            })"""
+            label = "有效盘口记录"
+        else:
+            predicate = "arg => [...document.querySelectorAll(arg.selector)].filter(x => x.textContent.trim()).length >= arg.count"
+            label = "比赛数据表格"
+        try:
+            page.wait_for_function(predicate, arg={"date": date, "selector": ready or "table tr", "count": 1 if ready else 3}, timeout=90000)
+        except Exception:
+            self._check_block(page, url)
+            raise ValueError("等待" + label + "超时，未把未加载页面当作有效数据") from None
+        self._check_block(page, url)
+
+    def render(self, url, date=None, pages=1, ready=None):
+        if not self.browser_enabled:
+            raise ValueError("浏览器采集已关闭")
+        check_url(url)
+        if urllib.parse.urlsplit(url).hostname in self.blocked_hosts:
+            raise ValueError("该来源已触发验证，本次任务停止继续请求")
+        proxy = self.proxies[self.index % len(self.proxies)] if self.proxies else None
+        self.index += 1
+        _, _, page = self._session(proxy)
+        # One page's redirects and API calls are one browser load. Changing
+        # its advertised address halfway through makes cookies inconsistent.
+        self._page_forwarded_for = random_forwarded_for()
+        self._navigation_requests = 0
+        response = page.goto(url, wait_until="domcontentloaded", timeout=90000)
+        if response and response.status >= 400:
+            raise ValueError(f"浏览器来源HTTP {response.status}，未取得数据")
+        self._check_block(page, url)
+        if date and page.locator("#start_date").count():
+            if page.locator("#start_date").input_value() != date:
+                page.locator("#start_date").fill(date)
+                page.locator("#start_date").press("Escape")
+                page.locator("body").click(position={"x": 5, "y": 5})
+        self._wait_ready(page, url, date, ready)
+        content = [page.content()]
+        for page_no in range(2, pages + 1):
+            next_page = page.locator(".m-paging .u-pg2 a").get_by_text(str(page_no), exact=True)
+            if not next_page.count():
+                break
+            previous = page.locator(".s_match").first.inner_text()
+            self.throttle()
+            next_page.click()
+            page.wait_for_function("arg => document.querySelector('.m-paging .u-pg3 span')?.textContent.trim() === String(arg.page) && document.querySelector('.s_match')?.innerText !== arg.previous", arg={"page":page_no,"previous":previous}, timeout=90000)
+            self._wait_ready(page, url, date, ready)
+            content.append(page.content())
+        return "\n<!-- published page boundary -->\n".join(content)
+
+    def match_info(self, official_id, lottery_number):
+        url = OFFICIAL + "getMatchHeadV1.qry?source=web&sportteryMatchId=" + official_id
+        body = self.api(url)
+        head = parse_official_head(body, official_id, lottery_number)
+        return head, {"tables": [], "text": "", "source": "sporttery_match_head"}, body, url
 
     def document(self, url, need="table"):
+        host = urllib.parse.urlsplit(url).hostname
+        if host in self._render_hosts:
+            return self.render(url)
         try:
             raw = self.http(url)
             soup = BeautifulSoup(raw, "html.parser")
@@ -126,17 +269,15 @@ class Client:
                 raise ValueError("静态页面无有效数据")
             return raw
         except (ValueError, OSError):
+            self._render_hosts.add(host)
             return self.render(url)
 
-    def api(self, url):
-        try:
-            return json.loads(self.http(url))
-        except (ValueError, OSError):
-            raw = self.render(url)
-            return json.loads(BeautifulSoup(raw, "html.parser").get_text())
+    def api(self, url, form=None):
+        from api_transport import fetch_json
+        return fetch_json(self, url, form=form)
 
     def votes(self, date, pool, limit):
-        result = []
+        result, seen = [], set()
         for page in range(1, (limit + 9) // 10 + 1):
             url = OFFICIAL + "getVoteV1.qry?" + urllib.parse.urlencode(dict(poolCode=pool, pageSize=10, pageNo=page, businessDate=date))
             try:
@@ -144,33 +285,27 @@ class Client:
                 if str(data.get("errorCode")) != "0":
                     raise ValueError("支持率接口返回错误")
                 container = data.get("value", {}).get("matches", {})
-                items = container.get("list", [])
-                result.extend((row, vote_record(row), url) for row in items)
-                if not items or page >= container.get("pages", 1):
+                items = container.get("list")
+                if not isinstance(items, list):
+                    raise ValueError("支持比例接口缺少比赛数组")
+                for row in items:
+                    if str(row.get("businessDate", date)) != date:
+                        raise ValueError("支持比例接口返回其他竞彩日期，未写入")
+                    key = str(row.get("matchId", ""))
+                    if not key.isdigit() or key in seen:
+                        raise ValueError("支持比例分页返回重复或无效比赛ID")
+                    seen.add(key)
+                    normalized = vote_record(row)
+                    normalized["transport"] = getattr(self, "last_api_transport", "http")
+                    result.append((row, normalized, url))
+                pages = container.get("pages")
+                if pages is None and container.get("total") is not None:
+                    pages = (int(container["total"]) + 9) // 10
+                if not items or (pages is not None and page >= int(pages)) or (pages is None and len(items) < 10):
                     break
-            except (ValueError, OSError):
-                # A normal rendered page is another published surface. Do not
-                # solve or retry security challenges. Follow its paginator.
-                if page != 1:
-                    raise ValueError("支持率分页未取得，未将第一页冒充完整日期") from None
-                url = "https://www.sporttery.cn/jc/" + ("zqspfzc/" if pool == "HAD" else "zqrqspfzc/")
-                soup = BeautifulSoup(self.render(url, date, pages=(limit + 9) // 10), "html.parser")
-                seen = set()
-                for block in soup.select(".s_match"):
-                    link = block.select_one('a[href*="mid="]')
-                    if not link or date not in block.get_text():
-                        continue
-                    mid = urllib.parse.parse_qs(urllib.parse.urlsplit(link["href"]).query).get("mid", [""])[0]
-                    title = link.get_text(" ", strip=True)
-                    match = re.search(r"(周.\d+)\s+(.+?)\s+" + re.escape(date) + r"\s+(.+?)\s+VS\s+(.+)", title)
-                    if not mid.isdigit() or not match or mid in seen:
-                        continue
-                    seen.add(mid)
-                    row = {"matchId": mid, "matchNum": match[1], "leagueAllName": match[2], "homeTeamAllName": re.sub(r"[（(].*?[)）]", "", match[3]), "awayTeamAllName": match[4], "matchDate": date}
-                    result.append((row, vote_dom(block.get_text(" ", strip=True)), url))
-                if not result:
-                    raise ValueError("支持比例页无指定日期比赛，未写入其他日期数据")
-                break
+            except Exception as exc:
+                stage = "支持比例分页接口" if page > 1 else "支持比例接口"
+                raise ValueError(stage + "失败：" + safe_error(exc) + "；未改用页面") from None
         return result[:limit]
 
 
@@ -180,12 +315,65 @@ def doc_tables(raw):
     return soup, tables
 
 
-def discover_mapping(client, matches):
-    raw = client.document("https://odds.zgzcw.com/odds/oyzs/")
+def validate_history_tables(tables):
+    if not any(any(re.fullmatch(r"\d{2,4}[-/]\d{1,2}[-/]\d{1,2}(?:\s+\d{2}:\d{2}.*)?", str(cell).strip()) for cell in row)
+               and any(re.fullmatch(r"\d+\s*[:：-]\s*\d+", str(cell).strip()) for cell in row)
+               for table in tables for row in table if len(row) >= 6):
+        raise ValueError("战绩页面没有有效日期和比分记录，未把空页面计为采集成功")
+
+
+def parse_official_head(body, official_id, lottery_number):
+    value = body.get("value") or {}
+    if str(body.get("errorCode")) != "0" or str(value.get("sportteryMatchId")) != str(official_id) or value.get("matchNum") != lottery_number:
+        raise ValueError("官方比赛信息ID或竞彩编号不匹配")
+    home, away = str(value.get("homeTeamShortName") or "").strip(), str(value.get("awayTeamShortName") or "").strip()
+    stamp = str(value.get("matchDateTime") or "")
+    if not home or not away or not re.fullmatch(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}(?::\d{2})?", stamp):
+        raise ValueError("官方比赛信息缺少球队或开赛时间")
+    datetime.fromisoformat(stamp)
+    return {"home": home, "away": away, "kickoff": stamp + (":00" if len(stamp) == 16 else ""), "lotteryNumber": lottery_number, "officialId":str(official_id)}
+
+
+def parse_official_page(raw, lottery_number):
     soup = BeautifulSoup(raw, "html.parser")
+    card = soup.select_one(".m-matchCard-Cen")
+    if not card or lottery_number not in card.get_text():
+        raise ValueError("比赛头尚未加载或竞彩编号不匹配")
+    home, away, time_node = card.select_one(".u-middleLf"), card.select_one(".u-middleRt"), card.select_one(".u-btm")
+    stamp = re.search(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}(?::\d{2})?", time_node.get_text() if time_node else "")
+    if not home or not away or not home.get_text(strip=True) or not away.get_text(strip=True) or not stamp:
+        raise ValueError("比赛头缺少球队或开赛时间")
+    kickoff = stamp[0] + (":00" if len(stamp[0]) == 16 else "")
+    head = {"home": home.get_text(strip=True), "away": away.get_text(strip=True), "kickoff": kickoff, "lotteryNumber": lottery_number}
+    def history_table(table):
+        result = []
+        if table:
+            for row in table.select("tr"):
+                cells = row.find_all("td", recursive=False)
+                group = row.select_one(".m-tableFlex")
+                if len(cells) < 3 or not group:
+                    continue
+                left, right = group.select_one(".left"), group.select_one(".right")
+                score = group.select_one(".u-top")
+                half = group.select_one(".u-btm")
+                score_text = re.sub(r"\s", "", score.get_text() if score else "")
+                if left and right and re.fullmatch(r"\d+:\d+", score_text):
+                    result.append([cells[1].get_text(strip=True), "", cells[0].get_text(strip=True), left.get_text(strip=True), score_text, right.get_text(strip=True), half.get_text(strip=True) if half else ""])
+        return result
+    recent = soup.select("#bsjk table")
+    tables = [history_table(recent[0] if recent else None), history_table(recent[1] if len(recent)>1 else None), history_table(soup.select_one("#lsM table"))]
+    return head, {"tables": tables, "text": soup.get_text(" ", strip=True), "source": "sporttery_forecast"}
+
+
+def parse_mapping_index(raw, matches, date=None, url="https://fenxi.zgzcw.com/"):
+    soup = BeautifulSoup(raw, "html.parser")
+    if BLOCKED.search(soup.get_text()):
+        raise ValueError("赛程入口被安全验证拦截，未把拦截页当作空赛程")
+    if date and not (date in soup.get_text() or datetime.strptime(date, "%Y-%m-%d").strftime("%Y年%m月%d日") in soup.get_text()):
+        raise ValueError("赛程入口日期不匹配，未关联其他日期比赛")
     found = {}
     for link in soup.select("a[href]"):
-        match = re.search(r"fenxi\.zgzcw\.com/(\d+)(?:/|$)", link["href"])
+        match = re.search(r"fenxi\.zgzcw\.com/(\d+)(?:/|$)", urllib.parse.urljoin(url, link["href"]))
         if not match:
             continue
         parent = link.find_parent("tr")
@@ -194,146 +382,17 @@ def discover_mapping(client, matches):
             for row, _, _ in matches:
                 # Exact full-name matches only. Ambiguous aliases require an
                 # explicit mapping in the admin UI, never fuzzy auto-joins.
-                if row["homeTeamAllName"] in text and row["awayTeamAllName"] in text:
+                home_names = {row["homeTeamAllName"], row.get("_sourceHome", row["homeTeamAllName"])}
+                away_names = {row["awayTeamAllName"], row.get("_sourceAway", row["awayTeamAllName"])}
+                teams = parent.select('a[href*="/soccer/team/"]')
+                home_name = teams[0].get_text(strip=True) if len(teams)>1 else None
+                away_name = teams[1].get_text(strip=True) if len(teams)>1 else None
+                title = link.get("title", "")
+                if (home_name in home_names and away_name in away_names) or (not teams and any(title.startswith(h+"VS"+a) for h in home_names for a in away_names)):
                     found.setdefault(str(row["matchId"]), set()).add(match[1])
     return {k: next(iter(v)) for k, v in found.items() if len(v) == 1}
 
 
-def opening_kelly(client, soup, normalized, heartbeat, on_error):
-    # Fetch earliest available history for the companies used by the existing
-    # analysis. Others can be enabled with PUBLIC_SOURCE_KELLY_LABELS='*'.
-    labels = os.environ.get("PUBLIC_SOURCE_KELLY_LABELS", "威*,36*,平*,官方(胜平负)").split(",")
-    for item in normalized:
-        if "*" not in labels and item["sourceLabel"] not in labels:
-            continue
-        row = next((r for r in soup.select("tr") if len(r.find_all("td", recursive=False)) >= 15 and r.find_all("td", recursive=False)[1].get_text(strip=True) == item["sourceLabel"]), None)
-        link = row.select_one('a[href*="/bjop/zhishu?"]') if row else None
-        if not link:
-            continue
-        heartbeat()
-        try:
-            url = urllib.parse.urljoin("https://fenxi.zgzcw.com/", link["href"])
-            raw = client.document(url)
-            _, tables = doc_tables(raw)
-            records = [r for t in tables for r in t if len(r) >= 13 and re.match(r"\d{4}-\d{2}-\d{2} ", r[1])]
-            if not records:
-                raise ValueError("公司变化记录无有效凯利")
-            first = min(records, key=lambda r: r[1])
-            item["openingKelly"], item["openingKellyTime"] = first[9:12], first[1]
-            item["historyUrl"], item["quoteHistory"] = url, records
-        except Exception as exc:
-            on_error("初始凯利:" + item["sourceLabel"], exc)
-
-
 def collect(db, job_id):
-    job = db.execute("SELECT * FROM ps_jobs WHERE id=? AND status='queued'", (job_id,)).fetchone()
-    if job is None:
-        raise ValueError("任务不存在或已执行")
-    config = json.loads(job["config"])
-    claimed = db.execute("UPDATE ps_jobs SET status='running',started_at=?,heartbeat=? WHERE id=? AND status='queued'", (now(), now(), job_id))
-    db.commit()
-    if claimed.rowcount != 1:
-        raise ValueError("任务已经被其他进程领取")
-    errors, processed = [], 0
-    client = Client()
-
-    def error(stage, exc):
-        # Never persist proxy credentials or exception URLs from third parties.
-        msg = str(exc) if isinstance(exc, ValueError) else type(exc).__name__
-        msg = re.sub(r"https?://\S+", "[来源地址]", msg)
-        errors.append({"stage": stage, "message": msg[:350]})
-
-    def heartbeat():
-        db.execute("UPDATE ps_jobs SET processed=?,errors=?,heartbeat=? WHERE id=?", (processed, json.dumps(errors, ensure_ascii=False), now(), job_id))
-        db.commit()
-
-    try:
-        try:
-            votes = client.votes(config["date"], "HAD", config["limit"])
-        except Exception as exc:
-            stored = db.execute("SELECT * FROM ps_matches WHERE business_date=? AND official_id=?", (config["date"], config.get("officialId", ""))).fetchone()
-            if not stored:
-                raise
-            votes = [({"matchId": stored["official_id"], "homeTeamAllName": stored["home"], "awayTeamAllName": stored["away"], "matchNum": stored["lottery_number"]}, None, "")]
-            error("胜平负支持比例", exc)
-        if config.get("officialId"):
-            votes = [x for x in votes if str(x[0]["matchId"]) == config["officialId"]]
-            if not votes:
-                # Existing independently imported matches can be refreshed even
-                # if they are not on the currently visible first vote page.
-                stored = db.execute("SELECT * FROM ps_matches WHERE business_date=? AND official_id=?", (config["date"], config["officialId"])).fetchone()
-                if stored:
-                    votes = [({"matchId": stored["official_id"], "homeTeamAllName": stored["home"], "awayTeamAllName": stored["away"], "matchNum": stored["lottery_number"]}, None, "")]
-                else:
-                    raise ValueError("支持率列表中未找到指定比赛；先按日期采集或导入并映射")
-        try:
-            rq_votes = {str(r["matchId"]): (r, n, u) for r, n, u in client.votes(config["date"], "HHAD", config["limit"])}
-        except Exception as exc:
-            rq_votes = {}
-            error("让球支持比例", exc)
-        try:
-            mappings = discover_mapping(client, votes)
-        except Exception as exc:
-            mappings = {}
-            error("足彩网自动映射", exc)
-        for row, normalized, url in votes:
-            official_id = str(row["matchId"])
-            previous = db.execute("SELECT * FROM ps_matches WHERE business_date=? AND official_id=?", (config["date"], official_id)).fetchone()
-            source_id = config.get("zgzcwId") if official_id == config.get("officialId") else None
-            source_id = source_id or (previous["zgzcw_id"] if previous else None) or mappings.get(official_id)
-            kickoff = previous["kickoff"] if previous else None
-            if row.get("matchTime") and re.fullmatch(r"\d{2}:\d{2}(?::\d{2})?", str(row["matchTime"])):
-                kickoff = str(row.get("matchDate", config["date"])) + " " + row["matchTime"]
-            key = save_match(db, {"date": config["date"], "officialId": official_id, "home": row["homeTeamAllName"], "away": row["awayTeamAllName"], "lotteryNumber": row.get("matchNum"), "kickoff": kickoff, "zgzcwId": source_id})
-            if normalized:
-                snapshot(db, key, "support_had", "sporttery", url, row, normalized)
-            if official_id in rq_votes:
-                raw_rq, norm_rq, rq_url = rq_votes[official_id]
-                snapshot(db, key, "support_hhad", "sporttery", rq_url, raw_rq, norm_rq)
-            try:
-                bonus_url = OFFICIAL + "getFixedBonusV1.qry?clientCode=3001&matchId=" + official_id
-                raw_bonus = client.api(bonus_url)
-                bonus = normalize_bonus(raw_bonus)
-                if bonus["home"] != row["homeTeamAllName"] or bonus["away"] != row["awayTeamAllName"]:
-                    raise ValueError("体彩奖金球队身份不匹配，停止关联")
-                snapshot(db, key, "bonus", "sporttery", bonus_url, raw_bonus, bonus)
-            except Exception as exc:
-                error(official_id + ":奖金", exc)
-            if source_id:
-                for kind, suffix in (("euro", "bjop"), ("asian", "ypdb"), ("totals", "dxdb"), ("history", "bsls")):
-                    heartbeat()
-                    try:
-                        source_url = "https://fenxi.zgzcw.com/" + source_id + "/" + suffix
-                        raw = client.document(source_url)
-                        soup, tables = doc_tables(raw)
-                        # Validate both participants before applying a manual ID.
-                        text = soup.get_text(" ", strip=True)
-                        if row["homeTeamAllName"] not in text or row["awayTeamAllName"] not in text:
-                            raise ValueError("足彩网球队身份不匹配，未写入盘口")
-                        kickoff_match = re.search(r"比赛时间[：:]\s*(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})", text)
-                        if kickoff_match:
-                            source_kickoff = datetime.fromisoformat(kickoff_match[1])
-                            day = datetime.fromisoformat(config["date"])
-                            if not day <= source_kickoff < day + timedelta(days=2):
-                                raise ValueError("足彩网比赛日期不匹配，未应用映射")
-                            if kickoff and abs((datetime.fromisoformat(kickoff) - source_kickoff).total_seconds()) > 900:
-                                raise ValueError("来源开赛时间相差超过15分钟，请核对比赛映射")
-                            db.execute("UPDATE ps_matches SET kickoff=? WHERE id=?", (kickoff_match[1], key))
-                            db.commit()
-                        norm = bookmaker_rows(tables, kind) if kind != "history" else {"tables": tables, "text": text}
-                        if kind == "euro":
-                            opening_kelly(client, soup, norm, heartbeat, error)
-                        snapshot(db, key, kind, "zgzcw", source_url, raw, norm)
-                    except Exception as exc:
-                        error(official_id + ":" + kind, exc)
-            else:
-                error(official_id + ":映射", ValueError("未找到唯一足彩网比赛ID，可在比赛详情手动映射后补采"))
-            processed += 1
-            heartbeat()
-        status = "partial" if errors and processed else "failed" if errors else "completed"
-    except Exception as exc:
-        error("任务", exc)
-        status = "failed"
-    db.execute("UPDATE ps_jobs SET status=?,processed=?,errors=?,finished_at=?,heartbeat=? WHERE id=?", (status, processed, json.dumps(errors, ensure_ascii=False), now(), now(), job_id))
-    db.commit()
-    return {"id": job_id, "status": status, "processed": processed, "errors": errors}
+    from pipeline import run_collection
+    return run_collection(db, job_id, Client)
