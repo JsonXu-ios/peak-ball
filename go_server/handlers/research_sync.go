@@ -688,7 +688,7 @@ func runResearchSync(ctx context.Context) (err error) {
 	if err = store.AddDatasetMembers(ctx, members); err != nil {
 		return err
 	}
-	modelID, e := store.SaveModelRun(ctx, researchstore.ModelRun{Version: drawmodeldata.Version(), DatasetID: datasetID, ArtifactHash: drawmodeldata.ArtifactSHA256(), ArtifactURI: "repo://go_server/internal/drawmodeldata/observation_v1.json", Status: "registered_existing", Config: researchJSON(map[string]any{"trained": false, "secondaryThreshold": drawObservationSecondaryThreshold, "scoreMethod": drawScoreRecommendationVersion}), StartedAt: time.Now().UTC()})
+	modelID, e := store.SaveModelRun(ctx, researchstore.ModelRun{Version: drawmodeldata.Version(), DatasetID: datasetID, ArtifactHash: drawmodeldata.ArtifactSHA256(), ArtifactURI: "runtime://draw-model/artifacts/" + drawmodeldata.ArtifactSHA256() + ".json", Status: "registered_existing", Config: researchJSON(map[string]any{"trained": false, "training": drawmodeldata.Training(), "secondaryThreshold": drawObservationSecondaryThreshold, "scoreMethod": drawScoreRecommendationVersion}), StartedAt: time.Now().UTC()})
 	if e != nil {
 		return e
 	}

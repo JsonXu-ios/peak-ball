@@ -1,0 +1,9 @@
+out/
+work/
+private/
+tools/
+__pycache__/
+*.apk
+*.jks
+*.p12
+*.pass

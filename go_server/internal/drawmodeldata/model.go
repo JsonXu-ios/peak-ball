@@ -3,13 +3,19 @@
 package drawmodeldata
 
 import (
+	"crypto/sha256"
 	_ "embed"
 	"encoding/json"
+	"fmt"
 	"math"
+	"sync/atomic"
 )
 
 //go:embed observation_v1.json
 var modelJSON []byte
+
+//go:embed observation_current.json
+var currentModelJSON []byte
 
 type Guard struct {
 	Feature string  `json:"feature"`
@@ -36,16 +42,126 @@ type node struct {
 }
 
 type artifact struct {
-	Schema    int            `json:"schema"`
-	Version   string         `json:"version"`
-	ModelID   string         `json:"modelId"`
-	Threshold float64        `json:"threshold"`
-	Baseline  float64        `json:"baseline"`
-	Features  []InputFeature `json:"features"`
-	Trees     [][]node       `json:"trees"`
+	Schema    int               `json:"schema"`
+	Version   string            `json:"version"`
+	ModelID   string            `json:"modelId"`
+	Threshold float64           `json:"threshold"`
+	Baseline  float64           `json:"baseline"`
+	Features  []InputFeature    `json:"features"`
+	Trees     [][]node          `json:"trees"`
+	Training  TrainingInfo      `json:"training"`
+	Checks    []predictionCheck `json:"checks"`
 }
 
 var frozen = mustLoadModel()
+
+// TrainingInfo is metadata only. Neither dates, IDs nor target outcomes are
+// model inputs; the content digest determines whether startup must refit.
+type TrainingInfo struct {
+	DataSHA256        string `json:"dataSHA256"`
+	RecipeSHA256      string `json:"recipeSHA256"`
+	FeatureCodeSHA256 string `json:"featureCodeSHA256"`
+	Rows              int    `json:"rows"`
+	SportteryRows     int    `json:"sportteryRows"`
+	LatestDate        string `json:"latestDate"`
+	GeneratedAt       string `json:"generatedAt"`
+}
+type predictionCheck struct {
+	Features map[string]float64 `json:"features"`
+	Score    float64            `json:"score"`
+	Selected bool               `json:"selected"`
+}
+type modelState struct {
+	model artifact
+	body  []byte
+	hash  string
+}
+
+var active atomic.Pointer[modelState]
+
+func init() {
+	state, err := parseModel(currentModelJSON)
+	if err != nil {
+		panic("invalid current draw model: " + err.Error())
+	}
+	active.Store(state)
+}
+
+func parseModel(body []byte) (*modelState, error) {
+	var model artifact
+	if err := json.Unmarshal(body, &model); err != nil {
+		return nil, err
+	}
+	if model.Schema != 1 || len(model.Features) != len(frozen.Features) || len(model.Trees) != 240 || model.Version == "" || !finite(model.Threshold) || model.Threshold <= 0 || model.Threshold >= 1 || !finite(model.Baseline) {
+		return nil, fmt.Errorf("unsupported draw model contract")
+	}
+	for i, f := range model.Features {
+		original := frozen.Features[i]
+		if f.Name != original.Name || !finite(f.Median) || len(f.Guards) != len(original.Guards) {
+			return nil, fmt.Errorf("invalid feature contract at %d", i)
+		}
+		for j, g := range f.Guards {
+			if g != original.Guards[j] {
+				return nil, fmt.Errorf("changed feature guard")
+			}
+		}
+	}
+	used := make([]bool, len(model.Features))
+	for _, tree := range model.Trees {
+		if len(tree) == 0 || len(tree) > 1024 {
+			return nil, fmt.Errorf("invalid tree size")
+		}
+		for i, n := range tree {
+			if n.Leaf {
+				if !finite(n.Value) {
+					return nil, fmt.Errorf("nonfinite tree leaf")
+				}
+				continue
+			}
+			if n.Feature < 0 || n.Feature >= len(model.Features) || n.Left <= i || n.Right <= i || n.Left >= len(tree) || n.Right >= len(tree) || !finite(n.Threshold) {
+				return nil, fmt.Errorf("invalid tree branch")
+			}
+			used[n.Feature] = true
+		}
+	}
+	for i, f := range model.Features {
+		if f.UsedInTrees != used[i] {
+			return nil, fmt.Errorf("incorrect used feature marker")
+		}
+	}
+	if model.Version != frozen.Version && (len(model.Checks) < 3 || len(model.Training.DataSHA256) != 64 || model.Training.Rows < 100 || len(model.Training.RecipeSHA256) != 64) {
+		return nil, fmt.Errorf("updated model lacks training audit or parity checks")
+	}
+	for _, c := range model.Checks {
+		got := predictModel(&model, c.Features)
+		if !finite(c.Score) || math.Abs(got.Score-c.Score) > 1e-11 || got.Selected != c.Selected {
+			return nil, fmt.Errorf("Python/Go prediction check failed")
+		}
+	}
+	return &modelState{model: model, body: append([]byte(nil), body...), hash: fmt.Sprintf("%x", sha256.Sum256(body))}, nil
+}
+
+// ValidateArtifact verifies the complete numeric contract without activation.
+func ValidateArtifact(body []byte) error { _, err := parseModel(body); return err }
+
+// LoadArtifact activates only a complete validated candidate. Call during
+// startup before accepting requests so one response cannot mix model versions.
+func LoadArtifact(body []byte) error {
+	state, err := parseModel(body)
+	if err != nil {
+		return err
+	}
+	active.Store(state)
+	return nil
+}
+func ActiveArtifact() []byte { return append([]byte(nil), active.Load().body...) }
+func Training() TrainingInfo { return active.Load().model.Training }
+
+// BaselineFeatures/Prediction preserve the original model for exact comparison.
+func BaselineFeatures() []InputFeature                   { return copyFeatures(&frozen) }
+func BaselineVersion() string                            { return frozen.Version }
+func BaselineThreshold() float64                         { return frozen.Threshold }
+func PredictBaseline(features map[string]float64) Result { return predictModel(&frozen, features) }
 
 func mustLoadModel() artifact {
 	var model artifact
@@ -69,13 +185,16 @@ type Result struct {
 	UsedFeatures     int     `json:"usedFeatures"`
 }
 
-func Version() string    { return frozen.Version }
-func ModelID() string    { return frozen.ModelID }
-func Threshold() float64 { return frozen.Threshold }
+func Version() string    { return active.Load().model.Version }
+func ModelID() string    { return active.Load().model.ModelID }
+func Threshold() float64 { return active.Load().model.Threshold }
 
 // Features returns a copy of the frozen ordered input/guard contract.
 func Features() []InputFeature {
-	result := append([]InputFeature(nil), frozen.Features...)
+	return copyFeatures(&active.Load().model)
+}
+func copyFeatures(model *artifact) []InputFeature {
+	result := append([]InputFeature(nil), model.Features...)
 	for i := range result {
 		result[i].Guards = append([]Guard(nil), result[i].Guards...)
 	}
@@ -84,7 +203,7 @@ func Features() []InputFeature {
 
 func UsedFeatureNames() []string {
 	result := make([]string, 0, 202)
-	for _, feature := range frozen.Features {
+	for _, feature := range active.Load().model.Features {
 		if feature.UsedInTrees {
 			result = append(result, feature.Name)
 		}
@@ -99,9 +218,12 @@ func finite(value float64) bool { return !math.IsNaN(value) && !math.IsInf(value
 // features must contain raw (not imputed) named numeric observations. Omitted
 // keys and nonfinite numbers mean unknown; an observed zero remains zero.
 func Predict(features map[string]float64) Result {
-	data := make([]float64, len(frozen.Features))
+	return predictModel(&active.Load().model, features)
+}
+func predictModel(model *artifact, features map[string]float64) Result {
+	data := make([]float64, len(model.Features))
 	result := Result{}
-	for index, feature := range frozen.Features {
+	for index, feature := range model.Features {
 		value, valid := features[feature.Name]
 		valid = valid && finite(value)
 		for _, guard := range feature.Guards {
@@ -120,8 +242,8 @@ func Predict(features map[string]float64) Result {
 			data[index] = feature.Median
 		}
 	}
-	raw := frozen.Baseline
-	for _, tree := range frozen.Trees {
+	raw := model.Baseline
+	for _, tree := range model.Trees {
 		index := 0
 		for !tree[index].Leaf {
 			current := tree[index]
@@ -135,6 +257,6 @@ func Predict(features map[string]float64) Result {
 		raw += tree[index].Value
 	}
 	result.Score = 1 / (1 + math.Exp(-raw))
-	result.Selected = result.Score >= frozen.Threshold
+	result.Selected = result.Score >= model.Threshold
 	return result
 }

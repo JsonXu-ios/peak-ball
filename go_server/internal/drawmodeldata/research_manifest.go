@@ -18,8 +18,7 @@ var featureContractSources embed.FS
 func ResearchManifest() json.RawMessage { return append(json.RawMessage(nil), researchManifestJSON...) }
 
 func ArtifactSHA256() string {
-	hash := sha256.Sum256(modelJSON)
-	return hex.EncodeToString(hash[:])
+	return active.Load().hash
 }
 
 func FeatureCodeSHA256() string {

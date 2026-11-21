@@ -737,6 +737,7 @@
 import { computed, defineComponent, h, onBeforeUnmount, onMounted, type PropType, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import analysisApi from '@/api/analysis'
+import { isSimulatedHandicapMarket } from '@/utils/bookmakerMarkets'
 import { resolveAssetUrl } from '@/api/request'
 import type {
   AccuracyMatchRow,
@@ -1887,10 +1888,10 @@ function scoreTriplet(scores: DirectionValues): string {
   return `主${scoreText(scores.home)} 平${scoreText(scores.draw)} 客${scoreText(scores.away)}`
 }
 
-const tradeMarketKeys = ['sporttery', 'sportterySim', 'sportteryRqspf', 'sportteryRqspfSim']
+const tradeMarketKeys = ['sporttery', 'sportterySim', 'sportteryRqspf']
 
 function bookmakerMarkets(item: AnalysisMatch): BookmakerMarket[] {
-  return (item.roiSimulation?.markets ?? []).filter((market) => tradeMarketKeys.includes(market.key))
+  return (item.roiSimulation?.markets ?? []).filter((market) => tradeMarketKeys.includes(market.key) && !isSimulatedHandicapMarket(market))
 }
 
 function showBookmakerSection(item: AnalysisMatch): boolean {

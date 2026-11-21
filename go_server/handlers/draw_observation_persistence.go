@@ -402,6 +402,9 @@ func (reader *drawObservationResultReader) storedDay(key, date, version string) 
 	if !drawObservationSelectionStoredDayReady(saved) {
 		return nil, nil
 	}
+	if !drawObservationModelStoredDayReady(saved) {
+		return nil, nil
+	}
 	if reader.loaders.research && !drawResearchStoredDayReady(saved, time.Now().UTC()) {
 		return nil, nil
 	}
@@ -484,6 +487,9 @@ func (saved *drawObservationStoredDay) filter(q drawObservationQuery) drawObserv
 	}
 	end := min(offset+size, len(selected))
 	response.Items = append(response.Items, selected[offset:end]...)
+	for i := range response.Items {
+		response.Items[i].FrontendAnalysis = drawObservationFrontendWithoutSimulatedHandicap(response.Items[i].FrontendAnalysis)
+	}
 	response.ResearchTakeover = buildDrawResearchTakeover(response.Items)
 	if saved.TakeoverVersion == drawResearchTakeoverVersion && response.ResearchTakeover == nil {
 		response.ResearchTakeover = emptyDrawResearchTakeover()

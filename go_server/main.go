@@ -2,6 +2,7 @@
 package main
 
 import (
+	"context"
 	"log"
 
 	"go_server/config"
@@ -18,6 +19,12 @@ func main() {
 		log.Fatalf("Failed to initialize database: %v", err)
 	}
 	log.Println("Database initialized successfully.")
+	// Refresh against the latest committed database before serving predictions.
+	// A failed refresh keeps the last validated model available.
+	modelStatus := handlers.RefreshDrawObservationModel(context.Background(), database.DB)
+	log.Printf("Draw model %s: %s (version=%s, trained_through=%s, added=%d, changed=%d, removed=%d)",
+		modelStatus.State, modelStatus.Message, modelStatus.ModelVersion, modelStatus.Training.LatestDate,
+		modelStatus.Added, modelStatus.Changed, modelStatus.Removed)
 	// The worker runs within this existing process; it never starts a service or
 	// migrates either database. Its immutable archives survive process restarts.
 	handlers.StartResearchStoreWorker()
@@ -62,6 +69,10 @@ func main() {
 		api.GET("/draw/history", handlers.GetDrawHistory)
 		api.GET("/draw/observations", handlers.GetDrawObservations)
 		api.GET("/draw/observations/dates", handlers.GetDrawObservationDates)
+		api.GET("/draw/model/status", handlers.GetDrawObservationModelStatus)
+		// Immutable all-match downloads for the LAN-only offline Android app.
+		api.POST("/mobile/sync/manifest", handlers.GetMobileSyncManifest)
+		api.POST("/mobile/sync/batch", handlers.GetMobileSyncBatch)
 		api.POST("/draw/history/rebuild", handlers.RebuildDrawHistory)
 		api.POST("/draw/history/calibrate", handlers.CalibrateDrawHistory)
 		api.GET("/research/overview", handlers.GetResearchOverview)

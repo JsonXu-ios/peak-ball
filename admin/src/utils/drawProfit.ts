@@ -1,9 +1,11 @@
 import type { BookmakerMarket, BookmakerOutcome, DrawObservation } from '@/types/drawHistory'
+import { isSimulatedHandicapMarket } from '../../../src/utils/bookmakerMarkets'
 
 export type DrawProfitKind = 'sporttery' | 'simulated'
 export interface DrawProfitOutcome {
   outcome: BookmakerOutcome['outcome']
   label: string
+  support: number | null
   profit: number | null
   rate: number | null
   unavailableReason: string
@@ -39,8 +41,9 @@ export function isDrawHandicapProfitMarket(market: Pick<BookmakerMarket, 'key'>)
 
 /** Display scope only; keep the result-market selector used by existing decisions unchanged. */
 export function isDrawProfitDisplayMarket(market: BookmakerMarket, kind: DrawProfitKind, includeHandicap = false): boolean {
+  if (isSimulatedHandicapMarket(market)) return false
   return kind === 'simulated'
-    ? isDrawSimulatedResultMarket(market) || (includeHandicap && market.simulated === true && isDrawHandicapProfitMarket(market))
+    ? isDrawSimulatedResultMarket(market)
     : !market.simulated && (market.key === 'sporttery' || (includeHandicap && market.key === 'sportteryRqspf'))
 }
 
@@ -56,6 +59,7 @@ export function drawProfitMarkets(row: DrawObservation, kind: DrawProfitKind, in
 
 function profitMarket(market: BookmakerMarket, totalStake: number | undefined): DrawProfitMarket {
   const rows = Array.isArray(market.bookmakerByOutcome) ? market.bookmakerByOutcome : []
+  const hasSupport = rows.some((row) => finite(row.retailShare) && row.retailShare > 0 && row.retailShare <= 100)
   const rowBases = rows.map((row) => row.totalStake).filter((value) => finite(value) && value > 0)
   const commonBase = rowBases.length === rows.length && rowBases.length > 0 && rowBases.every((value) => value === rowBases[0]) ? rowBases[0]! : null
   return {
@@ -73,6 +77,7 @@ function profitMarket(market: BookmakerMarket, totalStake: number | undefined): 
       return {
         outcome,
         label: isDrawHandicapProfitMarket(market) ? `让${label}` : label,
+        support: hasSupport && row && finite(row.retailShare) && row.retailShare >= 0 && row.retailShare <= 100 ? row.retailShare : null,
         profit: amountAvailable && finite(row!.bookmakerProfit) ? row!.bookmakerProfit : null,
         rate: finite(rate) ? rate : null,
         unavailableReason: !row ? '暂无本项明细' : !priced ? '赔率不足' : !row.available ? '测算数据不足' : '暂无',

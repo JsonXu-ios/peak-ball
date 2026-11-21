@@ -172,6 +172,21 @@ func drawObservationFrontendValues(response *analysisMatchResponse) *drawObserva
 	}
 }
 
+// Retired market cleanup is display-only: keep cached signals and the archived
+// input object unchanged, including when older durable days are reused.
+func drawObservationFrontendWithoutSimulatedHandicap(analysis *drawObservationFrontendAnalysis) *drawObservationFrontendAnalysis {
+	if analysis == nil {
+		return nil
+	}
+	simulation := withoutSimulatedHandicapMarkets(analysis.RoiSimulation)
+	if simulation == analysis.RoiSimulation {
+		return analysis
+	}
+	result := *analysis
+	result.RoiSimulation = simulation
+	return &result
+}
+
 func buildDrawObservationFrontend(match models.Money, history models.HistoryMoney, odds models.OddsMoney, pankou models.PankouMoney) drawObservationFrontendEnrichment {
 	response := buildAnalysisFromData(match, history, odds, pankou, sportteryTradeFromJSON(odds.SportteryTrade))
 	attachAnalysisWeights(&response)

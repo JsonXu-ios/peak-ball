@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { evictDrawObservationCache, getDrawObservations } from '@/api/drawHistory'
 import { clearDrawFrontendCache, loadDrawCompanyQuotes, loadDrawFrontendAnalysis } from '@/api/drawFrontend'
+import { clearDrawStandingsCache, loadDrawStandings, type DrawStandings } from '@/api/drawStandings'
 import { BEIJING_TIME_ZONE, beijingToday, formatBeijingDateTime } from '@/utils/date'
 import type { DrawFrontendAnalysis, DrawFrontendLoadState, DrawMatchStatusFilter, DrawMatchStatusOption, DrawSelectionFilter, DrawObservation, DrawObservationQuery, DrawObservedEuroOdds, DrawObservedLine, DrawRecentMatch, DrawObservationsResponse } from '@/types/drawHistory'
 import DrawFrontendData from './DrawFrontendData.vue'
@@ -45,6 +46,8 @@ const pageSize = ref(50)
 const expanded = ref<string[]>([])
 const frontendStates = reactive<Record<string, DrawFrontendLoadState>>({})
 const quoteStates = reactive<Record<string, DrawFrontendLoadState>>({})
+const standings = reactive<Record<string, DrawStandings>>({})
+const standingStates = reactive<Record<string, DrawFrontendLoadState>>({})
 const observationColumnCount = 23
 const legacyAnalysisObserved = ref(false)
 type AnalysisPrefetch = Promise<{ value: Map<string, DrawFrontendAnalysis> } | { error: unknown }>
@@ -193,11 +196,40 @@ async function supplementQuotes(row: DrawObservation, refresh = false) {
   }
 }
 
+async function supplementStandings(target = report.value, request = sequence) {
+  if (!target || request !== sequence) return
+  const queue = [...new Set(target.items.map((row) => String(row.matchId)))]
+  for (const matchId of queue) standingStates[matchId] = { loading: true, error: '' }
+  const current = () => request === sequence && report.value === target
+  const worker = async () => {
+    while (current() && queue.length) {
+      const matchId = queue.shift()!
+      try {
+        const value = await loadDrawStandings(matchId)
+        if (!current()) return
+        standings[matchId] = value
+        standingStates[matchId] = { loading: false, error: '' }
+      } catch {
+        if (!current()) return
+        standingStates[matchId] = { loading: false, error: '排名与已赛读取失败，点击刷新重试' }
+      }
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(4, queue.length) }, worker))
+}
+
+function standingTitle(matchId: string) {
+  const state = standingStates[matchId]
+  return state?.loading ? '正在读取联赛排名与已赛' : state?.error || '当前保存的联赛总成绩；已赛为联赛已完成场数，历史比赛的数据不一定是本场赛前值'
+}
+
 function clearSupplementStates() {
   analysisRequest++
   quoteRequests.clear()
   for (const key of Object.keys(frontendStates)) delete frontendStates[key]
   for (const key of Object.keys(quoteStates)) delete quoteStates[key]
+  for (const key of Object.keys(standings)) delete standings[key]
+  for (const key of Object.keys(standingStates)) delete standingStates[key]
 }
 
 function countFilters(): DrawObservationQuery | null {
@@ -313,6 +345,7 @@ async function load(resetPage = false, refresh = false) {
   const request = ++sequence
   if (refresh) {
     clearDrawFrontendCache()
+    clearDrawStandingsCache()
     calendarRevision.value++
   }
   const prefetched: AnalysisPrefetch | undefined = legacyAnalysisObserved.value
@@ -331,6 +364,7 @@ async function load(resetPage = false, refresh = false) {
       expanded.value = []
       if (data.items.length) legacyAnalysisObserved.value = data.items.some((row) => row.frontendAnalysis === undefined)
       void supplementAnalysis(report.value, request, false, prefetched)
+      void supplementStandings(report.value, request)
     }
   } catch (err) {
     if (request !== sequence) return
@@ -475,7 +509,10 @@ onBeforeUnmount(() => { sequence++ })
           <template v-for="row in report?.items || []" :key="row.matchId">
             <tr class="match-row" :class="{ 'is-expanded': expanded.includes(row.matchId) }" tabindex="0" role="button" :aria-expanded="expanded.includes(row.matchId)" @click="toggle(row)" @keydown.enter.prevent="toggle(row)" @keydown.space.prevent="toggle(row)">
               <td><div>{{ dateTime(row.matchTime || row.date) }}</div><div class="text-caption text-medium-emphasis">{{ row.league }}</div><div v-if="row.jingcaiId?.trim()" class="text-caption text-medium-emphasis">竞彩：{{ row.jingcaiId }}</div></td>
-              <td><div class="team-name"><DrawTeamLogo :src="row.homeLogo" :name="row.home" /><span>{{ row.home }}</span></div><div class="team-name text-medium-emphasis"><DrawTeamLogo :src="row.guestLogo" :name="row.guest" /><span>{{ row.guest }}</span></div></td>
+              <td>
+                <div class="team-entry"><div class="team-name"><DrawTeamLogo :src="row.homeLogo" :name="row.home" /><span>{{ row.home }}</span></div><div class="team-standing text-caption text-medium-emphasis" :title="standingTitle(row.matchId)">排名 {{ standings[row.matchId]?.home.rank ?? '暂无' }} · 已赛 {{ standings[row.matchId]?.home.played ?? '暂无' }}</div></div>
+                <div class="team-entry"><div class="team-name text-medium-emphasis"><DrawTeamLogo :src="row.guestLogo" :name="row.guest" /><span>{{ row.guest }}</span></div><div class="team-standing text-caption text-medium-emphasis" :title="standingTitle(row.matchId)">排名 {{ standings[row.matchId]?.away.rank ?? '暂无' }} · 已赛 {{ standings[row.matchId]?.away.played ?? '暂无' }}</div></div>
+              </td>
               <td><div v-if="row.settled" class="font-weight-bold text-primary">{{ row.homeScore }} : {{ row.awayScore }}</div><div v-else class="text-medium-emphasis">未结算</div><div class="text-caption text-medium-emphasis">{{ row.displayState || (row.settled ? '已完赛' : '未完赛') }}</div></td>
               <td class="frozen-signal-cell"><DrawFrozenSignal :row="row" /><DrawResearchSource :row="row" /></td>
               <td class="alternative-outcome-cell"><DrawAlternativeOutcome :row="row" /></td>
@@ -554,6 +591,8 @@ onBeforeUnmount(() => { sequence++ })
 .filter-status { flex: 0 1 150px; min-width: 135px; }
 .filter-selection { flex: 0 1 170px; min-width: 150px; }
 .team-name { display: flex; align-items: center; gap: 6px; min-height: 28px; }
+.team-entry { padding: 3px 0; }
+.team-standing { padding-left: 30px; }
 .filter-league { flex: 0 1 210px; min-width: 160px; }
 .filter-search { flex: 1 1 220px; min-width: 180px; }
 .observation-table :deep(th), .observation-table :deep(td) { white-space: nowrap; }

@@ -3,13 +3,11 @@ package handlers
 import (
 	"fmt"
 	"math"
-	"strings"
 )
 
 // 非竞彩比赛的本地模拟层：
 // 1. 模拟竞彩胜平负指数（平均欧赔隐含概率 × 竞彩返还率），让盈亏测算在非竞彩场次也能算出。
 // 2. 模拟冷热指数（欧赔初盘→即时盘变化 + 亚盘投注热度），弥补竞彩官方 hlr/dlr/alr 缺失。
-// 3. 按竞彩对标亚盘的规律模拟让球盘（让1/2/3球），再用泊松模型推出让球胜平负指数与盈亏。
 
 // 竞彩单关实际返还率约 0.85~0.90，取 0.88 作为模拟指数的返还率。
 const simulatedSportteryReturn = 0.88
@@ -161,133 +159,6 @@ func simulatedRetailDistribution(in retailWeightInputs) [3]float64 {
 	}
 }
 
-// simulatedRqspfGoal 按竞彩比赛对标亚盘的规律，把亚盘即时盘映射为竞彩式整数让球数。
-// 约定：负数=主队让球（同竞彩 jyykRqspf.goal），亚盘正盘口=主让。
-// 规律：亚盘 0.75~1.5 → 让1；1.75~2.25 → 让2；≥2.5 → 让3；受让方向对称；
-// 浅盘（|盘口|<0.75）时竞彩通常给弱势一方受让1球。
-func simulatedRqspfGoal(response *analysisMatchResponse) (int, bool) {
-	line := response.YapanPankou2
-	if line == 0 {
-		line = response.YapanPankou1
-	}
-	hasLine := response.YapanPankou1 != 0 || response.YapanPankou2 != 0
-	switch {
-	case line >= 2.5:
-		return -3, true
-	case line >= 1.75:
-		return -2, true
-	case line >= 0.75:
-		return -1, true
-	case line <= -2.5:
-		return 3, true
-	case line <= -1.75:
-		return 2, true
-	case line <= -0.75:
-		return 1, true
-	}
-	if !hasLine && response.WinProbability == 0 && response.LoseProbability == 0 {
-		return 0, false
-	}
-	// 浅盘：弱势一方受让1球。
-	if response.WinProbability >= response.LoseProbability {
-		return -1, true
-	}
-	return 1, true
-}
-
-// simulatedRqspfProbabilities 用泊松比分矩阵推让球后的胜平负概率。
-// 总进球期望取大小球即时盘，主客分差期望取亚盘盘口。
-func simulatedRqspfProbabilities(response *analysisMatchResponse, goal int) ([3]float64, bool) {
-	totalLine := response.QiushuPankou2
-	if totalLine <= 0 {
-		totalLine = response.QiushuPankou1
-	}
-	if totalLine <= 0 {
-		totalLine = 2.5
-	}
-	totalLine = clamp(totalLine, 1.2, 4.5)
-
-	diff := clamp(response.YapanPankou2, -3.5, 3.5)
-	if diff == 0 {
-		diff = clamp(response.YapanPankou1, -3.5, 3.5)
-	}
-
-	homeLambda := math.Max(0.15, (totalLine+diff)/2)
-	guestLambda := math.Max(0.15, (totalLine-diff)/2)
-
-	const maxGoals = 9
-	homePMF := poissonPMF(homeLambda, maxGoals)
-	guestPMF := poissonPMF(guestLambda, maxGoals)
-
-	win, draw, lose := 0.0, 0.0, 0.0
-	for home := 0; home <= maxGoals; home++ {
-		for guest := 0; guest <= maxGoals; guest++ {
-			probability := homePMF[home] * guestPMF[guest]
-			adjusted := home + goal
-			switch {
-			case adjusted > guest:
-				win += probability
-			case adjusted == guest:
-				draw += probability
-			default:
-				lose += probability
-			}
-		}
-	}
-	total := win + draw + lose
-	if total <= 0 {
-		return [3]float64{}, false
-	}
-	return [3]float64{win / total, draw / total, lose / total}, true
-}
-
-func poissonPMF(lambda float64, maxCount int) []float64 {
-	values := make([]float64, maxCount+1)
-	term := math.Exp(-lambda)
-	values[0] = term
-	for count := 1; count <= maxCount; count++ {
-		term = term * lambda / float64(count)
-		values[count] = term
-	}
-	return values
-}
-
-// buildSimulatedRqspfMarket 生成"竞彩让球(模拟)"市场：让球数按亚盘规律，指数按泊松概率，
-// 投注分布按概率归一（散户按赔率隐含强弱下注），盈亏由通用公式结算。
-func buildSimulatedRqspfMarket(response *analysisMatchResponse) (bookmakerMarketResponse, bool) {
-	goal, ok := simulatedRqspfGoal(response)
-	if !ok {
-		return bookmakerMarketResponse{}, false
-	}
-	probabilities, ok := simulatedRqspfProbabilities(response, goal)
-	if !ok {
-		return bookmakerMarketResponse{}, false
-	}
-
-	odds := [3]float64{}
-	distribution := [3]float64{}
-	for index := 0; index < 3; index++ {
-		probability := math.Max(probabilities[index], 0.005)
-		odds[index] = round2(clamp(simulatedSportteryReturn/probability, 1.01, 60))
-		distribution[index] = round2(probabilities[index] * 100)
-	}
-
-	goalText := fmt.Sprintf("%+d", goal)
-	source := bookmakerOddsSource{
-		Key:  "sportteryRqspf",
-		Name: "竞彩让球模拟(" + goalText + ")",
-		Odds: odds,
-		Goal: goalText,
-	}
-	market := buildBookmakerMarket(source, distribution, true)
-	market.Simulated = true
-	market.SimulationNote = "模拟数据：让球数按竞彩对标亚盘规律（亚盘 " + pfTrim(response.YapanPankou2, 2) + "），指数与分布由泊松模型和平均欧赔推算，非竞彩官方数据"
-	if hotCold, ok := simulatedHotColdIndexes(response); ok {
-		applySimulatedHotCold(&market, hotCold)
-	}
-	return market, true
-}
-
 // buildSimulatedSpfCompareMarket 竞彩比赛的模拟对比盘：完全按非竞彩口径
 // （平均欧赔折算指数 + 散户心理分布 + 模拟冷热）再算一遍，并在备注里给出与官方的指数差。
 func buildSimulatedSpfCompareMarket(response *analysisMatchResponse, official *bookmakerMarketResponse) (bookmakerMarketResponse, bool) {
@@ -315,27 +186,6 @@ func buildSimulatedSpfCompareMarket(response *analysisMatchResponse, official *b
 		applySimulatedHotCold(&market, hotCold)
 	}
 	return market, true
-}
-
-// decorateSimulatedRqspfCompare 把竞彩比赛的模拟让球盘改成对比盘：独立 key，
-// 备注里对比模拟让球数与官方让球数、模拟指数与官方指数的差距。
-func decorateSimulatedRqspfCompare(simulated *bookmakerMarketResponse, official *bookmakerMarketResponse, trade sportteryTradeData) {
-	simulated.Key = "sportteryRqspfSim"
-
-	officialGoal := strings.TrimSpace(trade.JyykRqspf.Goal)
-	note := simulated.SimulationNote
-	if officialGoal != "" {
-		agreement := "两者一致"
-		if parsePankouLine(officialGoal) != parsePankouLine(simulated.Goal) {
-			agreement = "两者不一致，注意校准映射"
-		}
-		note += fmt.Sprintf("；官方让球 %s vs 模拟让球 %s（%s）", officialGoal, simulated.Goal, agreement)
-	}
-	if official != nil && official.OddsAvailable && simulated.OddsAvailable {
-		note += fmt.Sprintf("；与官方指数差 主%+.2f 平%+.2f 客%+.2f",
-			simulated.Odds.Home-official.Odds.Home, simulated.Odds.Draw-official.Odds.Draw, simulated.Odds.Away-official.Odds.Away)
-	}
-	simulated.SimulationNote = note
 }
 
 // applySimulatedHotCold 把模拟冷热指数写入官方值缺失的赛果行，返回是否有写入。

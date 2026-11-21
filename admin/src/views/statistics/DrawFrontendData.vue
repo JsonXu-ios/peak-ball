@@ -2,13 +2,14 @@
 import { computed } from 'vue'
 import type { BookmakerOutcome, DirectionValues, DrawCompanyQuote, DrawFrontendLoadState, DrawObservation, DrawObservedEuroOdds, DrawObservedLine } from '@/types/drawHistory'
 import { isDrawProfitDisplayMarket } from '@/utils/drawProfit'
+import { isSimulatedHandicapMarket } from '../../../../src/utils/bookmakerMarkets'
 import DrawProfitTable from './DrawProfitTable.vue'
 import DrawComparisonStages from './DrawComparisonStages.vue'
 
 const props = defineProps<{ row: DrawObservation; compact?: boolean; heatOnly?: boolean; comparisonStage?: 'opening' | 'latest'; analysisState?: DrawFrontendLoadState; quotesState?: DrawFrontendLoadState }>()
 defineEmits<{ retryAnalysis: []; retryQuotes: [] }>()
 const analysis = computed(() => props.row.frontendAnalysis)
-const markets = computed(() => analysis.value?.roiSimulation?.markets || [])
+const markets = computed(() => (analysis.value?.roiSimulation?.markets || []).filter((market) => !isSimulatedHandicapMarket(market)))
 const tradeMarkets = computed(() => markets.value.filter((market) => !market.simulated && !['william', 'bet365'].includes(market.key)))
 const simulatedMarkets = computed(() => markets.value.filter((market) => isDrawProfitDisplayMarket(market, 'simulated', true)))
 const sporttery = computed(() => markets.value.find((market) => market.key === 'sporttery' && !market.simulated))

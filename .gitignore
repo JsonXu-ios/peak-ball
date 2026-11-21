@@ -15,3 +15,9 @@ __pycache__/
 *.py[cod]
 # Research ingestion failure spool contains source data, not source code.
 **/data/research-ingest-pending/
+
+# Runtime draw-model updates, local Python environment and training snapshots.
+/data/draw-model/
+
+# Local mobile synchronization snapshots; the app source and lockfile are tracked.
+**/data/mobile-sync/

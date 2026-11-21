@@ -11,6 +11,11 @@ const router = createRouter({
     {
       path: '/analysis',
       name: 'analysis-home',
+      component: () => import('../views/draw/MobileDrawObservation.vue')
+    },
+    {
+      path: '/analysis/classic',
+      name: 'analysis-classic',
       component: () => import('../views/match/MatchListHome.vue')
     },
     {

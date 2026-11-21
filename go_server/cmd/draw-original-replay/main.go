@@ -58,14 +58,14 @@ func main() {
 		if err != nil {
 			log.Fatal(err)
 		}
-		prediction := drawmodeldata.Predict(features)
+		prediction := drawmodeldata.PredictBaseline(features)
 		pick := prediction.ObservedFeatures > 0 && prediction.Selected
 		if pick {
 			selected++
 		}
 		rows = append(rows, row{identity.MatchID, prediction.Score, pick, prediction.ObservedFeatures, prediction.UsedFeatures})
 	}
-	result := map[string]interface{}{"version": "original-frozen-replay-v1", "modelVersion": drawmodeldata.Version(), "threshold": drawmodeldata.Threshold(), "inputSHA256": fmt.Sprintf("%x", sha256.Sum256(body)), "sourceGeneratedAt": source.GeneratedAt, "rows": rows, "selected": selected, "servicesStarted": false, "sourceDatabaseAccess": false, "modelTrained": false}
+	result := map[string]interface{}{"version": "original-frozen-replay-v1", "modelVersion": drawmodeldata.BaselineVersion(), "threshold": drawmodeldata.BaselineThreshold(), "inputSHA256": fmt.Sprintf("%x", sha256.Sum256(body)), "sourceGeneratedAt": source.GeneratedAt, "rows": rows, "selected": selected, "servicesStarted": false, "sourceDatabaseAccess": false, "modelTrained": false}
 	encoded, err := json.Marshal(result)
 	if err != nil {
 		log.Fatal(err)
@@ -76,5 +76,5 @@ func main() {
 	if err = os.WriteFile(*out, encoded, 0600); err != nil {
 		log.Fatal(err)
 	}
-	fmt.Printf("rows=%d selected=%d model=%s output=%s servicesStarted=false modelTrained=false\n", len(rows), selected, drawmodeldata.Version(), *out)
+	fmt.Printf("rows=%d selected=%d model=%s output=%s servicesStarted=false modelTrained=false\n", len(rows), selected, drawmodeldata.BaselineVersion(), *out)
 }

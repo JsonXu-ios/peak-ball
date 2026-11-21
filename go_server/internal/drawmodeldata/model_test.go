@@ -26,7 +26,7 @@ func TestFrozenRuntimeAgainstSavedPythonModel(t *testing.T) {
 	}
 	for _, fixture := range fixtures {
 		t.Run(fixture.Name, func(t *testing.T) {
-			got := Predict(fixture.Features)
+			got := PredictBaseline(fixture.Features)
 			if math.Abs(got.Score-fixture.Score) > 1e-12 || got.Selected != fixture.Selected {
 				t.Fatalf("got %+v; want score %.17g selected %v", got, fixture.Score, fixture.Selected)
 			}
@@ -38,15 +38,21 @@ func TestFrozenRuntimeAgainstSavedPythonModel(t *testing.T) {
 }
 
 func TestFrozenModelContract(t *testing.T) {
-	if Version() != "sporttery-draw-observation-v1" || ModelID() != "clean_d3_l40_i240" || Threshold() != 0.2016984853563883 {
+	if frozen.Version != "sporttery-draw-observation-v1" || frozen.ModelID != "clean_d3_l40_i240" || frozen.Threshold != 0.2016984853563883 {
 		t.Fatal("unexpected frozen model identity or threshold")
 	}
-	features := Features()
-	if len(features) != 391 || len(UsedFeatureNames()) != 202 {
+	features := BaselineFeatures()
+	used := 0
+	for _, feature := range features {
+		if feature.UsedInTrees {
+			used++
+		}
+	}
+	if len(features) != 391 || used != 202 {
 		t.Fatal("unexpected input or used feature count")
 	}
 	features[0].Name = "mutated"
-	if Features()[0].Name == "mutated" {
+	if BaselineFeatures()[0].Name == "mutated" {
 		t.Fatal("Features must not expose mutable shared metadata")
 	}
 	for _, tree := range frozen.Trees {
@@ -65,7 +71,7 @@ func TestFrozenModelContract(t *testing.T) {
 }
 
 func TestUnknownAndInsufficientHistoryStayMissing(t *testing.T) {
-	missing := Predict(nil)
+	missing := PredictBaseline(nil)
 	if missing.ObservedFeatures != 0 {
 		t.Fatal("missing input falsely counted observed")
 	}
@@ -76,7 +82,7 @@ func TestUnknownAndInsufficientHistoryStayMissing(t *testing.T) {
 			input[feature.Name] = 1e20
 		}
 	}
-	got := Predict(input)
+	got := PredictBaseline(input)
 	if got != missing {
 		t.Fatalf("unknown guards must fall back to same medians: %+v vs %+v", got, missing)
 	}
@@ -119,7 +125,7 @@ func TestOfflineAllRowsReference(t *testing.T) {
 				features[reference.Names[i]] = *value
 			}
 		}
-		got := Predict(features)
+		got := PredictBaseline(features)
 		error := math.Abs(got.Score - row.Score)
 		maximumError = math.Max(maximumError, error)
 		if error > 1e-12 || got.Selected != row.Selected {

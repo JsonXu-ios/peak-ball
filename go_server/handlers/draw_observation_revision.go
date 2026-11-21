@@ -12,6 +12,7 @@ import (
 	"sync"
 
 	"go_server/database"
+	"go_server/internal/drawmodeldata"
 	"gorm.io/gorm"
 )
 
@@ -82,7 +83,7 @@ func newDrawObservationSourceLoaderWithMemo(resolve func() *gorm.DB, store drawO
 			}
 		}
 		core := drawObservationDigest(coreParts)
-		dayParts := []interface{}{core, q.date, q.start, q.end}
+		dayParts := []interface{}{core, q.date, q.start, q.end, drawmodeldata.ArtifactSHA256()}
 		for _, table := range []string{"moneys", "money", "history_moneys", "odds_moneys", "pankou_moneys"} {
 			if !currentSchema[table]["match_id"] {
 				continue

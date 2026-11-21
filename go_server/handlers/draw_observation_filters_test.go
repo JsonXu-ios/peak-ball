@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"go_server/internal/drawmodeldata"
 )
 
 func TestDrawObservationListStatusQueryValidationAndEcho(t *testing.T) {
@@ -248,10 +249,10 @@ func TestDrawObservationListStatusReusesDurableDayAcrossQueriesAndReaders(t *tes
 	for i := range saved.Items {
 		if i%2 == 0 {
 			saved.Items[i].JingcaiID = "20261021001"
-			saved.Items[i].FrozenDrawSignal = &drawObservationFrozenSignal{State: "selected"}
+			saved.Items[i].FrozenDrawSignal = &drawObservationFrozenSignal{State: "selected", ModelVersion: drawmodeldata.Version()}
 		} else {
 			saved.Items[i].JingcaiID = ""
-			saved.Items[i].NonSportterySignal = &drawObservationFrozenSignal{State: "selected"}
+			saved.Items[i].NonSportterySignal = &drawObservationFrozenSignal{State: "selected", ModelVersion: drawmodeldata.Version()}
 		}
 		// Keep the independent totals fixture consistent with the changed scope.
 		saved.Items[i].TotalsPrediction = drawObservationTotalsSignal(saved.Items[i], nil)

@@ -71,14 +71,14 @@ const router = useRouter()
 const activeTab = ref('home')
 
 const showBottomNav = computed(() => {
-  return !route.path.startsWith('/match/')
+  return !route.path.startsWith('/match/') && route.path !== '/analysis'
 })
 
 watch(
   () => route.path,
   (path) => {
     if (path === '/') activeTab.value = 'home'
-    else if (path === '/analysis') activeTab.value = 'analysis'
+    else if (path.startsWith('/analysis')) activeTab.value = 'analysis'
     else if (path === '/dashboard') activeTab.value = 'dashboard'
     else if (path === '/expert') activeTab.value = 'expert'
     else if (path === '/leaderboard') activeTab.value = 'leaderboard'

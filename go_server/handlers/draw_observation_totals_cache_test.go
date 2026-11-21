@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"go_server/internal/drawmodeldata"
 	"go_server/internal/jcgoalsmodel"
 )
 
@@ -39,10 +40,10 @@ func totalsCacheDay(jingcaiID string, prediction *drawObservationTotalsPredictio
 			Date:               "2026-11-04",
 			MatchTime:          time.Date(2026, 11, 4, 12, 15, 0, 0, time.UTC),
 			TotalsPrediction:   prediction,
-			NonSportterySignal: &drawObservationFrozenSignal{State: "unavailable"},
+			NonSportterySignal: &drawObservationFrozenSignal{State: "unavailable", ModelVersion: drawmodeldata.Version()},
 		}},
 	}
-	day.Items[0].FrozenDrawSignal = drawObservationApplySelectionEligibility(day.Items[0], &drawObservationFrozenSignal{State: "unavailable"})
+	day.Items[0].FrozenDrawSignal = drawObservationApplySelectionEligibility(day.Items[0], &drawObservationFrozenSignal{State: "unavailable", ModelVersion: drawmodeldata.Version()})
 	return day
 }
 

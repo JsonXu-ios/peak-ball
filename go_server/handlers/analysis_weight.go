@@ -209,16 +209,36 @@ func buildBookmakerMarkets(response *analysisMatchResponse, retailDistribution [
 
 		if rqspfMarket, ok := buildSportteryRqspfMarket(trade); ok {
 			items = append(items, rqspfMarket)
-			if simRqspf, ok := buildSimulatedRqspfMarket(response); ok {
-				decorateSimulatedRqspfCompare(&simRqspf, &rqspfMarket, trade)
-				items = append(items, simRqspf)
-			}
-		} else if simulatedRqspf, ok := buildSimulatedRqspfMarket(response); ok {
-			// 非竞彩比赛：按亚盘规律模拟竞彩让球盘（让1/2/3球）并结算盈亏。
-			items = append(items, simulatedRqspf)
 		}
 	}
 	return items
+}
+
+// Both legacy keys may exist in saved responses. Real handicap quotes remain valid.
+func isSimulatedHandicapMarket(market bookmakerMarketResponse) bool {
+	return market.Key == "sportteryRqspfSim" || market.Key == "sportteryRqspf" && market.Simulated
+}
+
+// Filter a response projection without rewriting archived inputs or mutating a
+// shared cached slice. Other markets retain their exact original values.
+func withoutSimulatedHandicapMarkets(simulation *matchRoiSimulationResponse) *matchRoiSimulationResponse {
+	if simulation == nil {
+		return nil
+	}
+	for _, market := range simulation.Markets {
+		if !isSimulatedHandicapMarket(market) {
+			continue
+		}
+		result := *simulation
+		result.Markets = make([]bookmakerMarketResponse, 0, len(simulation.Markets)-1)
+		for _, retained := range simulation.Markets {
+			if !isSimulatedHandicapMarket(retained) {
+				result.Markets = append(result.Markets, retained)
+			}
+		}
+		return &result
+	}
+	return simulation
 }
 
 func buildBookmakerMarket(source bookmakerOddsSource, retailDistribution [3]float64, retailAvailable bool) bookmakerMarketResponse {

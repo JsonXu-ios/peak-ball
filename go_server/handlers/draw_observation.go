@@ -237,6 +237,7 @@ func GetDrawObservations(c *gin.Context) {
 	// Older durable days are regenerated before reaching this point; never
 	// fabricate a fixed score pair when source evidence is unavailable.
 	for i := range response.Items {
+		response.Items[i].FrontendAnalysis = drawObservationFrontendWithoutSimulatedHandicap(response.Items[i].FrontendAnalysis)
 		response.Items[i].FrozenDrawSignal = drawObservationApplySelectionEligibility(response.Items[i], response.Items[i].FrozenDrawSignal)
 		decision := drawObservationSecondaryDecision(response.Items[i])
 		response.Items[i].SecondaryDecision = &decision

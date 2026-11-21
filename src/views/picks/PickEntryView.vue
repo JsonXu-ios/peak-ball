@@ -384,6 +384,7 @@
 import { reactive, ref, onMounted } from 'vue'
 import picksApi from '@/api/picks'
 import type { AnalysisMatch, BookmakerMarket, PickEntryMatch, PlatformGoalPair } from '@/types/analysis'
+import { isSimulatedHandicapMarket } from '@/utils/bookmakerMarkets'
 
 type Market = 'spf' | 'rqspf' | 'dxq' | 'score'
 
@@ -638,11 +639,11 @@ function recentMini(value: unknown[] | undefined): string {
 }
 
 function tradeMarkets(item: PickEntryMatch): BookmakerMarket[] {
-  return (item.roiSimulation?.markets ?? []).filter((market) => ['sporttery', 'sportterySim', 'sportteryRqspf', 'sportteryRqspfSim'].includes(market.key))
+  return (item.roiSimulation?.markets ?? []).filter((market) => ['sporttery', 'sportterySim', 'sportteryRqspf'].includes(market.key) && !isSimulatedHandicapMarket(market))
 }
 
 function rqspfGoal(item: AnalysisMatch): string {
-  const market = item.roiSimulation?.markets?.find((entry) => entry.key === 'sportteryRqspf')
+  const market = item.roiSimulation?.markets?.find((entry) => entry.key === 'sportteryRqspf' && !isSimulatedHandicapMarket(entry))
   return market?.goal ? String(market.goal) : ''
 }
 
