@@ -38,7 +38,7 @@ type DrawObservationTrainingSnapshot struct {
 
 func BuildDrawObservationTrainingSnapshot(source DrawFeatureStudyDataset) (DrawObservationTrainingSnapshot, error) {
 	result := DrawObservationTrainingSnapshot{Version: "draw-observation-training-v1", GeneratedAt: source.GeneratedAt,
-		FeatureCodeSHA256: drawTrainingFeatureHash, Features: drawmodeldata.BaselineFeatures(),
+		FeatureCodeSHA256: drawTrainingFeatureHash, Features: drawmodeldata.ModelFeatures(),
 		Rows: []DrawObservationTrainingRow{}, RowHashes: map[string]string{}}
 	needed := map[string]bool{}
 	for _, f := range result.Features {
@@ -61,7 +61,7 @@ func BuildDrawObservationTrainingSnapshot(source DrawFeatureStudyDataset) (DrawO
 		if err != nil {
 			return result, err
 		}
-		features, err := drawmodeldata.ExtractFeatures(raw)
+		features, err := drawmodeldata.ExtractModelFeatures(raw)
 		if err != nil {
 			return result, err
 		}

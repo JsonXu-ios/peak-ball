@@ -14,7 +14,7 @@ void main() {
 ThemeData yuanbaoTheme() => ThemeData(
   useMaterial3: true,
   colorScheme: ColorScheme.fromSeed(
-    seedColor: const Color(0xff245cdd),
+    seedColor: const Color(0xff236957),
     brightness: Brightness.light,
     surface: Colors.white,
   ),

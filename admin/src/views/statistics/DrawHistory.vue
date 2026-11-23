@@ -10,6 +10,8 @@ import DrawFeatureSignal from './DrawFeatureSignal.vue'
 import DrawProfitSummary from './DrawProfitSummary.vue'
 import DrawFrozenSignal from './DrawFrozenSignal.vue'
 import DrawAlternativeOutcome from './DrawAlternativeOutcome.vue'
+import DrawMarketBaseline from './DrawMarketBaseline.vue'
+import { summarizeDrawMarketBaseline, DRAW_MARKET_BASELINE_THRESHOLD } from '@/utils/drawMarketBaseline'
 import DrawTotalsPrediction from './DrawTotalsPrediction.vue'
 import DrawNonSporttery from './DrawNonSporttery.vue'
 import DrawSecondarySignal from './DrawSecondarySignal.vue'
@@ -48,7 +50,7 @@ const frontendStates = reactive<Record<string, DrawFrontendLoadState>>({})
 const quoteStates = reactive<Record<string, DrawFrontendLoadState>>({})
 const standings = reactive<Record<string, DrawStandings>>({})
 const standingStates = reactive<Record<string, DrawFrontendLoadState>>({})
-const observationColumnCount = 23
+const observationColumnCount = 24
 const legacyAnalysisObserved = ref(false)
 type AnalysisPrefetch = Promise<{ value: Map<string, DrawFrontendAnalysis> } | { error: unknown }>
 let analysisRequest = 0
@@ -70,6 +72,8 @@ let sequence = 0
 const pages = computed(() => Math.max(1, Math.ceil((report.value?.total || 0) / pageSize.value)))
 const legacyHistoryCoverage = computed(() => !!report.value && mode.value !== 'today' && !report.value.scheduleTimezone)
 const summaryPrefix = computed(() => scope.value === 'sporttery' ? '竞彩主比赛表' : '主比赛表')
+const marketSummary = computed(() => summarizeDrawMarketBaseline(report.value?.items || []))
+const rate = (draws: number, settled: number) => settled ? `${draws}/${settled}（${(draws / settled * 100).toFixed(1)}%）` : '—'
 const secondarySummary = computed(() => {
   const counts = { selected: 0, retained: 0, rejected: 0, unavailable: 0 }
   for (const row of report.value?.items || []) {
@@ -489,6 +493,13 @@ onBeforeUnmount(() => { sequence++ })
           <span class="text-warning">二次剔除 {{ secondarySummary.rejected }} 场</span>
           <span v-if="secondarySummary.unavailable">待计算 {{ secondarySummary.unavailable }} 场</span>
         </div>
+        <div v-if="report" class="d-flex flex-wrap ga-3 text-caption mt-2" data-market-summary>
+          <strong>市场对照（平局隐含≥{{ (DRAW_MARKET_BASELINE_THRESHOLD * 100).toFixed(0) }}%）本页：</strong>
+          <span>市场入选 {{ marketSummary.market.selected }} 场，已完赛命中 {{ rate(marketSummary.market.draws, marketSummary.market.settled) }}</span>
+          <span>原模型入选 {{ marketSummary.model.selected }} 场，已完赛命中 {{ rate(marketSummary.model.draws, marketSummary.model.settled) }}</span>
+          <span>同选 {{ marketSummary.both }} · 仅市场 {{ marketSummary.marketOnly }} · 仅模型 {{ marketSummary.modelOnly }}</span>
+          <span v-if="report.items?.length && marketSummary.rows < report.items.filter((item) => item.jingcaiId?.trim()).length" class="text-medium-emphasis">部分竞彩场次均赔或交锋数据尚未加载</span>
+        </div>
         <div class="text-caption text-medium-emphasis mt-1">以上本页数量仅用于核对当前列表。规则版本与门槛固定，不会随历史增加自动训练；历史和赔率补齐可能改变单场分数。标记按当前快照计算，尚未锁定首次赛前决定。</div>
       </v-card-text>
     </v-card>
@@ -504,7 +515,7 @@ onBeforeUnmount(() => { sequence++ })
       <v-progress-linear v-if="loading" indeterminate color="primary" />
       <v-divider v-else />
       <v-table density="comfortable" class="observation-table">
-        <thead><tr><th>时间 / 联赛</th><th>主队 / 客队</th><th>比分 / 状态</th><th title="竞彩原入选要求原模型分数达标且至少1场有效赛前交锋；分析服务决定入选，完赛后核对平局">模型选平 ⓘ</th><th title="原模型入选平局后，取即时平均欧赔中主客赔率较低的一方；市场备选，不是决策树第二名；同价或缺失不猜">次选胜负 ⓘ</th><th title="独立大小球推荐；按常规时间赛果和四分之一盘核对全赢、赢半、走盘、输半、全输">大小球 ⓘ</th><th title="仅处理无竞彩编号的比赛；沿用现有固定模型独立选平，入选后按真实即时均赔主客低赔给次选；赛果只用于核对">非竞彩选平 / 次选 ⓘ</th><th title="竞彩原入选已要求至少1场有效赛前交锋；二次保留另需真实竞彩初即时盘完整且分数达到0.225">二次筛选 ⓘ</th><th title="二次保留后按本场竞彩比分报价或进球数据排序，依次展示首选和次选平局比分">两比分推荐 ⓘ</th><th title="两套最低盈亏方向无交集时标记；仅为增强观察，不改变候选名单">盈亏分歧 ⓘ</th><th>主队赛前近 10 场</th><th>客队赛前近 10 场</th><th>赛前历史交锋</th><th>欧赔（主 / 平 / 客）</th><th>亚盘（主 / 客水位）</th><th>大小球（大 / 小水位）</th><th>投注热度</th><th>初盘对比</th><th>即时盘对比</th><th :title="DRAW_FEATURE_NOTE">平局特征 ⓘ</th><th>竞彩庄家盈亏</th><th>模拟庄家盈亏</th><th>核查</th></tr></thead>
+        <thead><tr><th>时间 / 联赛</th><th>主队 / 客队</th><th>比分 / 状态</th><th title="竞彩原入选要求原模型分数达标且至少1场有效赛前交锋；分析服务决定入选，完赛后核对平局">模型选平 ⓘ</th><th title="原模型入选平局后，取即时平均欧赔中主客赔率较低的一方；市场备选，不是决策树第二名；同价或缺失不猜">次选胜负 ⓘ</th><th title="即时平均欧赔按1/赔率归一化的平局隐含概率，≥25%为市场入选；门槛只用2026-10-15前竞彩数据选定，之后只做前瞻观察。口径同原模型：竞彩且至少1场赛前交锋">市场对照 ⓘ</th><th title="独立大小球推荐；按常规时间赛果和四分之一盘核对全赢、赢半、走盘、输半、全输">大小球 ⓘ</th><th title="仅处理无竞彩编号的比赛；沿用现有固定模型独立选平，入选后按真实即时均赔主客低赔给次选；赛果只用于核对">非竞彩选平 / 次选 ⓘ</th><th title="竞彩原入选已要求至少1场有效赛前交锋；二次保留另需真实竞彩初即时盘完整且分数达到0.225">二次筛选 ⓘ</th><th title="二次保留后按本场竞彩比分报价或进球数据排序，依次展示首选和次选平局比分">两比分推荐 ⓘ</th><th title="两套最低盈亏方向无交集时标记；仅为增强观察，不改变候选名单">盈亏分歧 ⓘ</th><th>主队赛前近 10 场</th><th>客队赛前近 10 场</th><th>赛前历史交锋</th><th>欧赔（主 / 平 / 客）</th><th>亚盘（主 / 客水位）</th><th>大小球（大 / 小水位）</th><th>投注热度</th><th>初盘对比</th><th>即时盘对比</th><th :title="DRAW_FEATURE_NOTE">平局特征 ⓘ</th><th>竞彩庄家盈亏</th><th>模拟庄家盈亏</th><th>核查</th></tr></thead>
         <tbody>
           <template v-for="row in report?.items || []" :key="row.matchId">
             <tr class="match-row" :class="{ 'is-expanded': expanded.includes(row.matchId) }" tabindex="0" role="button" :aria-expanded="expanded.includes(row.matchId)" @click="toggle(row)" @keydown.enter.prevent="toggle(row)" @keydown.space.prevent="toggle(row)">
@@ -516,6 +527,7 @@ onBeforeUnmount(() => { sequence++ })
               <td><div v-if="row.settled" class="font-weight-bold text-primary">{{ row.homeScore }} : {{ row.awayScore }}</div><div v-else class="text-medium-emphasis">未结算</div><div class="text-caption text-medium-emphasis">{{ row.displayState || (row.settled ? '已完赛' : '未完赛') }}</div></td>
               <td class="frozen-signal-cell"><DrawFrozenSignal :row="row" /><DrawResearchSource :row="row" /></td>
               <td class="alternative-outcome-cell"><DrawAlternativeOutcome :row="row" /></td>
+              <td class="market-baseline-cell"><DrawMarketBaseline :row="row" /></td>
               <td class="totals-prediction-cell"><DrawTotalsPrediction :row="row" /></td>
               <td class="nonsporttery-signal-cell"><DrawNonSporttery :row="row" /></td>
               <td class="secondary-signal-cell"><DrawSecondarySignal :row="row" /></td>

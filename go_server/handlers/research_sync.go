@@ -211,7 +211,9 @@ func researchFeatureValues(raw map[string]float64) (json.RawMessage, json.RawMes
 			values[name] = &v
 		}
 	}
-	for _, f := range drawmodeldata.Features() {
+	// The research catalogue is the original 391-input contract; venue
+	// inputs of newer active models are not research columns.
+	for _, f := range drawmodeldata.BaselineFeatures() {
 		v, valid := raw[f.Name]
 		valid = valid && !math.IsNaN(v) && !math.IsInf(v, 0)
 		for _, g := range f.Guards {

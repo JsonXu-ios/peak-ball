@@ -131,32 +131,38 @@ class _ObservationDetailsState extends State<ObservationDetails> {
       _note('仅使用该场开赛前已完赛的战绩；日期按北京时间显示。'),
       _block('联赛排名与赛程', [
         _table([
-          ['球队', '排名', '已赛', '积分'],
+          ['球队', '总榜排名', '已赛', '积分'],
           for (final home in [true, false])
             [
               home ? '主队' : '客队',
               text(view.standing(home)['rank']),
               text(view.standing(home)['game']),
-              text(
-                view.standing(home)['score'] ??
-                    view.standing(home)['points'] ??
-                    view.standing(home)['integral'],
-              ),
+              text(view.standingPoints(home)),
             ],
         ]),
         const SizedBox(height: 10),
-        _note('排名与已赛为本地保存的联赛数据。'),
+        _note('取本场保存的联赛总榜。缺少榜单数据时显示「—」。'),
       ]),
       for (final section in [
         ('homeRecent', '${text(row['home'])} · 近10场'),
         ('awayRecent', '${text(row['guest'])} · 近10场'),
         ('headToHead', '双方历史交锋'),
       ])
-        _historySection(section.$2, object(row[section.$1])),
+        _historySection(
+          section.$2,
+          object(row[section.$1]),
+          text(row[section.$1 == 'awayRecent' ? 'guest' : 'home'], ''),
+          headToHead: section.$1 == 'headToHead',
+        ),
     ];
   }
 
-  Widget _historySection(String title, Json history) {
+  Widget _historySection(
+    String title,
+    Json history,
+    String team, {
+    required bool headToHead,
+  }) {
     final matches = array(history['matches']).map(object).toList();
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
@@ -165,6 +171,7 @@ class _ObservationDetailsState extends State<ObservationDetails> {
         borderRadius: BorderRadius.circular(12),
       ),
       child: ExpansionTile(
+        key: PageStorageKey('${widget.row["matchId"]}/$title'),
         tilePadding: const EdgeInsets.symmetric(horizontal: 12),
         childrenPadding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
         shape: const Border(),
@@ -177,11 +184,38 @@ class _ObservationDetailsState extends State<ObservationDetails> {
             fontWeight: FontWeight.w600,
           ),
         ),
-        subtitle: Text(
-          (number(history['sample']) ?? 0) > 0
-              ? '${history['sample']}场 · ${history['draws']}平'
-              : '暂无有效记录',
-          style: const TextStyle(fontSize: 13, color: _muted),
+        subtitle: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              (number(history['sample']) ?? 0) > 0
+                  ? '${history['sample']}场 · ${history['draws']}平'
+                  : '暂无有效记录',
+              style: const TextStyle(fontSize: 13, color: _muted),
+            ),
+            if (matches.isNotEmpty) ...[
+              const SizedBox(height: 5),
+              Text(
+                headToHead ? '近 → 远 · 以$team为准' : '近 → 远',
+                style: const TextStyle(fontSize: 12, color: _muted),
+              ),
+              const SizedBox(height: 4),
+              SingleChildScrollView(
+                // The parent tile stores a bool; this child stores a scroll offset.
+                key: const PageStorageKey<String>('form-strip-offset'),
+                scrollDirection: Axis.horizontal,
+                child: Row(
+                  children: [
+                    for (final match in matches)
+                      Padding(
+                        padding: const EdgeInsets.only(right: 3),
+                        child: _resultBadge(historyResult(match, team)),
+                      ),
+                  ],
+                ),
+              ),
+            ],
+          ],
         ),
         children: matches.isEmpty
             ? [_note('暂无有效历史明细。')]
@@ -261,6 +295,32 @@ class _ObservationDetailsState extends State<ObservationDetails> {
                     ),
                   )
                   .toList(),
+      ),
+    );
+  }
+
+  Widget _resultBadge(String label) {
+    final (background, foreground) = switch (label) {
+      '胜' => (const Color(0xFFDCF3E9), const Color(0xFF126747)),
+      '平' => (const Color(0xFFFFF0CC), const Color(0xFF81560B)),
+      '负' => (const Color(0xFFFCE3E5), const Color(0xFF9F3441)),
+      _ => (const Color(0xFFEDF0F5), _muted),
+    };
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: background,
+        borderRadius: BorderRadius.circular(5),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+        child: Text(
+          label,
+          style: TextStyle(
+            fontSize: 13,
+            fontWeight: FontWeight.w700,
+            color: foreground,
+          ),
+        ),
       ),
     );
   }

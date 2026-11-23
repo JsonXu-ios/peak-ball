@@ -92,11 +92,16 @@ func parseModel(body []byte) (*modelState, error) {
 	if err := json.Unmarshal(body, &model); err != nil {
 		return nil, err
 	}
-	if model.Schema != 1 || len(model.Features) != len(frozen.Features) || len(model.Trees) != 240 || model.Version == "" || !finite(model.Threshold) || model.Threshold <= 0 || model.Threshold >= 1 || !finite(model.Baseline) {
+	// Either the original 391 inputs, or those followed by the venue features.
+	contract := frozen.Features
+	if len(model.Features) == len(frozen.Features)+len(VenueFeatureNames()) {
+		contract = ModelFeatures()
+	}
+	if model.Schema != 1 || len(model.Features) != len(contract) || len(model.Trees) != 240 || model.Version == "" || !finite(model.Threshold) || model.Threshold <= 0 || model.Threshold >= 1 || !finite(model.Baseline) {
 		return nil, fmt.Errorf("unsupported draw model contract")
 	}
 	for i, f := range model.Features {
-		original := frozen.Features[i]
+		original := contract[i]
 		if f.Name != original.Name || !finite(f.Median) || len(f.Guards) != len(original.Guards) {
 			return nil, fmt.Errorf("invalid feature contract at %d", i)
 		}

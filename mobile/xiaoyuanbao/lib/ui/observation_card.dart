@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'dart:typed_data';
+import '../data/offline_repository.dart';
 import '../models/observation_view.dart';
 import 'observation_details.dart';
 
@@ -12,10 +14,12 @@ class ObservationCard extends StatefulWidget {
   const ObservationCard({
     super.key,
     required this.row,
+    required this.repository,
     this.showDate = false,
     this.loadDetails,
   });
   final Json row;
+  final ObservationRepository repository;
   final bool showDate;
   final Future<Json?> Function()? loadDetails;
   @override
@@ -107,7 +111,7 @@ class _ObservationCardState extends State<ObservationCard> {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Container(
-            color: const Color(0xFFF7F9FD),
+            color: const Color(0xFFe8f1ed),
             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -293,8 +297,10 @@ class _ObservationCardState extends State<ObservationCard> {
                   child: Padding(
                     padding: EdgeInsets.only(right: i == 2 ? 0 : 9),
                     child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
-                        Row(
+                        Wrap(
+                          alignment: WrapAlignment.spaceBetween,
                           children: [
                             Text(
                               ['主胜', '平局', '客胜'][i],
@@ -303,7 +309,6 @@ class _ObservationCardState extends State<ObservationCard> {
                                 color: _muted,
                               ),
                             ),
-                            const Spacer(),
                             Text(
                               percent(probs[i]),
                               style: const TextStyle(
@@ -466,19 +471,25 @@ class _ObservationCardState extends State<ObservationCard> {
         height: 44,
         alignment: Alignment.center,
         decoration: BoxDecoration(
-          shape: BoxShape.circle,
+          borderRadius: const BorderRadius.vertical(
+            top: Radius.circular(9),
+            bottom: Radius.circular(17),
+          ),
           color: home ? const Color(0xFFEEF3FF) : const Color(0xFFFFF6E5),
           border: Border.all(
             color: home ? const Color(0xFFDCE6FE) : const Color(0xFFFFEAC1),
           ),
         ),
-        child: Text(
-          name.characters.take(2).toString(),
-          style: TextStyle(
-            fontSize: 17,
-            fontWeight: FontWeight.w700,
-            color: home ? _blue : const Color(0xFFB67E17),
-          ),
+        child: _TeamBadge(
+          key: ValueKey((
+            widget.repository.serverUrl,
+            widget.row[home ? 'homeLogo' : 'guestLogo'],
+            widget.repository.lastSync,
+          )),
+          repository: widget.repository,
+          source: text(widget.row[home ? 'homeLogo' : 'guestLogo'], ''),
+          name: name,
+          home: home,
         ),
       ),
       const SizedBox(height: 10),
@@ -533,4 +544,56 @@ class _ObservationCardState extends State<ObservationCard> {
           ],
         ),
       );
+}
+
+class _TeamBadge extends StatefulWidget {
+  const _TeamBadge({
+    super.key,
+    required this.repository,
+    required this.source,
+    required this.name,
+    required this.home,
+  });
+  final ObservationRepository repository;
+  final String source, name;
+  final bool home;
+  @override
+  State<_TeamBadge> createState() => _TeamBadgeState();
+}
+
+class _TeamBadgeState extends State<_TeamBadge> {
+  late final Future<Uint8List?>? image = widget.source.isEmpty
+      ? null
+      : widget.repository.teamLogo(widget.source);
+
+  @override
+  Widget build(BuildContext context) {
+    final fallback = Text(
+      widget.name.characters.take(2).toString(),
+      style: TextStyle(
+        fontSize: 17,
+        fontWeight: FontWeight.w700,
+        color: widget.home ? _blue : const Color(0xFFB67E17),
+      ),
+    );
+    if (image == null) return fallback;
+    return FutureBuilder<Uint8List?>(
+      future: image,
+      builder: (_, snapshot) {
+        final bytes = snapshot.data;
+        if (bytes == null) return fallback;
+        return Image.memory(
+          bytes,
+          width: 38,
+          height: 38,
+          fit: BoxFit.contain,
+          cacheWidth: 128,
+          semanticLabel: '${widget.name}队徽',
+          frameBuilder: (_, child, frame, _) =>
+              frame == null ? fallback : child,
+          errorBuilder: (_, _, _) => fallback,
+        );
+      },
+    );
+  }
 }

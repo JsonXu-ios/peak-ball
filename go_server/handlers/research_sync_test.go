@@ -109,7 +109,9 @@ func TestResearchCatalogueCoversProductionContractWithoutDuplicateNames(t *testi
 			t.Fatalf("definition not reproducible: %s", definition.Name)
 		}
 	}
-	for _, feature := range drawmodeldata.Features() {
+	// The immutable research catalogue covers the original 391 inputs. Venue
+	// inputs (venue_features.go) are model-only until a new feature version.
+	for _, feature := range drawmodeldata.BaselineFeatures() {
 		if !names[feature.Name] {
 			t.Fatalf("production feature missing from dictionary: %s", feature.Name)
 		}

@@ -47,7 +47,7 @@ func drawObservationFrozenModelSignal(item drawObservationItem, input *drawFeatu
 		result.Reason = "模型输入无法读取"
 		return result
 	}
-	features, err := drawmodeldata.ExtractFeatures(data)
+	features, err := drawmodeldata.ExtractModelFeatures(data)
 	if err != nil {
 		result.Reason = "模型输入无法读取"
 		return result

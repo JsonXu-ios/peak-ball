@@ -4,21 +4,41 @@ package database
 import (
 	"fmt"
 	"log"
+	"regexp"
+	"strings"
+	"time"
 
 	"go_server/config"
 	"go_server/models"
 
 	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
 )
 
 // DB is the global database connection instance.
 var DB *gorm.DB
 
+var bulkPlaceholders = regexp.MustCompile(`\?(?:\s*,\s*\?){15,}`)
+
+type sqlLogWriter struct{}
+
+func (sqlLogWriter) Printf(format string, args ...interface{}) {
+	for index, arg := range args {
+		if value, ok := arg.(string); ok && len(value) > 160 {
+			args[index] = bulkPlaceholders.ReplaceAllStringFunc(value, func(list string) string {
+				return fmt.Sprintf("? … (%d parameters)", strings.Count(list, "?"))
+			})
+		}
+	}
+	log.Printf(format, args...)
+}
+
 // Init connects to MySQL. Schema changes require DB_AUTO_MIGRATE=true.
 func Init() error {
 	var err error
 	DB, err = gorm.Open(mysql.Open(config.DSN), &gorm.Config{
+		Logger:                                   logger.New(sqlLogWriter{}, logger.Config{SlowThreshold: 200 * time.Millisecond, LogLevel: logger.Warn, ParameterizedQueries: true}),
 		DisableForeignKeyConstraintWhenMigrating: true,
 	})
 	if err != nil {

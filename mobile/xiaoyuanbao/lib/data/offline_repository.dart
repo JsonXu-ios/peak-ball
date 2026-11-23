@@ -1,13 +1,17 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
+import 'package:http/io_client.dart';
 import 'package:path/path.dart' as p;
 import 'package:sqflite/sqflite.dart';
+import 'team_logos.dart';
 
 abstract class ObservationRepository extends ChangeNotifier {
+  static const defaultServer = 'http://192.168.22.22:28080';
   String get serverUrl;
   List<Map<String, dynamic>> get matches;
   bool get isSyncing;
@@ -20,6 +24,8 @@ abstract class ObservationRepository extends ChangeNotifier {
   Future<void> sync();
   void cancelSync();
   Future<Map<String, dynamic>?> matchDetails(String id);
+  Future<Uint8List?> teamLogo(String source);
+  String? get logoProgress;
 }
 
 /// Downloaded records are staged in SQLite and verified against the immutable
@@ -28,6 +34,11 @@ class OfflineRepository extends ObservationRepository {
   OfflineRepository._(this._db, this._clientFactory);
   final Database _db;
   final http.Client Function() _clientFactory;
+  late final _logos = TeamLogoCache(_db, _clientFactory);
+  @override
+  String? logoProgress;
+  @override
+  Future<Uint8List?> teamLogo(String source) => _logos.read(serverUrl, source);
   http.Client? _activeClient;
   Completer<void>? _cancel;
   int _generation = 0;
@@ -35,7 +46,7 @@ class OfflineRepository extends ObservationRepository {
   bool _committing = false;
 
   @override
-  String serverUrl = '';
+  String serverUrl = ObservationRepository.defaultServer;
   @override
   List<Map<String, dynamic>> matches = const [];
   @override
@@ -63,8 +74,12 @@ class OfflineRepository extends ObservationRepository {
     final db = await dbFactory.openDatabase(
       path,
       options: OpenDatabaseOptions(
-        version: 1,
+        version: 2,
+        onUpgrade: (db, oldVersion, _) async {
+          if (oldVersion < 2) await TeamLogoCache.createTable(db);
+        },
         onCreate: (db, _) async {
+          await TeamLogoCache.createTable(db);
           await db.execute(
             'CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)',
           );
@@ -83,9 +98,17 @@ class OfflineRepository extends ObservationRepository {
         },
       ),
     );
-    final repo = OfflineRepository._(db, clientFactory ?? http.Client.new);
-    // An interrupted download was never committed, so it is safe to discard.
-    await db.delete('staged');
+    final repo = OfflineRepository._(
+      db,
+      clientFactory ??
+          () => IOClient(
+            HttpClient()..connectionTimeout = const Duration(seconds: 8),
+          ),
+    );
+    await db.delete(
+      'staged',
+      where: "token NOT LIKE 'http://%' AND token NOT LIKE 'https://%'",
+    );
     await db.delete('manifest_entries');
     final settings = await db.query(
       'settings',
@@ -111,7 +134,7 @@ class OfflineRepository extends ObservationRepository {
         uri.hasQuery ||
         uri.hasFragment ||
         !['', '/', '/api', '/api/'].contains(uri.path)) {
-      throw const FormatException('请输入后台地址，例如 http://192.168.1.10:28080');
+      throw const FormatException('请输入有效的局域网后台地址');
     }
     return uri
         .replace(path: '', query: null, fragment: null)
@@ -192,6 +215,7 @@ class OfflineRepository extends ObservationRepository {
     isSyncing = true;
     completed = 0;
     total = 0;
+    logoProgress = null;
     lastError = null;
     _notify();
     void check() {
@@ -249,7 +273,41 @@ class OfflineRepository extends ObservationRepository {
       final changed = entries.keys
           .where((id) => old[id] != entries[id])
           .toList();
+      check();
+      if (changed.isEmpty && entries.length == old.length && lastSync != null) {
+        final now = DateTime.now().toUtc();
+        await _db.transaction((txn) async {
+          check();
+          await txn.update(
+            'servers',
+            {
+              'snapshot': manifest['snapshot'],
+              'model': manifest['modelVersion'],
+              'synced': now.toIso8601String(),
+            },
+            where: 'server=?',
+            whereArgs: [server],
+          );
+          await txn.delete('staged', where: 'token=?', whereArgs: [server]);
+          check();
+        });
+        check();
+        lastSync = now;
+        modelVersion = manifest['modelVersion'] as String;
+        committed = true;
+        return;
+      }
+      final partial = await _db.query(
+        'staged',
+        columns: ['id', 'revision'],
+        where: 'token = ?',
+        whereArgs: [server],
+      );
+      final saved = {for (final row in partial) row['id']: row['revision']};
+      final needed = changed.where((id) => saved[id] != entries[id]).toList();
+      check();
       total = changed.length;
+      completed = total - needed.length;
       _notify();
       final manifestBatch = _db.batch();
       for (final e in entries.entries) {
@@ -260,9 +318,9 @@ class OfflineRepository extends ObservationRepository {
         });
       }
       await manifestBatch.commit(noResult: true);
-      for (var offset = 0; offset < changed.length; offset += 8) {
+      for (var offset = 0; offset < needed.length; offset += 20) {
         check();
-        final ids = changed.skip(offset).take(8).toList();
+        final ids = needed.skip(offset).take(20).toList();
         final response = await _post(
           client,
           server,
@@ -296,12 +354,12 @@ class OfflineRepository extends ObservationRepository {
             throw const FormatException('比赛编号与下载清单不一致');
           }
           batch.insert('staged', {
-            'token': token,
+            'token': server,
             'id': id,
             'revision': entries[id],
             'payload': payload,
             'view': jsonEncode(_compactView(decoded)),
-          });
+          }, conflictAlgorithm: ConflictAlgorithm.replace);
         }
         if (pending.isNotEmpty) throw const FormatException('部分比赛尚未下载完成');
         await batch.commit(noResult: true);
@@ -315,28 +373,22 @@ class OfflineRepository extends ObservationRepository {
       _committing = true;
       await _db.transaction((txn) async {
         check();
-        final count = Sqflite.firstIntValue(
-          await txn.rawQuery('SELECT COUNT(*) FROM staged WHERE token = ?', [
-            token,
-          ]),
-        );
-        if (count != changed.length) {
-          throw const FormatException('下载未完成，原缓存已保留');
-        }
         await txn.rawInsert(
-          'INSERT OR REPLACE INTO records(server,id,revision,payload,view) SELECT ?,id,revision,payload,view FROM staged WHERE token = ?',
-          [server, token],
+          'INSERT OR REPLACE INTO records(server,id,revision,payload,view) SELECT ?,s.id,s.revision,s.payload,s.view FROM staged s JOIN manifest_entries m ON m.id=s.id AND m.revision=s.revision WHERE s.token=? AND m.token=?',
+          [server, server, token],
         );
         await txn.rawDelete(
           'DELETE FROM records WHERE server = ? AND NOT EXISTS (SELECT 1 FROM manifest_entries WHERE token = ? AND manifest_entries.id = records.id)',
           [server, token],
         );
         final actual = Sqflite.firstIntValue(
-          await txn.rawQuery('SELECT COUNT(*) FROM records WHERE server = ?', [
-            server,
-          ]),
+          await txn.rawQuery(
+            'SELECT COUNT(*) FROM records r JOIN manifest_entries m ON r.id=m.id AND r.revision=m.revision WHERE r.server=? AND m.token=?',
+            [server, token],
+          ),
         );
         if (actual != entries.length) throw const FormatException('缓存数量校验失败');
+        await txn.delete('staged', where: 'token=?', whereArgs: [server]);
         await txn.insert('servers', {
           'server': server,
           'snapshot': manifest['snapshot'],
@@ -346,7 +398,12 @@ class OfflineRepository extends ObservationRepository {
         check();
       });
       committed = true;
-      await _load();
+      if (changed.isEmpty && entries.length == old.length) {
+        lastSync = DateTime.parse(synced);
+        modelVersion = manifest['modelVersion'] as String;
+      } else {
+        await _load();
+      }
     } on _SyncCancelled {
       if (generation == _generation) lastError = '同步已取消，原缓存已保留';
     } catch (error) {
@@ -357,13 +414,29 @@ class OfflineRepository extends ObservationRepository {
             ? error.message.toString()
             : error is TimeoutException
             ? '连接超时，请检查同一局域网、后台地址和防火墙；原缓存已保留'
-            : '同步失败：$error；原缓存已保留';
+            : error is http.ClientException || error is SocketException
+            ? '连接中断：$server。请确认手机连接同一局域网后重试，已校验比赛可续传。'
+            : '同步失败：$error；已保存的比赛可继续使用';
       }
     } finally {
       _committing = false;
       client.close();
+      bool active() =>
+          !_closed && generation == _generation && server == serverUrl;
+      if (committed && active()) {
+        _notify();
+        try {
+          await _logos.prefetch(server, matches, active, (count, total) {
+            logoProgress = '正在缓存球队队徽  $count / $total';
+            _notify();
+          });
+        } catch (_) {
+          if (active()) lastError = '比赛已保存，部分队徽将在下次连接时补齐';
+        } finally {
+          if (active()) logoProgress = null;
+        }
+      }
       if (!_closed) {
-        await _db.delete('staged', where: 'token = ?', whereArgs: [token]);
         await _db.delete(
           'manifest_entries',
           where: 'token = ?',
@@ -388,6 +461,7 @@ class OfflineRepository extends ObservationRepository {
     if (isSyncing) {
       ++_generation;
       isSyncing = false;
+      logoProgress = null;
       lastError = '同步已取消，原缓存已保留';
       _notify();
     }
@@ -397,6 +471,7 @@ class OfflineRepository extends ObservationRepository {
     if (_closed) return;
     cancelSync();
     _closed = true;
+    _logos.close();
     await _db.close();
     super.dispose();
   }
@@ -484,6 +559,8 @@ class OfflineRepository extends ObservationRepository {
             'all': _pick(_map(summary[side])['all'], [
               'rank',
               'game',
+              'point',
+              'totalScore',
               'score',
               'points',
               'integral',

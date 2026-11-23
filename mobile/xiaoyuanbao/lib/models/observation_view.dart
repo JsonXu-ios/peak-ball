@@ -55,6 +55,24 @@ String amount(dynamic value) {
 }
 
 String day(DateTime date) => date.toIso8601String().substring(0, 10);
+String historyResult(Json match, String team) {
+  const labels = {'win': '胜', 'draw': '平', 'loss': '负'};
+  final saved = labels[match['result']];
+  if (saved != null) return saved;
+  if (!whole(match['homeScore']) || !whole(match['awayScore'])) return '—';
+  final home = number(match['homeScore'])!, away = number(match['awayScore'])!;
+  final venue = match['venue'];
+  final atHome =
+      venue == 'home' ||
+      venue != 'away' && team.isNotEmpty && team == match['home'];
+  final atAway =
+      venue == 'away' ||
+      venue != 'home' && team.isNotEmpty && team == match['guest'];
+  if (atHome == atAway) return '—';
+  if (home == away) return '平';
+  return (home > away) == atHome ? '胜' : '负';
+}
+
 DateTime beijingNow() => DateTime.now().toUtc().add(const Duration(hours: 8));
 String kickoff(dynamic raw) {
   final date = DateTime.tryParse(text(raw, ''));
@@ -233,6 +251,36 @@ class ObservationView {
       history['leagueSummary'] ?? history['league_summary'],
     );
     return object(object(summary[home ? 'home' : 'guest'])['all']);
+  }
+
+  int? standingPoints(bool home) {
+    int? points(dynamic value) {
+      final n = number(value);
+      return n != null && n == n.truncateToDouble() ? n.toInt() : null;
+    }
+
+    final total = standing(home);
+    for (final key in ['point', 'totalScore', 'points', 'integral', 'score']) {
+      final value = points(total[key]);
+      if (value != null) return value;
+    }
+    final history = object(row['history']);
+    final rankings = object(history['rankData'] ?? history['rank_data']);
+    final name = text(row[home ? 'home' : 'guest'], '');
+    if (name.isEmpty) return null;
+    // Match and standings feeds use different team ID systems.
+    final matching = array(
+      rankings['total'],
+    ).map(object).where((entry) => text(entry['name'], '') == name);
+    if (matching.length != 1) return null;
+    final entry = matching.single;
+    for (final field in ['rank', 'game']) {
+      if (number(total[field]) != null &&
+          number(entry[field]) != number(total[field])) {
+        return null;
+      }
+    }
+    return points(entry['totalScore']);
   }
 
   String standingText(bool home) {

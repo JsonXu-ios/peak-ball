@@ -97,7 +97,7 @@ var fullMetadata = func() []FeatureMetadata {
 		seen[name] = true
 		result = append(result, FeatureMetadata{Name: name, Label: fullChineseLabel(name, module), Module: module, Source: source, Derived: derived, Synthetic: synthetic})
 	}
-	for _, f := range drawmodeldata.Features() {
+	for _, f := range drawmodeldata.BaselineFeatures() {
 		add(f.Name, fullBaseModule(f.Name), "frozen numerical input reconstructed without targets", true, false)
 		if f.Label != "" {
 			result[len(result)-1].Label = f.Label
@@ -285,7 +285,7 @@ func ExtractFeatures(data []byte) (map[string]float64, error) {
 		return nil, err
 	}
 	out := map[string]float64{}
-	for _, f := range drawmodeldata.Features() {
+	for _, f := range drawmodeldata.BaselineFeatures() {
 		n, ok := base[f.Name]
 		for _, g := range f.Guards {
 			v, p := base[g.Feature]

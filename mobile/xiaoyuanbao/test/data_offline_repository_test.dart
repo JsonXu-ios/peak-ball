@@ -8,6 +8,7 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:xiaoyuanbao/data/offline_repository.dart';
+import 'package:xiaoyuanbao/data/team_logos.dart';
 
 class FakeSource {
   Map<String, Map<String, dynamic>> rows = {};
@@ -15,6 +16,7 @@ class FakeSource {
   int manifests = 0;
   int failBatch = -1;
   bool corrupt = false;
+  List<String> lastBatchIds = [];
   final String snapshot = 'a' * 64;
   Map<String, String> get payloads =>
       rows.map((key, value) => MapEntry(key, jsonEncode(value)));
@@ -40,6 +42,7 @@ class FakeSource {
     batches++;
     if (batches == failBatch) return http.Response('network failure', 503);
     final requestBody = jsonDecode(request.body) as Map;
+    lastBatchIds = List<String>.from(requestBody['ids'] as List);
     return http.Response(
       jsonEncode({
         'snapshot': snapshot,
@@ -138,25 +141,48 @@ void main() {
   );
 
   test(
-    'failed partial download preserves previous complete cache and sync time',
+    'interrupted download resumes after reopening and fetches only missing or corrected records',
     () async {
+      final folder = await Directory.systemTemp.createTemp('yuanbao-resume-');
+      final path = '${folder.path}/offline.db';
+      addTearDown(() async {
+        await repo.close();
+        await folder.delete(recursive: true);
+      });
+      Future<OfflineRepository> reopen() async {
+        await repo.close();
+        return OfflineRepository.open(
+          databasePath: path,
+          factory: databaseFactoryFfi,
+          clientFactory: () => MockClient(source.handle),
+        );
+      }
+
+      repo = await reopen();
       source.rows = {
         'old': {'matchId': 'old', 'home': '原数据'},
       };
       await repo.sync();
       final synced = repo.lastSync;
       source.rows = {
-        for (var i = 0; i < 10; i++) '$i': {'matchId': '$i'},
+        for (var i = 0; i < 22; i++) '$i': {'matchId': '$i'},
       };
       source.failBatch = source.batches + 2;
       await repo.sync();
       expect(repo.lastError, contains('503'));
       expect(repo.matches.single['matchId'], 'old');
       expect(repo.lastSync, synced);
+      repo = await reopen();
+      expect(repo.matches.single['matchId'], 'old');
       source.failBatch = -1;
+      final requestsBeforeResume = source.batches;
+      source.rows['0'] = {'matchId': '0', 'home': '已更正'};
       await repo.sync();
       expect(repo.lastError, isNull);
-      expect(repo.matches.length, 10);
+      expect(source.batches - requestsBeforeResume, 1);
+      expect(source.lastBatchIds.toSet(), {'0', '20', '21'});
+      expect((await repo.matchDetails('0'))!['home'], '已更正');
+      expect(repo.matches.length, 22);
     },
   );
 
@@ -171,6 +197,62 @@ void main() {
     expect(repo.lastError, contains('校验失败'));
     expect(repo.matches.single['homeScore'], 0);
   });
+
+  test(
+    'logo paths, incremental prefetch and offline reads after reopening',
+    () async {
+      final folder = await Directory.systemTemp.createTemp('yuanbao-logos-');
+      final path = '${folder.path}/offline.db';
+      final image = File('assets/images/logo.png').readAsBytesSync();
+      final requests = <Uri>[];
+      Future<OfflineRepository> reopen({bool offline = false}) async {
+        await repo.close();
+        return OfflineRepository.open(
+          databasePath: path,
+          factory: databaseFactoryFfi,
+          clientFactory: () => MockClient((request) async {
+            if (request.method == 'POST') return source.handle(request);
+            requests.add(request.url);
+            if (offline) throw StateError('unexpected network read');
+            return http.Response.bytes(image, 200);
+          }),
+        );
+      }
+
+      addTearDown(() async {
+        await repo.close();
+        await folder.delete(recursive: true);
+      });
+      repo = await reopen();
+      const local = '/footballimg/alpha';
+      const remote = '//img.vipc.cn/vipc-sport/image/alpha?x=1';
+      expect(
+        teamLogoUri(repo.serverUrl, remote),
+        teamLogoUri(repo.serverUrl, local),
+      );
+      expect(teamLogoUri(repo.serverUrl, 'data:text/plain,no'), isNull);
+      source.rows = {
+        '1': {
+          'matchId': '1',
+          'homeLogo': local,
+          'guestLogo': '/footballimg/beta',
+        },
+        '2': {'matchId': '2', 'homeLogo': remote},
+      };
+      await repo.sync();
+      expect(repo.lastError, isNull);
+      expect(
+        requests.map((u) => u.path),
+        unorderedEquals([local, '/footballimg/beta']),
+      );
+      expect(await repo.teamLogo(remote), image);
+      repo = await reopen(offline: true);
+      await repo.sync();
+      expect(repo.completed, 0);
+      expect(await repo.teamLogo(local), image);
+      expect(requests.length, 2);
+    },
+  );
 
   test('server caches are isolated and reappear when switching back', () async {
     source.rows = {
@@ -202,6 +284,7 @@ void main() {
       factory: databaseFactoryFfi,
       clientFactory: () => MockClient(source.handle),
     );
+    expect(repo.serverUrl, ObservationRepository.defaultServer);
     await repo.setServer('192.168.1.9:28080');
     source.rows = {
       'persisted': {

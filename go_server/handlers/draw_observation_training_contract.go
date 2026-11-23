@@ -18,6 +18,7 @@ var drawTrainingFeatureHash = buildDrawTrainingFeatureHash()
 func buildDrawTrainingFeatureHash() string {
 	h := sha256.New()
 	h.Write([]byte(drawmodeldata.FeatureCodeSHA256()))
+	h.Write([]byte(drawmodeldata.VenueFeatureCodeSHA256()))
 	files, err := drawTrainingProducerSources.ReadDir(".")
 	if err != nil {
 		panic(err)

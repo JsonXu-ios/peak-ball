@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import '../data/offline_repository.dart';
 import '../models/observation_view.dart';
@@ -17,7 +18,12 @@ class ObservationPage extends StatefulWidget {
   State<ObservationPage> createState() => _ObservationPageState();
 }
 
-class _ObservationPageState extends State<ObservationPage> {
+class _ObservationPageState extends State<ObservationPage>
+    with WidgetsBindingObserver {
+  int _tab = 0;
+  DateTime? _lastAttempt;
+  Timer? _timer;
+  bool _active = true;
   String _date = day(beijingNow());
   bool _allDates = false, _sporttery = true;
   String _selection = 'all', _status = 'all', _league = '', _search = '';
@@ -32,6 +38,27 @@ class _ObservationPageState extends State<ObservationPage> {
   void initState() {
     super.initState();
     repo.addListener(_changed);
+    WidgetsBinding.instance.addObserver(this);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _autoCheck();
+    });
+    _timer = Timer.periodic(const Duration(minutes: 5), (_) => _autoCheck());
+  }
+
+  void _autoCheck() {
+    if (!_active || repo.isSyncing || repo.serverUrl.isEmpty) return;
+    final now = DateTime.now();
+    if (_lastAttempt != null &&
+        now.difference(_lastAttempt!) < const Duration(minutes: 1)) {
+      return;
+    }
+    unawaited(_sync());
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    _active = state == AppLifecycleState.resumed;
+    if (_active) _autoCheck();
   }
 
   @override
@@ -49,6 +76,8 @@ class _ObservationPageState extends State<ObservationPage> {
 
   @override
   void dispose() {
+    _timer?.cancel();
+    WidgetsBinding.instance.removeObserver(this);
     repo.removeListener(_changed);
     super.dispose();
   }
@@ -110,6 +139,7 @@ class _ObservationPageState extends State<ObservationPage> {
   }
 
   Future<void> _sync() async {
+    _lastAttempt = DateTime.now();
     if (repo.serverUrl.isEmpty) {
       await _settings();
       return;
@@ -126,7 +156,7 @@ class _ObservationPageState extends State<ObservationPage> {
   }
 
   Future<void> _settings() async {
-    final controller = TextEditingController(text: repo.serverUrl);
+    var address = repo.serverUrl;
     String? error;
     bool saving = false;
     final connect = await showModalBottomSheet<bool>(
@@ -161,15 +191,16 @@ class _ObservationPageState extends State<ObservationPage> {
                   style: TextStyle(fontSize: 15, color: muted, height: 1.55),
                 ),
                 const SizedBox(height: 20),
-                TextField(
-                  controller: controller,
+                TextFormField(
+                  initialValue: address,
+                  onChanged: (value) => address = value,
                   enabled: !saving && !repo.isSyncing,
                   keyboardType: TextInputType.url,
                   autocorrect: false,
                   textCapitalization: TextCapitalization.none,
                   decoration: InputDecoration(
                     labelText: '后台地址',
-                    hintText: 'http://192.168.1.10:28080',
+                    hintText: ObservationRepository.defaultServer,
                     errorText: error,
                     border: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(14),
@@ -197,7 +228,7 @@ class _ObservationPageState extends State<ObservationPage> {
                               error = null;
                             });
                             try {
-                              await repo.setServer(controller.text);
+                              await repo.setServer(address);
                               if (context.mounted) Navigator.pop(context, true);
                             } catch (e) {
                               if (context.mounted) {
@@ -209,7 +240,7 @@ class _ObservationPageState extends State<ObservationPage> {
                             }
                           },
                     icon: const Icon(Icons.wifi_rounded),
-                    label: Text(saving ? '正在保存…' : '保存并同步全部比赛'),
+                    label: Text(saving ? '正在保存…' : '保存并检查更新'),
                   ),
                 ),
                 const SizedBox(height: 5),
@@ -223,7 +254,6 @@ class _ObservationPageState extends State<ObservationPage> {
         ),
       ),
     );
-    controller.dispose();
     if (connect == true && mounted) await _sync();
   }
 
@@ -387,345 +417,157 @@ class _ObservationPageState extends State<ObservationPage> {
   @override
   Widget build(BuildContext context) {
     final matches = _filtered;
-    final selected = _cachedSelected;
-    final settled = _cachedSettled;
-    final alternatives = _cachedAlternatives;
-    final filters =
-        _search.isNotEmpty || _league.isNotEmpty || _status != 'all';
     return Scaffold(
-      backgroundColor: background,
+      backgroundColor: const Color(0xfff3f5f4),
+      appBar: AppBar(
+        toolbarHeight: 54,
+        title: Row(
+          children: [
+            Image.asset('assets/images/logo.png', width: 32, height: 32),
+            const SizedBox(width: 9),
+            const Text(
+              '小元宝',
+              style: TextStyle(fontWeight: FontWeight.w800, fontSize: 19),
+            ),
+          ],
+        ),
+        actions: [
+          IconButton(
+            tooltip: '连接后台与缓存信息',
+            onPressed: _settings,
+            icon: const Icon(Icons.settings_outlined),
+          ),
+        ],
+      ),
+      bottomNavigationBar: NavigationBar(
+        selectedIndex: _tab,
+        onDestinationSelected: (value) => setState(() => _tab = value),
+        height: 66,
+        backgroundColor: Colors.white,
+        indicatorColor: const Color(0xffdcefe8),
+        destinations: const [
+          NavigationDestination(
+            icon: Icon(Icons.stadium_outlined),
+            selectedIcon: Icon(Icons.stadium),
+            label: '赛程',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.bar_chart_outlined),
+            selectedIcon: Icon(Icons.bar_chart),
+            label: '复盘',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.storage_outlined),
+            selectedIcon: Icon(Icons.storage),
+            label: '数据',
+          ),
+        ],
+      ),
       body: SafeArea(
+        top: false,
         child: RefreshIndicator(
           onRefresh: _sync,
           child: CustomScrollView(
+            key: PageStorageKey('yuanbao-tab-$_tab'),
+            physics: const AlwaysScrollableScrollPhysics(),
             slivers: [
-              SliverToBoxAdapter(
-                child: Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 10, 12, 8),
-                  child: Row(
-                    children: [
-                      ClipRRect(
-                        borderRadius: BorderRadius.circular(14),
-                        child: Image.asset(
-                          'assets/images/logo.png',
-                          width: 46,
-                          height: 46,
-                          errorBuilder: (_, error, trace) => Container(
-                            width: 46,
-                            height: 46,
-                            decoration: BoxDecoration(
-                              color: ink,
-                              borderRadius: BorderRadius.circular(14),
-                            ),
-                            child: const Icon(
-                              Icons.savings_rounded,
-                              color: Color(0xFFFFCF62),
-                              size: 29,
-                            ),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      const Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              '小元宝',
-                              style: TextStyle(
-                                fontSize: 25,
-                                fontWeight: FontWeight.w800,
-                                color: ink,
-                              ),
-                            ),
-                            Text(
-                              '平局比赛观察',
-                              style: TextStyle(
-                                fontSize: 14,
-                                color: muted,
-                                letterSpacing: 1,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      IconButton(
-                        tooltip: '连接后台与缓存信息',
-                        onPressed: _settings,
-                        icon: const Icon(Icons.settings_outlined, color: ink),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-              SliverToBoxAdapter(child: _syncBanner()),
-              SliverToBoxAdapter(
-                child: Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
-                  child: Column(
-                    children: [
-                      Row(
-                        children: [
-                          Expanded(
-                            child: SegmentedButton<bool>(
-                              segments: const [
-                                ButtonSegment(value: true, label: Text('竞彩')),
-                                ButtonSegment(value: false, label: Text('全部')),
-                              ],
-                              selected: {_sporttery},
-                              showSelectedIcon: false,
-                              onSelectionChanged: (s) =>
-                                  setState(() => _sporttery = s.first),
-                              style: const ButtonStyle(
-                                visualDensity: VisualDensity.compact,
-                              ),
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          PopupMenuButton<String>(
-                            tooltip: '入选筛选',
-                            initialValue: _selection,
-                            onSelected: (value) =>
-                                setState(() => _selection = value),
-                            itemBuilder: (_) => const [
-                              PopupMenuItem(
-                                value: 'all',
-                                child: Text('全部入选状态'),
-                              ),
-                              PopupMenuItem(
-                                value: 'selected',
-                                child: Text('只看入选平'),
-                              ),
-                              PopupMenuItem(
-                                value: 'not_selected',
-                                child: Text('只看未入选'),
-                              ),
-                            ],
-                            child: Padding(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 4,
-                                vertical: 12,
-                              ),
-                              child: Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  Text(
-                                    {
-                                      'all': '入选筛选',
-                                      'selected': '入选平',
-                                      'not_selected': '未入选',
-                                    }[_selection]!,
-                                    style: TextStyle(
-                                      fontSize: 14,
-                                      color: _selection == 'all' ? muted : blue,
-                                    ),
-                                  ),
-                                  const Icon(
-                                    Icons.expand_more,
-                                    size: 18,
-                                    color: muted,
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ),
-                          IconButton.filledTonal(
-                            tooltip: '筛选比赛',
-                            onPressed: _filters,
-                            icon: Badge(
-                              isLabelVisible: filters,
-                              child: const Icon(Icons.tune_rounded),
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 8),
-                      Container(
-                        decoration: BoxDecoration(
-                          color: Colors.white,
-                          borderRadius: BorderRadius.circular(14),
-                          border: Border.all(color: const Color(0xFFE2E8F1)),
-                        ),
+              if (_tab != 2) ...[
+                SliverToBoxAdapter(child: _masthead(matches.length)),
+                SliverToBoxAdapter(
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    child: InkWell(
+                      onTap: () => setState(() => _tab = 2),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 5),
                         child: Row(
                           children: [
-                            IconButton(
-                              tooltip: '前一天',
-                              onPressed: () => setState(() {
-                                _date = day(
-                                  DateTime.parse(
-                                    _date,
-                                  ).subtract(const Duration(days: 1)),
-                                );
-                                _allDates = false;
-                              }),
-                              icon: const Icon(Icons.chevron_left),
+                            Icon(
+                              repo.lastError != null
+                                  ? Icons.cloud_off_outlined
+                                  : repo.isSyncing
+                                  ? Icons.sync
+                                  : Icons.offline_pin_outlined,
+                              size: 16,
+                              color: muted,
                             ),
+                            const SizedBox(width: 6),
                             Expanded(
-                              child: TextButton(
-                                onPressed: _chooseDate,
-                                child: Text(
-                                  _allDates
-                                      ? '全部缓存日期'
-                                      : _date.replaceAll('-', '.'),
-                                  style: const TextStyle(
-                                    fontSize: 17,
-                                    fontWeight: FontWeight.w700,
-                                  ),
+                              child: Text(
+                                repo.isSyncing
+                                    ? (repo.total == 0
+                                          ? '正在核对比赛清单…'
+                                          : '正在同步 ${repo.completed}/${repo.total}')
+                                    : repo.lastError != null
+                                    ? '更新未完成 · 查看原因'
+                                    : '本地已缓存 ${repo.matches.length} 场',
+                                style: const TextStyle(
+                                  color: muted,
+                                  fontSize: 13,
                                 ),
                               ),
                             ),
-                            IconButton(
-                              tooltip: '后一天',
-                              onPressed: () => setState(() {
-                                _date = day(
-                                  DateTime.parse(
-                                    _date,
-                                  ).add(const Duration(days: 1)),
-                                );
-                                _allDates = false;
-                              }),
-                              icon: const Icon(Icons.chevron_right),
-                            ),
-                            PopupMenuButton<String>(
-                              tooltip: '今天与全部日期',
-                              icon: const Icon(
-                                Icons.calendar_month_outlined,
-                                size: 21,
-                              ),
-                              onSelected: (value) => setState(() {
-                                if (value == 'today') {
-                                  _date = day(beijingNow());
-                                  _allDates = false;
-                                } else {
-                                  _allDates = true;
-                                }
-                              }),
-                              itemBuilder: (_) => const [
-                                PopupMenuItem(
-                                  value: 'today',
-                                  child: Text('今天（北京时间）'),
-                                ),
-                                PopupMenuItem(
-                                  value: 'all',
-                                  child: Text('全部缓存日期'),
-                                ),
-                              ],
+                            const Icon(
+                              Icons.chevron_right,
+                              size: 16,
+                              color: muted,
                             ),
                           ],
                         ),
                       ),
-                      const SizedBox(height: 8),
-                      Row(
+                    ),
+                  ),
+                ),
+                SliverToBoxAdapter(child: _toolbar()),
+                if (_tab == 0) ...[
+                  SliverToBoxAdapter(
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(18, 14, 18, 8),
+                      child: Row(
                         children: [
-                          Expanded(
-                            child: _metric('比赛', '${matches.length}', '当前筛选'),
-                          ),
-                          const SizedBox(width: 7),
-                          Expanded(
-                            child: _metric(
-                              '入选平',
-                              '${selected.length}',
-                              '${settled.length} 场已结算',
+                          const Expanded(
+                            child: Text(
+                              '比赛列表',
+                              style: TextStyle(
+                                fontSize: 17,
+                                fontWeight: FontWeight.w800,
+                              ),
                             ),
                           ),
-                          const SizedBox(width: 7),
-                          Expanded(
-                            child: _metric(
-                              '平局命中',
-                              settled.isEmpty
-                                  ? '—'
-                                  : percent(
-                                      settled.where((v) => v.draw).length /
-                                          settled.length *
-                                          100,
-                                    ),
-                              '${settled.where((v) => v.draw).length}/${settled.length}',
-                            ),
+                          Text(
+                            '${matches.length} 场',
+                            style: const TextStyle(color: muted),
                           ),
                         ],
                       ),
-                      if (alternatives.isNotEmpty)
-                        Padding(
-                          padding: const EdgeInsets.only(top: 8),
-                          child: Row(
-                            children: [
-                              const Icon(
-                                Icons.insights_rounded,
-                                color: muted,
-                                size: 17,
-                              ),
-                              const SizedBox(width: 5),
-                              Expanded(
-                                child: Text(
-                                  '次选命中 ${alternatives.where((v) => v.alternativeHit).length}/${alternatives.length} · ${percent(alternatives.where((v) => v.alternativeHit).length / alternatives.length * 100)}',
-                                  style: const TextStyle(
-                                    fontSize: 14,
-                                    color: muted,
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      if (filters)
-                        Padding(
-                          padding: const EdgeInsets.only(top: 8),
-                          child: Align(
-                            alignment: Alignment.centerLeft,
-                            child: Text(
-                              [
-                                _league,
-                                _search,
-                                _status == 'all'
-                                    ? ''
-                                    : {
-                                        'settled': '已确认完赛',
-                                        'pending': '待确认赛果',
-                                        'draw': '已打平',
-                                      }[_status]!,
-                              ].where((s) => s.isNotEmpty).join(' · '),
-                              style: const TextStyle(fontSize: 14, color: blue),
+                    ),
+                  ),
+                  if (matches.isEmpty)
+                    SliverToBoxAdapter(child: _empty())
+                  else
+                    SliverPadding(
+                      padding: const EdgeInsets.symmetric(horizontal: 12),
+                      sliver: SliverList.builder(
+                        itemCount: matches.length,
+                        itemBuilder: (context, index) => Padding(
+                          padding: const EdgeInsets.only(bottom: 12),
+                          child: ObservationCard(
+                            key: ValueKey(matches[index]['matchId']),
+                            row: matches[index],
+                            repository: repo,
+                            showDate: _allDates,
+                            loadDetails: () => repo.matchDetails(
+                              text(matches[index]['matchId'], ''),
                             ),
                           ),
                         ),
-                      const SizedBox(height: 12),
-                    ],
-                  ),
-                ),
-              ),
-              if (matches.isEmpty)
-                SliverToBoxAdapter(child: _empty())
-              else
-                SliverPadding(
-                  padding: const EdgeInsets.symmetric(horizontal: 12),
-                  sliver: SliverList.builder(
-                    itemCount: matches.length,
-                    itemBuilder: (context, i) => Padding(
-                      padding: const EdgeInsets.only(bottom: 14),
-                      child: ObservationCard(
-                        key: ValueKey(matches[i]['matchId']),
-                        row: matches[i],
-                        showDate: _allDates,
-                        loadDetails: () =>
-                            repo.matchDetails(text(matches[i]['matchId'], '')),
                       ),
                     ),
-                  ),
-                ),
-              SliverToBoxAdapter(
-                child: Padding(
-                  padding: const EdgeInsets.fromLTRB(25, 12, 25, 28),
-                  child: Text(
-                    '显示本地已保存的数据。赛果、赔率与模型结果以最近一次完整同步为准。\n命中率仅统计已确认常规时间赛果的比赛。',
-                    textAlign: TextAlign.center,
-                    style: const TextStyle(
-                      fontSize: 13,
-                      color: muted,
-                      height: 1.6,
-                    ),
-                  ),
-                ),
-              ),
+                ] else
+                  SliverToBoxAdapter(child: _review(matches)),
+              ] else
+                SliverToBoxAdapter(child: _dataPanel()),
+              const SliverToBoxAdapter(child: SizedBox(height: 20)),
             ],
           ),
         ),
@@ -733,95 +575,361 @@ class _ObservationPageState extends State<ObservationPage> {
     );
   }
 
-  Widget _metric(String label, String value, String detail) => Container(
-    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+  Widget _masthead(int count) => Container(
+    margin: const EdgeInsets.fromLTRB(12, 8, 12, 8),
     decoration: BoxDecoration(
-      color: Colors.white,
-      borderRadius: BorderRadius.circular(13),
+      borderRadius: BorderRadius.circular(20),
+      gradient: const LinearGradient(
+        colors: [Color(0xff112f36), Color(0xff20524f)],
+      ),
     ),
-    child: Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
+    clipBehavior: Clip.antiAlias,
+    child: Stack(
       children: [
-        Text(label, style: const TextStyle(fontSize: 13, color: muted)),
-        const SizedBox(height: 3),
-        FittedBox(
-          fit: BoxFit.scaleDown,
-          child: Text(
-            value,
-            style: const TextStyle(
-              fontSize: 22,
-              fontWeight: FontWeight.w800,
-              color: ink,
-            ),
+        const Positioned.fill(
+          child: IgnorePointer(child: CustomPaint(painter: _PitchLines())),
+        ),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                _tab == 1 ? 'FORM REPORT   /   02' : 'MATCHDAY   /   01',
+                style: const TextStyle(
+                  color: Color(0xffffd484),
+                  fontWeight: FontWeight.w700,
+                  fontSize: 12,
+                  letterSpacing: 1.8,
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                _tab == 1 ? '赛果复盘' : '平局观察',
+                style: const TextStyle(
+                  fontSize: 29,
+                  height: 1.22,
+                  letterSpacing: 1,
+                  fontWeight: FontWeight.w800,
+                  color: Colors.white,
+                ),
+              ),
+              const SizedBox(height: 5),
+              Text(
+                _tab == 1
+                    ? '已结算 ${_cachedSettled.length} 场入选比赛'
+                    : '${_sporttery ? "竞彩" : "全部赛事"}  ·  $count 场比赛  /  ${_cachedSelected.length} 场入选',
+                style: const TextStyle(color: Color(0xffd0e4dd), fontSize: 14),
+              ),
+            ],
           ),
         ),
-        const SizedBox(height: 2),
-        Text(detail, style: const TextStyle(fontSize: 12, color: muted)),
       ],
     ),
   );
 
-  Widget _syncBanner() => Container(
-    margin: const EdgeInsets.symmetric(horizontal: 16),
-    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 0),
-    decoration: BoxDecoration(
-      color: const Color(0xFFEAF0FF),
-      borderRadius: BorderRadius.circular(16),
-    ),
+  Widget _toolbar() => Padding(
+    padding: const EdgeInsets.symmetric(horizontal: 14),
     child: Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Row(
           children: [
-            Icon(
-              repo.isSyncing ? Icons.sync_rounded : Icons.offline_pin_outlined,
-              color: blue,
-              size: 21,
-            ),
-            const SizedBox(width: 8),
             Expanded(
-              child: Text(
-                repo.isSyncing
-                    ? '同步中 · ${repo.completed}/${repo.total}'
-                    : repo.matches.isEmpty
-                    ? '连接局域网，带走全部比赛'
-                    : '本地已缓存 ${repo.matches.length} 场',
-                style: const TextStyle(
-                  fontSize: 15,
-                  fontWeight: FontWeight.w700,
-                  color: ink,
+              child: SegmentedButton<bool>(
+                segments: const [
+                  ButtonSegment(value: true, label: Text('竞彩')),
+                  ButtonSegment(value: false, label: Text('全部')),
+                ],
+                selected: {_sporttery},
+                showSelectedIcon: false,
+                onSelectionChanged: (s) => setState(() => _sporttery = s.first),
+                style: const ButtonStyle(visualDensity: VisualDensity.compact),
+              ),
+            ),
+            PopupMenuButton<String>(
+              tooltip: '入选筛选',
+              initialValue: _selection,
+              onSelected: (value) => setState(() => _selection = value),
+              itemBuilder: (_) => const [
+                PopupMenuItem(value: 'all', child: Text('全部入选状态')),
+                PopupMenuItem(value: 'selected', child: Text('只看入选平')),
+                PopupMenuItem(value: 'not_selected', child: Text('只看未入选')),
+              ],
+              child: Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 8,
+                  vertical: 12,
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      {
+                        'all': '入选筛选',
+                        'selected': '入选平',
+                        'not_selected': '未入选',
+                      }[_selection]!,
+                    ),
+                    const Icon(Icons.expand_more, size: 17),
+                  ],
                 ),
               ),
             ),
-            const SizedBox(width: 4),
-            TextButton(
-              onPressed: repo.isSyncing ? repo.cancelSync : _sync,
-              child: Text(repo.isSyncing ? '取消' : '同步'),
+            IconButton(
+              tooltip: '筛选比赛',
+              onPressed: _filters,
+              icon: Badge(
+                isLabelVisible:
+                    _league.isNotEmpty ||
+                    _search.isNotEmpty ||
+                    _status != 'all',
+                child: const Icon(Icons.tune_rounded),
+              ),
             ),
           ],
         ),
-        if (repo.isSyncing)
-          Padding(
-            padding: const EdgeInsets.only(top: 8),
-            child: LinearProgressIndicator(
-              value: repo.total > 0
-                  ? (repo.completed / repo.total).clamp(0, 1)
-                  : null,
-              minHeight: 4,
-              borderRadius: BorderRadius.circular(4),
-            ),
-          )
-        else
-          Text(
-            repo.lastSync == null ? '首次同步后即可离线查看' : '最近同步 ${_lastSync()}',
-            style: const TextStyle(fontSize: 13, color: muted),
+        DecoratedBox(
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(14),
           ),
-        if (repo.lastError?.isNotEmpty == true)
-          Padding(
-            padding: const EdgeInsets.only(top: 8),
+          child: Row(
+            children: [
+              IconButton(
+                tooltip: '前一天',
+                onPressed: () => _step(-1),
+                icon: const Icon(Icons.chevron_left),
+              ),
+              Expanded(
+                child: TextButton(
+                  onPressed: _chooseDate,
+                  child: Text(
+                    _allDates ? '全部缓存日期' : _date.replaceAll('-', '.'),
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w700,
+                      fontSize: 16,
+                    ),
+                  ),
+                ),
+              ),
+              IconButton(
+                tooltip: '后一天',
+                onPressed: () => _step(1),
+                icon: const Icon(Icons.chevron_right),
+              ),
+              PopupMenuButton<String>(
+                tooltip: '今天与全部日期',
+                icon: const Icon(Icons.calendar_month_outlined),
+                itemBuilder: (_) => const [
+                  PopupMenuItem(value: 'today', child: Text('今天（北京时间）')),
+                  PopupMenuItem(value: 'all', child: Text('全部缓存日期')),
+                ],
+                onSelected: (value) => setState(() {
+                  _allDates = value == 'all';
+                  if (!_allDates) _date = day(beijingNow());
+                }),
+              ),
+            ],
+          ),
+        ),
+        if (_league.isNotEmpty || _search.isNotEmpty || _status != 'all')
+          Align(
+            alignment: Alignment.centerLeft,
             child: Text(
-              '同步未完成，已保留上次缓存。\n${repo.lastError}',
-              style: const TextStyle(fontSize: 13, color: red, height: 1.5),
+              [
+                _league,
+                _search,
+                {'settled': '已完赛', 'pending': '待赛果', 'draw': '已打平'}[_status] ??
+                    '',
+              ].where((item) => item.isNotEmpty).join(' · '),
+            ),
+          ),
+      ],
+    ),
+  );
+  void _step(int delta) => setState(() {
+    _date = day(DateTime.parse(_date).add(Duration(days: delta)));
+    _allDates = false;
+  });
+
+  Widget _review(List<Json> matches) {
+    final settled = _cachedSettled;
+    final alternatives = _cachedAlternatives;
+    return Padding(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const Text(
+            '当前筛选 · 命中表现',
+            style: TextStyle(fontWeight: FontWeight.w800, fontSize: 18),
+          ),
+          const SizedBox(height: 10),
+          _measure(
+            '入选平命中率',
+            settled.where((v) => v.draw).length,
+            settled.length,
+            '平局命中 / 已结算入选场次',
+            const Color(0xff237961),
+          ),
+          _measure(
+            '次选命中率',
+            alternatives.where((v) => v.alternativeHit).length,
+            alternatives.length,
+            '次选命中 / 有次选的已结算场次',
+            const Color(0xffa86619),
+          ),
+          _measure(
+            '入选占比',
+            _cachedSelected.length,
+            matches.length,
+            '入选场次 / 当前列表场次',
+            const Color(0xff496ba1),
+          ),
+          const Text('结算按常规时间赛果；待确认的比赛不计入命中率。', style: TextStyle(color: muted)),
+        ],
+      ),
+    );
+  }
+
+  Widget _measure(
+    String label,
+    int hits,
+    int count,
+    String note,
+    Color color,
+  ) => Card(
+    margin: const EdgeInsets.only(bottom: 12),
+    elevation: 0,
+    color: Colors.white,
+    child: Padding(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  label,
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w700,
+                    fontSize: 16,
+                  ),
+                ),
+              ),
+              Text(
+                count == 0 ? '—' : percent(100 * hits / count),
+                style: TextStyle(
+                  color: color,
+                  fontWeight: FontWeight.w800,
+                  fontSize: 23,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 9),
+          LinearProgressIndicator(
+            value: count == 0 ? 0 : hits / count,
+            color: color,
+            backgroundColor: const Color(0xffedf1ef),
+            borderRadius: BorderRadius.circular(4),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            '$hits / $count  ·  $note',
+            style: const TextStyle(color: muted, fontSize: 13),
+          ),
+        ],
+      ),
+    ),
+  );
+  Widget _dataPanel() => Padding(
+    padding: const EdgeInsets.all(16),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const Text(
+          '数据中心',
+          style: TextStyle(fontWeight: FontWeight.w800, fontSize: 28),
+        ),
+        const SizedBox(height: 14),
+        Container(
+          padding: const EdgeInsets.all(20),
+          decoration: BoxDecoration(
+            color: const Color(0xff163d3d),
+            borderRadius: BorderRadius.circular(18),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                '离线比赛库',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              Text(
+                '${repo.matches.length} 场',
+                style: const TextStyle(
+                  fontWeight: FontWeight.w800,
+                  color: Colors.white,
+                  fontSize: 34,
+                ),
+              ),
+              Text(
+                '最近同步  ${_lastSync()}',
+                style: const TextStyle(color: Color(0xffcee1dc)),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 16),
+        ListTile(
+          tileColor: Colors.white,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(14),
+          ),
+          leading: const Icon(Icons.router_outlined),
+          title: const Text('局域网后台'),
+          subtitle: Text(repo.serverUrl),
+          trailing: const Icon(Icons.chevron_right),
+          onTap: _settings,
+        ),
+        const SizedBox(height: 16),
+        if (repo.isSyncing) ...[
+          LinearProgressIndicator(
+            value: repo.logoProgress != null || repo.total == 0
+                ? null
+                : repo.completed / repo.total,
+          ),
+          const SizedBox(height: 8),
+          Text(
+            repo.logoProgress ??
+                (repo.total == 0
+                    ? '正在核对比赛清单…'
+                    : '已校验 ${repo.completed} / ${repo.total} 场变更'),
+          ),
+        ],
+        if (repo.lastError != null)
+          Text(repo.lastError!, style: const TextStyle(color: red)),
+        FilledButton.icon(
+          onPressed: repo.isSyncing ? repo.cancelSync : _sync,
+          icon: Icon(repo.isSyncing ? Icons.pause : Icons.sync),
+          label: Text(repo.isSyncing ? '暂停同步' : '检查数据更新'),
+        ),
+        const SizedBox(height: 12),
+        const Text(
+          '首次下载全部比赛。之后只下载新增或变动；中途退出，下次可从已校验的比赛继续。覆盖安装保留缓存。',
+          style: TextStyle(color: muted, height: 1.65),
+        ),
+        if (repo.modelVersion != null)
+          Padding(
+            padding: const EdgeInsets.only(top: 16),
+            child: Text(
+              '当前模型\n${repo.modelVersion}',
+              style: const TextStyle(color: muted, fontSize: 13),
             ),
           ),
       ],
@@ -857,7 +965,7 @@ class _ObservationPageState extends State<ObservationPage> {
         const SizedBox(height: 20),
         OutlinedButton.icon(
           onPressed: repo.matches.isEmpty
-              ? _settings
+              ? () => setState(() => _tab = 2)
               : () => setState(() {
                   _allDates = true;
                   _selection = 'all';
@@ -870,9 +978,34 @@ class _ObservationPageState extends State<ObservationPage> {
                 ? Icons.wifi_rounded
                 : Icons.calendar_month_rounded,
           ),
-          label: Text(repo.matches.isEmpty ? '连接局域网后台' : '查看全部缓存日期'),
+          label: Text(repo.matches.isEmpty ? '查看同步状态' : '查看全部缓存日期'),
         ),
       ],
     ),
   );
+}
+
+class _PitchLines extends CustomPainter {
+  const _PitchLines();
+  @override
+  void paint(Canvas canvas, Size size) {
+    canvas.save();
+    canvas.translate(size.width * .91, size.height * .50);
+    canvas.rotate(-.24);
+    final pen = Paint()
+      ..color = const Color(0x3384bba1)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.5;
+    canvas.drawRRect(
+      RRect.fromLTRBR(-74, -77, 72, 77, const Radius.circular(3)),
+      pen,
+    );
+    canvas.drawLine(const Offset(-74, 0), const Offset(72, 0), pen);
+    canvas.drawCircle(Offset.zero, 21, pen);
+    canvas.drawRect(const Rect.fromLTWH(-35, 49, 70, 28), pen);
+    canvas.restore();
+  }
+
+  @override
+  bool shouldRepaint(_PitchLines oldDelegate) => false;
 }

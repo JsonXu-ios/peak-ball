@@ -22,7 +22,14 @@ import sklearn
 from threadpoolctl import threadpool_limits
 
 ROOT = Path(__file__).resolve().parents[1]
-THRESHOLD = 0.2016984853563883
+# 2026-11-23: user fixed draw coverage at 80%. Chosen as the 20th percentile of
+# draw scores from weekly walk-forward models (each match scored only by a model
+# trained on earlier matches), 竞彩 + H2H-eligible, 2026-07-01..11-23, 653 rows.
+# Recomputed for the 444-input contract (391 + 53 venue). Forward months at
+# this value: coverage 72%/90%/80%/82%. Report:
+# reports/venue-features-20261123/README.md. Original 0.2016984853563883;
+# 391-input 80% value was 0.1729128074379042.
+THRESHOLD = 0.1663742860899021
 PARAMETERS = dict(max_iter=240, max_depth=3, max_leaf_nodes=8,
                   min_samples_leaf=40, l2_regularization=10,
                   learning_rate=.05, max_bins=32, early_stopping=False,
@@ -123,14 +130,17 @@ def main():
     args = p.parse_args()
     source = json.loads(args.input.read_text(encoding="utf-8-sig"))
     rows, features = source["rows"], source["features"]
-    if len(rows) < 100 or len(features) != 391 or len({r["matchId"] for r in rows}) != len(rows):
+    # 391 original inputs, optionally followed by the 53 venue inputs (2026-11-23).
+    if len(rows) < 100 or len(features) not in (391, 444) or len({r["matchId"] for r in rows}) != len(rows):
         raise ValueError("invalid training sample/feature contract")
     if set(r["result"] for r in rows) - {0, 1, 2}: raise ValueError("unconfirmed label")
     labels = np.array([r["result"] == 1 for r in rows])
     if min(labels.sum(), (~labels).sum()) < 20: raise ValueError("insufficient class support")
     values = guarded_matrix(rows, features)
     baseline = json.loads((ROOT / "go_server/internal/drawmodeldata/observation_v1.json").read_text(encoding="utf-8"))
-    old_scores = portable_prediction(values, baseline)
+    if [f["name"] for f in features[:391]] != [f["name"] for f in baseline["features"]]:
+        raise ValueError("baseline inputs must lead the feature contract")
+    old_scores = portable_prediction(values[:, :391], baseline)
     if np.max(np.abs(old_scores - np.array([r["baselineScore"] for r in rows]))) > 1e-11:
         raise ValueError("baseline feature/guard parity mismatch")
     model, artifact = fit(values, labels, features)
@@ -150,7 +160,7 @@ def main():
         hyperparameters=PARAMETERS, sklearnVersion=sklearn.__version__)
     artifact["contract"] = dict(fitType="all_confirmed_labels_final_refit", prospectiveTestRows=0,
         captureTimeKnownPrematch=False, scoreMeaning="uncalibrated ranking score, not hit-rate probability",
-        selectionThreshold="unchanged original .2016984853563883; no November tuning",
+        selectionThreshold="walk-forward 80% draw coverage .1663742860899021 with venue inputs (original .2016984853563883)",
         history="same serving extraction; strict prior +2h recent/H2H; legacy aggregate snapshots retained",
         neverUseAsInputs=["target result", "target score", "target status", "match ID", "team ID", "kickoff"])
     indices = sorted(set(np.linspace(0, len(rows)-1, 20, dtype=int).tolist() + np.argsort(actual)[:3].tolist() + np.argsort(actual)[-3:].tolist()))
@@ -178,7 +188,7 @@ def main():
         write(args.report, dict(version=artifact["version"], training=artifact["training"],
             audit=artifact["audit"], temporalReplay=replay,
             caveat="Latest-data retrospective replay. Final release fitted all labels; its historical scores are in-sample. No prospective profitability claim.",
-            thresholdTuned=False, modelFamilyChanged=False, fullRefitAfterIncrementalDataChange=True))
+            thresholdTuned=True, modelFamilyChanged=False, fullRefitAfterIncrementalDataChange=True))
     write(args.output, artifact)
     print(json.dumps(dict(version=artifact["version"], rows=len(rows), latestDate=last_date,
         checks=len(artifact["checks"]), parityMaxError=maximum_error, output=str(args.output))))
